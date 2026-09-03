@@ -1,0 +1,210 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* =============================================
+   PINTU MADRASAH — Design System v2
+   Brand: Lime-600 (#65a30d) + Charcoal + Neutral Gray
+   Minimalist Enterprise SaaS
+   shadcn/ui v4 + Tailwind CSS v4
+   ============================================= */
+
+@theme inline {
+    --font-sans:    'Plus Jakarta Sans', 'Inter', ui-sans-serif, system-ui, sans-serif;
+    --font-heading: 'Plus Jakarta Sans', 'Inter', ui-sans-serif, system-ui, sans-serif;
+
+    --color-background:                 var(--background);
+    --color-foreground:                 var(--foreground);
+    --color-card:                       var(--card);
+    --color-card-foreground:            var(--card-foreground);
+    --color-popover:                    var(--popover);
+    --color-popover-foreground:         var(--popover-foreground);
+    --color-primary:                    var(--primary);
+    --color-primary-foreground:         var(--primary-foreground);
+    --color-secondary:                  var(--secondary);
+    --color-secondary-foreground:       var(--secondary-foreground);
+    --color-muted:                      var(--muted);
+    --color-muted-foreground:           var(--muted-foreground);
+    --color-accent:                     var(--accent);
+    --color-accent-foreground:          var(--accent-foreground);
+    --color-destructive:                var(--destructive);
+    --color-border:                     var(--border);
+    --color-input:                      var(--input);
+    --color-ring:                       var(--ring);
+    --color-sidebar:                    var(--sidebar);
+    --color-sidebar-foreground:         var(--sidebar-foreground);
+    --color-sidebar-primary:            var(--sidebar-primary);
+    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-accent:             var(--sidebar-accent);
+    --color-sidebar-accent-foreground:  var(--sidebar-accent-foreground);
+    --color-sidebar-border:             var(--sidebar-border);
+    --color-sidebar-ring:               var(--sidebar-ring);
+    --color-chart-1:                    var(--chart-1);
+    --color-chart-2:                    var(--chart-2);
+    --color-chart-3:                    var(--chart-3);
+    --color-chart-4:                    var(--chart-4);
+    --color-chart-5:                    var(--chart-5);
+
+    --radius-sm:  calc(var(--radius) * 0.6);
+    --radius-md:  calc(var(--radius) * 0.8);
+    --radius-lg:  var(--radius);
+    --radius-xl:  calc(var(--radius) * 1.4);
+    --radius-2xl: calc(var(--radius) * 1.8);
+}
+
+/* ============================================
+   LIGHT MODE
+   Primary  : Lime-600   oklch(0.655 0.213 131)
+   Secondary: Neutral-200 oklch(0.93 0 0)
+   Sidebar  : Charcoal    oklch(0.14 0.012 131)
+   ============================================= */
+:root {
+    /* Base Surface */
+    --background:         oklch(0.985 0.003 100);
+    --foreground:         oklch(0.14 0.008 130);
+
+    /* Card — pure white */
+    --card:               oklch(1 0 0);
+    --card-foreground:    oklch(0.14 0.008 130);
+
+    /* Popover */
+    --popover:            oklch(1 0 0);
+    --popover-foreground: oklch(0.14 0.008 130);
+
+    /* Primary — Lime-600 #65a30d */
+    --primary:            oklch(0.655 0.213 131);
+    --primary-foreground: oklch(0.99 0 0);
+
+    /* Secondary — Neutral Gray */
+    --secondary:          oklch(0.93 0 0);
+    --secondary-foreground: oklch(0.20 0 0);
+
+    /* Muted — Cool Gray */
+    --muted:              oklch(0.965 0 0);
+    --muted-foreground:   oklch(0.52 0 0);
+
+    /* Accent — Lime tint (hover, highlight) */
+    --accent:             oklch(0.96 0.045 131);
+    --accent-foreground:  oklch(0.30 0.10 131);
+
+    /* Destructive */
+    --destructive:        oklch(0.577 0.245 27.325);
+
+    /* Borders */
+    --border:             oklch(0.895 0 0);
+    --input:              oklch(0.895 0 0);
+    --ring:               oklch(0.655 0.213 131);
+    --radius:             0.5rem;
+
+    /* Charts */
+    --chart-1: oklch(0.655 0.213 131);   /* Lime */
+    --chart-2: oklch(0.45 0 0);          /* Charcoal */
+    --chart-3: oklch(0.72 0.01 130);     /* Gray-blue */
+    --chart-4: oklch(0.78 0.14 131);     /* Lime light */
+    --chart-5: oklch(0.35 0 0);          /* Dark gray */
+
+    /* ==========================================
+       SIDEBAR — Deep Charcoal + Lime accent
+       Kesan: premium dark sidebar seperti Linear,
+       Vercel, atau Notion.
+       ========================================== */
+    --sidebar:                    oklch(0.14 0.012 131);   /* charcoal dengan sedikit lime */
+    --sidebar-foreground:         oklch(0.91 0.008 130);   /* off-white */
+    --sidebar-primary:            oklch(0.768 0.233 131);  /* Lime-500 terang di dark bg */
+    --sidebar-primary-foreground: oklch(0.10 0.03 131);    /* dark text on lime */
+    --sidebar-accent:             oklch(0.21 0.018 131);   /* hover state */
+    --sidebar-accent-foreground:  oklch(0.94 0.008 130);   /* text on hover */
+    --sidebar-border:             oklch(0.26 0.018 131);   /* subtle divider */
+    --sidebar-ring:               oklch(0.768 0.233 131);  /* Lime focus ring */
+}
+
+/* ============================================
+   DARK MODE
+   Background: neutral-950
+   Primary   : Lime-400 (lebih bright)
+   Secondary : neutral-700
+   ============================================= */
+.dark {
+    --background:         oklch(0.115 0 0);
+    --foreground:         oklch(0.96 0 0);
+
+    --card:               oklch(0.155 0.006 131);
+    --card-foreground:    oklch(0.96 0 0);
+
+    --popover:            oklch(0.155 0.006 131);
+    --popover-foreground: oklch(0.96 0 0);
+
+    /* Primary — Lime-400 di dark (lebih terang) */
+    --primary:            oklch(0.840 0.228 131);
+    --primary-foreground: oklch(0.10 0.04 131);
+
+    /* Secondary — gray-700 */
+    --secondary:          oklch(0.30 0 0);
+    --secondary-foreground: oklch(0.95 0 0);
+
+    --muted:              oklch(0.24 0 0);
+    --muted-foreground:   oklch(0.62 0 0);
+
+    --accent:             oklch(0.25 0.035 131);
+    --accent-foreground:  oklch(0.96 0 0);
+
+    --destructive:        oklch(0.704 0.191 22.216);
+
+    --border:             oklch(1 0 0 / 9%);
+    --input:              oklch(1 0 0 / 13%);
+    --ring:               oklch(0.840 0.228 131);
+
+    --chart-1: oklch(0.840 0.228 131);
+    --chart-2: oklch(0.72 0 0);
+    --chart-3: oklch(0.65 0.01 130);
+    --chart-4: oklch(0.60 0.16 131);
+    --chart-5: oklch(0.50 0 0);
+
+    --sidebar:                    oklch(0.09 0.010 131);
+    --sidebar-foreground:         oklch(0.91 0.008 130);
+    --sidebar-primary:            oklch(0.840 0.228 131);
+    --sidebar-primary-foreground: oklch(0.10 0.04 131);
+    --sidebar-accent:             oklch(0.16 0.015 131);
+    --sidebar-accent-foreground:  oklch(0.93 0.006 130);
+    --sidebar-border:             oklch(1 0 0 / 7%);
+    --sidebar-ring:               oklch(0.840 0.228 131);
+}
+
+/* ============================================
+   BASE STYLES
+   ============================================= */
+@layer base {
+    * {
+        @apply border-border outline-ring/50;
+    }
+    body {
+        @apply bg-background text-foreground font-sans;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+    }
+    html {
+        @apply font-sans;
+    }
+    h1, h2, h3, h4, h5, h6 {
+        @apply font-heading;
+    }
+}
+
+/* ============================================
+   SCROLLBAR — Lime accent
+   ============================================= */
+::-webkit-scrollbar           { width: 5px; height: 5px; }
+::-webkit-scrollbar-track     { background: oklch(0.965 0 0); }
+::-webkit-scrollbar-thumb     { background: oklch(0.82 0.12 131); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: oklch(0.655 0.213 131); }
+
+/* ============================================
+   PRINT STYLES
+   ============================================= */
+@media print {
+    .no-print { display: none !important; }
+    body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+    @page { margin: 1cm; }
+}
