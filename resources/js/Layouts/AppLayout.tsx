@@ -140,6 +140,7 @@ function buildNavItems(role: string) {
             roles: ['admin'],
             children: [
                 { label: 'Pengguna & Akses', href: '/users' },
+                { label: 'API Clients', href: '/api-clients' },
                 { label: 'Activity Logs', href: '/audit-logs' },
             ],
         },

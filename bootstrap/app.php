@@ -23,6 +23,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'cf.zero.trust'   => \App\Http\Middleware\CheckCloudflareZeroTrust::class,
             'checkrole'       => \App\Http\Middleware\CheckRole::class,
             'api.key'         => \App\Http\Middleware\CheckApiKey::class,
+            'api.scope'       => \App\Http\Middleware\CheckApiScope::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

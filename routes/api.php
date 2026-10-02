@@ -51,9 +51,14 @@ if (config('app.debug')) {
 // Konsumen (SIPSMAD, PTSP, E-Surat) wajib kirim X-API-KEY / ?api_key / Bearer.
 // Key dikelola di Pengaturan (Setting api_key) atau env API_GATEWAY_KEY.
 Route::prefix('v1')->middleware(['throttle:120,1', 'api.key'])->group(function () {
-    Route::get('/students', [\App\Http\Controllers\Api\V1\StudentApiController::class, 'index']);
-    Route::get('/students/{nisn}', [\App\Http\Controllers\Api\V1\StudentApiController::class, 'show']);
-    Route::get('/staff', [\App\Http\Controllers\Api\V1\StaffApiController::class, 'index']);
-    Route::get('/classes', [\App\Http\Controllers\Api\V1\ClassApiController::class, 'index']);
-    Route::get('/academic-years/active', [\App\Http\Controllers\Api\V1\AcademicYearApiController::class, 'active']);
+    Route::get('/students', [\App\Http\Controllers\Api\V1\StudentApiController::class, 'index'])
+        ->middleware('api.scope:students:read');
+    Route::get('/students/{nisn}', [\App\Http\Controllers\Api\V1\StudentApiController::class, 'show'])
+        ->middleware('api.scope:students:read');
+    Route::get('/staff', [\App\Http\Controllers\Api\V1\StaffApiController::class, 'index'])
+        ->middleware('api.scope:staff:read');
+    Route::get('/classes', [\App\Http\Controllers\Api\V1\ClassApiController::class, 'index'])
+        ->middleware('api.scope:classes:read');
+    Route::get('/academic-years/active', [\App\Http\Controllers\Api\V1\AcademicYearApiController::class, 'active'])
+        ->middleware('api.scope:academic-years:read');
 });

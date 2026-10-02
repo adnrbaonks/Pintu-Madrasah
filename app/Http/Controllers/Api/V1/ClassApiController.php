@@ -21,7 +21,7 @@ class ClassApiController extends Controller
     )]
     public function index(Request $request)
     {
-        $query = Rombel::with(['classLevel', 'homeroomTeacher', 'academicYear']);
+        $query = Rombel::with(['schoolClass', 'homeroomTeacher', 'academicYear']);
 
         if ($academicYearId = $request->query('academic_year_id')) {
             if ($academicYearId === 'active') {

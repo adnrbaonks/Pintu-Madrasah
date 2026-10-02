@@ -65,6 +65,14 @@ Route::middleware('auth')->group(function () {
         Route::post('/academic-years/{academicYear}/toggle-lock', [SettingController::class, 'toggleLockAcademicYear'])->name('academic-years.toggle-lock');
     });
 
+    // ── API Clients (Gateway Keys) — admin only ───────────────────
+    Route::middleware('checkrole:admin')->prefix('api-clients')->name('api-clients.')->group(function () {
+        Route::get('/', [\App\Http\Controllers\ApiClientController::class, 'index'])->name('index');
+        Route::post('/', [\App\Http\Controllers\ApiClientController::class, 'store'])->name('store');
+        Route::post('/{apiClient}/toggle-active', [\App\Http\Controllers\ApiClientController::class, 'toggleActive'])->name('toggle-active');
+        Route::post('/{apiClient}/regenerate', [\App\Http\Controllers\ApiClientController::class, 'regenerate'])->name('regenerate');
+        Route::delete('/{apiClient}', [\App\Http\Controllers\ApiClientController::class, 'destroy'])->name('destroy');
+    });
     // ── Audit Logs — admin only ────────────────────────────────────
     Route::middleware('checkrole:admin')->prefix('audit-logs')->name('audit-logs.')->group(function () {
         Route::get('/', [AuditLogController::class, 'index'])->name('index');

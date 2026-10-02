@@ -14,6 +14,13 @@ use OpenApi\Attributes as OA;
     url: "/",
     description: "API Server"
 )]
+#[OA\SecurityScheme(
+    securityScheme: "ApiKeyAuth",
+    type: "apiKey",
+    in: "header",
+    name: "X-API-KEY",
+    description: "Kunci API per-klien dari menu API Clients (atau Setting api_key legacy). Scope: students:read, staff:read, classes:read, academic-years:read."
+)]
 abstract class Controller
 {
     //
