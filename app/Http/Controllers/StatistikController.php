@@ -17,14 +17,15 @@ class StatistikController extends Controller
     {
         $activeYear = AcademicYear::active();
 
-        // ── Usia Siswa ─────────────────────────────────────────────────
+        // ── Usia Siswa (portabel SQLite + MySQL: hitung di PHP) ─────
         $usiaDist = Student::where('status', 'active')
             ->whereNotNull('birth_date')
-            ->selectRaw("(strftime('%Y', 'now') - strftime('%Y', birth_date)) as usia, count(*) as total")
-            ->groupBy('usia')
-            ->orderBy('usia')
-            ->get()
-            ->map(fn ($r) => ['usia' => (int) $r->usia, 'total' => (int) $r->total]);
+            ->pluck('birth_date')
+            ->map(fn ($d) => \Carbon\Carbon::parse($d)->age)
+            ->countBy()
+            ->sortKeys()
+            ->map(fn ($total, $usia) => ['usia' => (int) $usia, 'total' => (int) $total])
+            ->values();
 
         // ── Bantuan Sosial ─────────────────────────────────────────────
         $bansos = [
@@ -71,23 +72,21 @@ class StatistikController extends Controller
             ->orderBy('rombels.name')
             ->get();
 
-        // ── GTK Demografi ──────────────────────────────────────────────
+        // ── GTK Demografi (portabel SQLite + MySQL: hitung di PHP) ──
         $gtkAgeGroups = Staff::where('is_active', true)
             ->whereNotNull('birth_date')
-            ->selectRaw("
-                CASE
-                    WHEN (strftime('%Y', 'now') - strftime('%Y', birth_date)) < 30 THEN '< 30 tahun'
-                    WHEN (strftime('%Y', 'now') - strftime('%Y', birth_date)) < 40 THEN '30–39 tahun'
-                    WHEN (strftime('%Y', 'now') - strftime('%Y', birth_date)) < 50 THEN '40–49 tahun'
-                    WHEN (strftime('%Y', 'now') - strftime('%Y', birth_date)) < 60 THEN '50–59 tahun'
-                    ELSE '60+ tahun'
-                END as kelompok_usia,
-                count(*) as total
-            ")
-            ->groupBy('kelompok_usia')
-            ->orderBy(DB::raw('MIN(birth_date)'), 'desc')
-            ->get()
-            ->map(fn ($r) => ['name' => $r->kelompok_usia, 'value' => (int) $r->total]);
+            ->pluck('birth_date')
+            ->map(fn ($d) => \Carbon\Carbon::parse($d)->age)
+            ->map(fn ($age) => match (true) {
+                $age < 30 => '< 30 tahun',
+                $age < 40 => '30–39 tahun',
+                $age < 50 => '40–49 tahun',
+                $age < 60 => '50–59 tahun',
+                default => '60+ tahun',
+            })
+            ->countBy()
+            ->map(fn ($total, $name) => ['name' => $name, 'value' => (int) $total])
+            ->values();
 
         $gtkEducation = Staff::where('is_active', true)
             ->select('highest_education', DB::raw('count(*) as total'))

@@ -20,6 +20,7 @@ class SettingController extends Controller
             'school_address' => Setting::get('school_address', ''),
             'madrasah_photo' => Setting::get('madrasah_photo', null),
             'gemini_api_key' => Setting::get('gemini_api_key', env('GEMINI_API_KEY', '')),
+            'api_key' => Setting::get('api_key', env('API_GATEWAY_KEY', '')),
         ];
 
         $academicYears = AcademicYear::orderBy('year', 'desc')->orderBy('semester', 'desc')->get();
@@ -41,6 +42,7 @@ class SettingController extends Controller
             'school_address' => 'nullable|string',
             'madrasah_photo' => 'nullable|image|max:5120',
             'gemini_api_key' => 'nullable|string|max:255',
+            'api_key' => 'nullable|string|max:255',
         ]);
 
         if ($request->hasFile('madrasah_photo')) {

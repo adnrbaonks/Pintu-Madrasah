@@ -31,8 +31,8 @@ class FormCetakController extends Controller
         return Inertia::render('Students/FormCetak', [
             'activeYear' => $activeYear,
             'rombels' => $rombels,
-            'madrasahName' => env('MADRASAH_NAME', 'MTs Negeri 5 Sumedang'),
-            'madrasahAddress' => env('MADRASAH_ADDRESS', ''),
+            'madrasahName' => \App\Models\Setting::get('madrasah_name', env('MADRASAH_NAME', 'MTs Negeri Contoh')),
+            'madrasahAddress' => \App\Models\Setting::get('school_address', env('MADRASAH_ADDRESS', '')),
         ]);
     }
 

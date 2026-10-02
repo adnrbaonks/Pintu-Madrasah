@@ -18,31 +18,39 @@ Route::middleware('auth')->get('/search', \App\Http\Controllers\Api\SearchContro
 
 // ── EMIS Integration — Token Reception dari Bookmarklet ───────────────
 // Endpoint ini dipanggil oleh bookmarklet di browser staf
-// Tidak perlu auth karena token-nya yang menjadi credential
-Route::prefix('emis')->group(function () {
+// Tidak perlu auth karena token-nya yang menjadi credential,
+// tapi dibatasi throttle agar tidak disalahgunakan dari internet.
+Route::prefix('emis')->middleware('throttle:60,1')->group(function () {
     Route::post('/token',  [EmisController::class, 'receiveToken']);
     Route::post('/pull',   [EmisController::class, 'triggerPull']);
     Route::post('/cancel-sync', [EmisController::class, 'cancelSync']);
     Route::get('/status',  [EmisController::class, 'tokenStatus']);
-    
+
     // Staging / Review Endpoints
     Route::get('/staging', [EmisController::class, 'stagingList']);
     Route::post('/commit', [EmisController::class, 'commitStaging']);
 });
 
-Route::prefix('emis-gtk')->group(function () {
+Route::prefix('emis-gtk')->middleware('throttle:60,1')->group(function () {
     Route::post('/token',  [EmisController::class, 'receiveGtkToken']);
     Route::post('/import', [EmisController::class, 'importGtkData']); // Terima data langsung dari bookmarklet
-    Route::post('/import-raw', [EmisController::class, 'importGtkRaw']); // Debugging HTML
     Route::post('/pull',   [EmisController::class, 'triggerGtkPull']);
     Route::get('/staging', [EmisController::class, 'gtkStagingList']);
     Route::post('/commit', [EmisController::class, 'commitGtkStaging']);
     Route::get('/progress',[EmisController::class, 'gtkProgress']);
 });
 
-// ── Open API Gateway (Sprint 5) ───────────────
-// Saat production, berikan middleware custom 'api.key' untuk melindungi
-Route::prefix('v1')->middleware('throttle:120,1')->group(function () {
+// Endpoint debugging HTML mentah — hanya aktif saat APP_DEBUG=true
+if (config('app.debug')) {
+    Route::prefix('emis-gtk')->middleware('throttle:30,1')->group(function () {
+        Route::post('/import-raw', [EmisController::class, 'importGtkRaw']);
+    });
+}
+
+// ── Open API Gateway — Protected by API Key ───────────────
+// Konsumen (SIPSMAD, PTSP, E-Surat) wajib kirim X-API-KEY / ?api_key / Bearer.
+// Key dikelola di Pengaturan (Setting api_key) atau env API_GATEWAY_KEY.
+Route::prefix('v1')->middleware(['throttle:120,1', 'api.key'])->group(function () {
     Route::get('/students', [\App\Http\Controllers\Api\V1\StudentApiController::class, 'index']);
     Route::get('/students/{nisn}', [\App\Http\Controllers\Api\V1\StudentApiController::class, 'show']);
     Route::get('/staff', [\App\Http\Controllers\Api\V1\StaffApiController::class, 'index']);

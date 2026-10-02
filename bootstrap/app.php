@@ -22,6 +22,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'role_or_permission' => \Spatie\Permission\Middleware\RoleOrPermissionMiddleware::class,
             'cf.zero.trust'   => \App\Http\Middleware\CheckCloudflareZeroTrust::class,
             'checkrole'       => \App\Http\Middleware\CheckRole::class,
+            'api.key'         => \App\Http\Middleware\CheckApiKey::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

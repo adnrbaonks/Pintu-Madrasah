@@ -22,6 +22,7 @@ export default function SettingsIndex({ settings, academicYears }: { settings: a
 
     const { data: integrationData, setData: setIntegrationData, post: postIntegration, processing: processingIntegration, errors: errorsIntegration } = useForm({
         gemini_api_key: settings.gemini_api_key || '',
+        api_key: settings.api_key || '',
         madrasah_name: settings.madrasah_name || '', // required by backend update()
     });
 
@@ -313,6 +314,21 @@ export default function SettingsIndex({ settings, academicYears }: { settings: a
                                             Dapatkan API Key secara gratis dari Google AI Studio. Key ini digunakan untuk fitur ekstraksi dokumen otomatis.
                                         </p>
                                         {errorsIntegration.gemini_api_key && <p className="text-red-500 text-xs">{errorsIntegration.gemini_api_key}</p>}
+                                    </div>
+
+                                    <div className="space-y-2 max-w-xl">
+                                        <Label htmlFor="api_key">API Gateway Key (SIPSMAD / PTSP / E-Surat)</Label>
+                                        <Input
+                                            id="api_key"
+                                            type="password"
+                                            placeholder="Isi dengan string acak panjang, mis. pm_live_..."
+                                            value={(integrationData as any).api_key}
+                                            onChange={e => setIntegrationData('api_key' as never, e.target.value as never)}
+                                        />
+                                        <p className="text-xs text-slate-500">
+                                            Aplikasi satelit wajib mengirim key ini via header X-API-KEY. Kosongkan untuk menonaktifkan API (status 503).
+                                        </p>
+                                        {(errorsIntegration as any).api_key && <p className="text-red-500 text-xs">{(errorsIntegration as any).api_key}</p>}
                                     </div>
 
                                     <Button type="submit" disabled={processingIntegration}>
