@@ -11,17 +11,32 @@ class GoogleDriveService
 {
     protected Google_Client $client;
     protected Google_Service_Drive $service;
-    protected string $folderId;
+    protected ?string $folderId;
 
     public function __construct()
     {
         $this->client = new Google_Client();
-        $this->client->setClientId(env('GDRIVE_CLIENT_ID'));
-        $this->client->setClientSecret(env('GDRIVE_CLIENT_SECRET'));
-        $this->client->refreshToken(env('GDRIVE_REFRESH_TOKEN'));
-        
+
+        // ── Prioritas 1: Service Account (sesuai blueprint + .env.example) ──
+        $saJson = env('GOOGLE_SERVICE_ACCOUNT_JSON');
+        if ($saJson && file_exists($saJson)) {
+            $this->client->setAuthConfig($saJson);
+            $this->client->addScope(Google_Service_Drive::DRIVE_FILE);
+        } else {
+            // ── Fallback: OAuth refresh-token (legacy GDRIVE_*) ──
+            if (env('GDRIVE_CLIENT_ID')) {
+                $this->client->setClientId(env('GDRIVE_CLIENT_ID'));
+            }
+            if (env('GDRIVE_CLIENT_SECRET')) {
+                $this->client->setClientSecret(env('GDRIVE_CLIENT_SECRET'));
+            }
+            if (env('GDRIVE_REFRESH_TOKEN')) {
+                $this->client->refreshToken(env('GDRIVE_REFRESH_TOKEN'));
+            }
+        }
+
         $this->service = new Google_Service_Drive($this->client);
-        $this->folderId = env('GDRIVE_FOLDER_ID');
+        $this->folderId = env('GOOGLE_DRIVE_FOLDER_ID') ?: env('GDRIVE_FOLDER_ID');
     }
 
     /**
@@ -30,6 +45,11 @@ class GoogleDriveService
     public function uploadFile(string $filePath, string $mimeType, string $originalName): ?array
     {
         try {
+            if (! $this->folderId) {
+                Log::warning('[GDRIVE] Folder ID belum dikonfigurasi (GOOGLE_DRIVE_FOLDER_ID)');
+                return null;
+            }
+
             $file = new Google_Service_Drive_DriveFile();
             $file->setName($originalName);
             $file->setParents([$this->folderId]);

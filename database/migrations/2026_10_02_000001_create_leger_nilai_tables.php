@@ -28,8 +28,8 @@ return new class extends Migration
             $table->id();
             $table->foreignUuid('student_id')->constrained('students')->cascadeOnDelete();
             $table->foreignId('subject_id')->constrained('subjects')->cascadeOnDelete();
-            $table->foreignId('academic_year_id')->constrained('academic_years')->cascadeOnDelete();
-            $table->foreignId('rombel_id')->constrained('rombels')->cascadeOnDelete();
+            $table->foreignUuid('academic_year_id')->constrained('academic_years')->cascadeOnDelete();
+            $table->foreignUuid('rombel_id')->constrained('rombels')->cascadeOnDelete();
             $table->string('semester', 10)->default('Ganjil')->comment('Ganjil | Genap');
 
             // Komponen nilai (P1 formatif, P2 formatif, STS, SAS)
