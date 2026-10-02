@@ -239,7 +239,7 @@ export default function WebhooksIndex({
                     <form onSubmit={handleSubmit} className="space-y-4">
                         <div className="space-y-1.5">
                             <Label>Event *</Label>
-                            <Select value={data.event} onValueChange={(v: string) => setData('event', v)}>
+                            <Select value={data.event} onValueChange={(v: string | null) => v && setData('event', v)}>
                                 <SelectTrigger><SelectValue /></SelectTrigger>
                                 <SelectContent>
                                     {Object.entries(events).map(([ev, desc]) => (
@@ -265,7 +265,7 @@ export default function WebhooksIndex({
                             <Label>Klien API (opsional)</Label>
                             <Select
                                 value={data.api_client_id || 'none'}
-                                onValueChange={(v: string) => setData('api_client_id', v === 'none' ? '' : v)}
+                                onValueChange={(v: string | null) => setData('api_client_id', !v || v === 'none' ? '' : v)}
                             >
                                 <SelectTrigger><SelectValue placeholder="Tanpa klien tertentu" /></SelectTrigger>
                                 <SelectContent>
