@@ -13,7 +13,7 @@ class Letter extends Model
     protected $fillable = [
         'type', 'number', 'number_seq', 'subject', 'category',
         'letter_date', 'received_date', 'from_to', 'description',
-        'attachment_path', 'status', 'disposisi', 'academic_year_id', 'created_by',
+        'attachment_path', 'status', 'disposisi', 'created_by',
     ];
 
     protected function casts(): array

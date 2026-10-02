@@ -75,8 +75,8 @@ function EmisSyncModal({ children }: { children: React.ReactNode }) {
                         setStagingData(stageData.data || []);
                         setIsLoadingStaging(false);
                     }
-                } catch (err) {
-                    console.error(err);
+                } catch {
+                    // polling status: abaikan, coba lagi 2 detik
                 }
             };
             checkStatus();
@@ -100,8 +100,7 @@ function EmisSyncModal({ children }: { children: React.ReactNode }) {
             } else {
                 setStagingData([]); // reset staging view
             }
-        } catch (error) {
-            console.error(error);
+        } catch {
             alert('Terjadi kesalahan saat menghubungi server.');
             setIsStartingSync(false);
         }
@@ -111,8 +110,8 @@ function EmisSyncModal({ children }: { children: React.ReactNode }) {
         try {
             await fetch('/api/emis/cancel-sync', { method: 'POST' });
             setSyncProgress(null);
-        } catch (error) {
-            console.error(error);
+        } catch {
+            // abaikan: pembatalan bersifat best-effort
         }
     };
 
@@ -128,8 +127,7 @@ function EmisSyncModal({ children }: { children: React.ReactNode }) {
             } else {
                 alert(data.message || 'Gagal menyimpan.');
             }
-        } catch (error) {
-            console.error(error);
+        } catch {
             alert('Gagal menyimpan.');
         }
         setIsCommitting(false);

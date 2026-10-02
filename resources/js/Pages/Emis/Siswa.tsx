@@ -56,8 +56,8 @@ export default function EmisSiswaSync() {
                 setProgressData(commitProg);
                 setStep('commit_done');
             }
-        } catch (e) {
-            console.error('Error fetching status', e);
+        } catch {
+            // polling status: abaikan error jaringan sesaat, coba lagi 2 detik
         } finally {
             setLoading(false);
         }

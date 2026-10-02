@@ -23,8 +23,7 @@ return new class extends Migration
             $table->string('attachment_path')->nullable()->comment('Path file lampiran (local storage)');
             $table->string('status', 20)->default('active')->comment('active | archived | disposisi');
             $table->text('disposisi')->nullable()->comment('Catatan disposisi pimpinan');
-            $table->string('academic_year_id')->nullable();
-            $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete();
+            $table->foreignUuid('created_by')->nullable()->constrained('users')->nullOnDelete();
             $table->timestamps();
             $table->softDeletes();
 

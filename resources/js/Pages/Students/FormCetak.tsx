@@ -44,7 +44,7 @@ export default function FormCetakIndex({ activeYear, rombels, madrasahName }: Pr
         fetch(`/siswa/form-cetak/data?rombel_id=${rombelId}`)
             .then(r => r.json())
             .then(d => { setRombelData(d.rombel); setStudents(d.students); })
-            .catch(console.error)
+            .catch(() => { setRombelData(null); setStudents([]); })
             .finally(() => setLoading(false));
     }, [rombelId]);
 
