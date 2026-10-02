@@ -141,6 +141,7 @@ function buildNavItems(role: string) {
             children: [
                 { label: 'Pengguna & Akses', href: '/users' },
                 { label: 'API Clients', href: '/api-clients' },
+                { label: 'Webhooks', href: '/webhooks' },
                 { label: 'Activity Logs', href: '/audit-logs' },
             ],
         },

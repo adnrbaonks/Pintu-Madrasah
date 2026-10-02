@@ -108,6 +108,15 @@ class PromotionController extends Controller
             }
         });
 
+        $targetRombel = Rombel::find($request->target_rombel_id);
+
+        \App\Support\Webhook::fire('student.promoted', [
+            'student_ids' => $request->student_ids,
+            'target_academic_year_id' => $request->target_academic_year_id,
+            'target_rombel_id' => $request->target_rombel_id,
+            'target_rombel' => $targetRombel?->name,
+        ]);
+
         return back()->with('success', count($request->student_ids) . ' siswa berhasil dinaikkan kelasnya.');
     }
 
@@ -125,6 +134,12 @@ class PromotionController extends Controller
             Student::whereIn('id', $request->student_ids)
                 ->update(['status' => 'graduated']);
         });
+
+        // Mass-update bypass model events → fire manual (batch)
+        \App\Support\Webhook::fire('student.mutated', [
+            'student_ids' => $request->student_ids,
+            'reason' => 'graduated',
+        ]);
 
         return back()->with('success', count($request->student_ids) . ' siswa berhasil diluluskan.');
     }

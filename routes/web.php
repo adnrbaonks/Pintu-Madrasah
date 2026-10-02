@@ -73,6 +73,15 @@ Route::middleware('auth')->group(function () {
         Route::post('/{apiClient}/regenerate', [\App\Http\Controllers\ApiClientController::class, 'regenerate'])->name('regenerate');
         Route::delete('/{apiClient}', [\App\Http\Controllers\ApiClientController::class, 'destroy'])->name('destroy');
     });
+    // ── Webhooks (Event Subscription) — admin only ───────────────
+    Route::middleware('checkrole:admin')->prefix('webhooks')->name('webhooks.')->group(function () {
+        Route::get('/', [\App\Http\Controllers\WebhookSubscriptionController::class, 'index'])->name('index');
+        Route::post('/', [\App\Http\Controllers\WebhookSubscriptionController::class, 'store'])->name('store');
+        Route::post('/{webhook}/toggle-active', [\App\Http\Controllers\WebhookSubscriptionController::class, 'toggleActive'])->name('toggle-active');
+        Route::post('/{webhook}/regenerate-secret', [\App\Http\Controllers\WebhookSubscriptionController::class, 'regenerateSecret'])->name('regenerate-secret');
+        Route::post('/{webhook}/test', [\App\Http\Controllers\WebhookSubscriptionController::class, 'test'])->name('test');
+        Route::delete('/{webhook}', [\App\Http\Controllers\WebhookSubscriptionController::class, 'destroy'])->name('destroy');
+    });
     // ── Audit Logs — admin only ────────────────────────────────────
     Route::middleware('checkrole:admin')->prefix('audit-logs')->name('audit-logs.')->group(function () {
         Route::get('/', [AuditLogController::class, 'index'])->name('index');
