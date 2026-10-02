@@ -1,74 +1,137 @@
-import { Head } from '@inertiajs/react';
+import { Head, Link } from '@inertiajs/react';
 import AppLayout from '@/Layouts/AppLayout';
 import {
     GraduationCap, Users, BookOpen, Building2,
-    TrendingUp, CheckCircle2, AlertCircle, Clock,
-    ChevronRight, ArrowUpRight,
+    TrendingUp, AlertCircle, CheckCircle2, Clock,
+    ArrowUpRight, RefreshCw, UserPlus, FileText
 } from 'lucide-react';
-import {
-    Card,
-    CardContent,
-    CardDescription,
-    CardHeader,
-    CardTitle,
-} from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Separator } from '@/components/ui/separator';
 import { Progress } from '@/components/ui/progress';
+import {
+    PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
+    BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend,
+} from 'recharts';
 
 interface DashboardProps {
     appName: string;
     madrasahName: string;
     stats: {
         totalSiswa: number;
-        totalGTK: number;
+        siswaL: number;
+        siswaP: number;
+        totalGtk: number;
+        gtkPns: number;
+        gtkPppk: number;
+        gtkHonorer: number;
+        gtkSertifikasi: number;
         totalRombel: number;
         tahunAjaran: string;
+        ppdbPending: number;
+        ppdbAccepted: number;
+        ppdbTotal: number;
+    };
+    completeness: {
+        siswaWithNik: number;
+        siswaVerifiedAi: number;
+        siswaBerNisn: number;
+    };
+    charts: {
+        genderSiswa: { name: string; value: number; color: string }[];
+        komposisiGtk: { name: string; value: number; color: string }[];
+        siswaPerRombel: { name: string; total: number }[];
     };
 }
 
-export default function Dashboard({ appName, madrasahName, stats }: DashboardProps) {
+// Custom tooltip recharts
+const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+        return (
+            <div className="bg-popover border border-border rounded-lg px-3 py-2 shadow-lg text-sm">
+                {label && <p className="font-medium mb-1">{label}</p>}
+                {payload.map((p: any) => (
+                    <p key={p.name} style={{ color: p.color || p.fill }} className="font-semibold">
+                        {p.name}: {p.value.toLocaleString('id-ID')}
+                    </p>
+                ))}
+            </div>
+        );
+    }
+    return null;
+};
+
+const RADIAN = Math.PI / 180;
+const renderCustomLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) => {
+    if (percent < 0.05) return null;
+    const r = innerRadius + (outerRadius - innerRadius) * 0.5;
+    const x = cx + r * Math.cos(-midAngle * RADIAN);
+    const y = cy + r * Math.sin(-midAngle * RADIAN);
+    return (
+        <text x={x} y={y} fill="white" textAnchor="middle" dominantBaseline="central" className="text-xs font-bold">
+            {`${(percent * 100).toFixed(0)}%`}
+        </text>
+    );
+};
+
+export default function Dashboard({ appName, madrasahName, stats, completeness, charts }: DashboardProps) {
     const statCards = [
         {
             label: 'Total Siswa Aktif',
             value: stats.totalSiswa.toLocaleString('id-ID'),
-            subtitle: 'Tahun ajaran berjalan',
+            subtitle: `L: ${stats.siswaL} | P: ${stats.siswaP}`,
             icon: GraduationCap,
-            trend: '+12 dari semester lalu',
-            trendUp: true,
+            badge: `${stats.ppdbPending > 0 ? `${stats.ppdbPending} PPDB pending` : 'Semua terdaftar'}`,
+            badgeVariant: stats.ppdbPending > 0 ? 'destructive' : 'secondary' as any,
+            href: '/students',
+            gradient: 'from-blue-500/20 to-sky-500/10',
+            iconColor: 'text-blue-500',
+            iconBg: 'bg-blue-500/10',
         },
         {
             label: 'Guru & Tenaga Kependidikan',
-            value: stats.totalGTK.toLocaleString('id-ID'),
-            subtitle: 'ASN, PPPK & Honorer',
+            value: stats.totalGtk.toLocaleString('id-ID'),
+            subtitle: `PNS: ${stats.gtkPns} | PPPK: ${stats.gtkPppk} | Honorer: ${stats.gtkHonorer}`,
             icon: Users,
-            trend: '4 eligibel TPG',
-            trendUp: null,
+            badge: `${stats.gtkSertifikasi} bersertifikat`,
+            badgeVariant: 'secondary' as any,
+            href: '/gtk',
+            gradient: 'from-emerald-500/20 to-green-500/10',
+            iconColor: 'text-emerald-500',
+            iconBg: 'bg-emerald-500/10',
         },
         {
             label: 'Rombongan Belajar',
             value: stats.totalRombel.toLocaleString('id-ID'),
             subtitle: 'Aktif semester ini',
             icon: BookOpen,
-            trend: 'Semua terkonfigurasi',
-            trendUp: true,
+            badge: 'Semua terkonfigurasi',
+            badgeVariant: 'secondary' as any,
+            href: '/rombel',
+            gradient: 'from-violet-500/20 to-purple-500/10',
+            iconColor: 'text-violet-500',
+            iconBg: 'bg-violet-500/10',
         },
         {
             label: 'Tahun Ajaran',
             value: stats.tahunAjaran,
             subtitle: 'Sedang berjalan',
             icon: Building2,
-            trend: null,
-            trendUp: null,
+            badge: null,
+            badgeVariant: null,
+            href: '/pengaturan',
+            gradient: 'from-amber-500/20 to-orange-500/10',
+            iconColor: 'text-amber-500',
+            iconBg: 'bg-amber-500/10',
         },
     ];
 
-    const quickAccess = [
-        { label: 'Master Data Siswa', href: '#', icon: GraduationCap, desc: 'Kelola biodata & dokumen siswa' },
-        { label: 'Master Data GTK', href: '#', icon: Users, desc: 'Kelola data guru & tenaga kependidikan' },
-        { label: 'Sinkronisasi EMIS', href: '#', icon: TrendingUp, desc: 'Tarik data dari portal Kemenag' },
-        { label: 'Cetak Administrasi', href: '#', icon: BookOpen, desc: 'Buku induk, kartu ujian, denah kelas' },
+    const quickLinks = [
+        { label: 'Master Data Siswa', href: '/students', icon: GraduationCap, desc: 'Kelola biodata & dokumen siswa' },
+        { label: 'Master Data GTK', href: '/gtk', icon: Users, desc: 'Kelola data guru & tenaga kependidikan' },
+        { label: 'Input PPDB', href: '/ppdb/registrations/create', icon: UserPlus, desc: 'Daftarkan siswa baru' },
+        { label: 'Sync EMIS Siswa', href: '/emis/siswa', icon: RefreshCw, desc: 'Sinkronisasi dari portal Kemenag' },
+        { label: 'Leger Nilai', href: '/kelas/leger', icon: FileText, desc: 'Rekap nilai siswa per kelas' },
+        { label: 'Cetak Format', href: '/cetak-format', icon: TrendingUp, desc: 'Biodata, kartu ujian, denah kelas' },
     ];
 
     const systemStatus = [
@@ -76,150 +139,236 @@ export default function Dashboard({ appName, madrasahName, stats }: DashboardPro
         { label: 'Database MySQL', status: 'online' },
         { label: 'Redis Cache', status: 'online' },
         { label: 'Cloudflare Tunnel', status: 'online' },
-        { label: 'Integrasi EMIS', status: 'standby' },
         { label: 'AI Verifier (Gemini)', status: 'standby' },
-        { label: 'Google Drive Sync', status: 'setup' },
+        { label: 'EMIS GTK Auto Sync', status: 'standby' },
+        { label: 'Google Drive', status: 'setup' },
     ];
 
-    const adminProgress = [
-        { label: 'Kelengkapan Data Siswa', value: 0, total: 100 },
-        { label: 'Sinkronisasi EMIS', value: 0, total: 100 },
-        { label: 'Dokumen Terverifikasi', value: 0, total: 100 },
-    ];
+    const statusConfig: Record<string, { color: string; label: string; dot: string }> = {
+        online:  { color: 'text-emerald-500', label: 'Online',      dot: 'bg-emerald-500' },
+        standby: { color: 'text-amber-500',   label: 'Standby',     dot: 'bg-amber-400' },
+        setup:   { color: 'text-rose-400',    label: 'Perlu Setup', dot: 'bg-rose-400' },
+    };
 
     return (
         <AppLayout>
             <Head title="Dashboard" />
 
-            {/* Page Header */}
+            {/* Header */}
             <div className="mb-6">
-                <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
-                <p className="mt-1 text-sm text-muted-foreground">
+                <h1 className="text-2xl font-bold">Dashboard</h1>
+                <p className="text-sm text-muted-foreground mt-0.5">
                     {appName} — <span className="font-medium text-foreground">{madrasahName}</span>
                 </p>
             </div>
 
-            {/* Stat Cards — Bento Grid */}
+            {/* ── Stat Cards ───────────────────────────────────────────── */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4 mb-6">
                 {statCards.map((card) => {
                     const Icon = card.icon;
                     return (
-                        <Card key={card.label} className="hover:shadow-md transition-all duration-200 hover:-translate-y-0.5">
-                            <CardHeader className="flex flex-row items-center justify-between pb-2">
-                                <CardDescription className="text-xs font-medium uppercase tracking-wide">
-                                    {card.label}
-                                </CardDescription>
-                                <div className="rounded-lg bg-primary/10 p-2">
-                                    <Icon className="h-4 w-4 text-primary" />
-                                </div>
-                            </CardHeader>
-                            <CardContent>
-                                <p className="text-3xl font-bold text-foreground">{card.value}</p>
-                                <p className="text-xs text-muted-foreground mt-1">{card.subtitle}</p>
-                                {card.trend && (
-                                    <div className="mt-2">
-                                        <Badge
-                                            variant={card.trendUp === true ? 'default' : card.trendUp === false ? 'destructive' : 'secondary'}
-                                            className="text-xs"
-                                        >
-                                            {card.trend}
-                                        </Badge>
+                        <Link key={card.label} href={card.href}>
+                            <Card className={`hover:shadow-lg transition-all duration-200 hover:-translate-y-0.5 cursor-pointer bg-gradient-to-br ${card.gradient} border-border/60`}>
+                                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                                    <CardDescription className="text-xs font-medium uppercase tracking-wide text-foreground/60">
+                                        {card.label}
+                                    </CardDescription>
+                                    <div className={`rounded-lg p-2 ${card.iconBg}`}>
+                                        <Icon className={`h-4 w-4 ${card.iconColor}`} />
                                     </div>
-                                )}
-                            </CardContent>
-                        </Card>
+                                </CardHeader>
+                                <CardContent>
+                                    <p className="text-3xl font-bold">{card.value}</p>
+                                    <p className="text-xs text-muted-foreground mt-1">{card.subtitle}</p>
+                                    {card.badge && (
+                                        <Badge variant={card.badgeVariant} className="mt-2 text-xs">
+                                            {card.badge}
+                                        </Badge>
+                                    )}
+                                </CardContent>
+                            </Card>
+                        </Link>
                     );
                 })}
             </div>
 
-            {/* Main Content Grid */}
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+            {/* ── Baris 2: Charts + Status Sistem ─────────────────────── */}
+            <div className="grid grid-cols-1 gap-5 lg:grid-cols-3 mb-5">
 
-                {/* Quick Access */}
-                <Card className="lg:col-span-2">
-                    <CardHeader>
-                        <CardTitle className="text-base">Akses Cepat</CardTitle>
-                        <CardDescription>Menu yang sering digunakan operator TU</CardDescription>
+                {/* Chart: Distribusi Gender Siswa */}
+                <Card>
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-semibold">Distribusi Siswa</CardTitle>
+                        <CardDescription className="text-xs">Berdasarkan jenis kelamin</CardDescription>
                     </CardHeader>
                     <CardContent>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            {quickAccess.map((item) => {
-                                const Icon = item.icon;
-                                return (
-                                    <Button
-                                        key={item.label}
-                                        variant="outline"
-                                        className="h-auto flex items-center gap-4 p-4 justify-start hover:border-primary/40 hover:bg-accent group"
-                                        asChild
+                        <div className="h-40">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <PieChart>
+                                    <Pie
+                                        data={charts.genderSiswa}
+                                        cx="50%"
+                                        cy="50%"
+                                        labelLine={false}
+                                        label={renderCustomLabel}
+                                        outerRadius={65}
+                                        dataKey="value"
                                     >
-                                        <a href={item.href}>
-                                            <div className="rounded-lg bg-primary/10 p-2.5 group-hover:bg-primary/15 transition-colors shrink-0">
-                                                <Icon className="h-5 w-5 text-primary" />
-                                            </div>
-                                            <div className="flex-1 min-w-0 text-left">
-                                                <p className="text-sm font-medium leading-tight">{item.label}</p>
-                                                <p className="text-xs text-muted-foreground mt-0.5 truncate">{item.desc}</p>
-                                            </div>
-                                            <ArrowUpRight className="h-4 w-4 text-muted-foreground group-hover:text-primary shrink-0 transition-colors" />
-                                        </a>
-                                    </Button>
-                                );
-                            })}
+                                        {charts.genderSiswa.map((entry, i) => (
+                                            <Cell key={i} fill={entry.color} />
+                                        ))}
+                                    </Pie>
+                                    <Tooltip content={<CustomTooltip />} />
+                                </PieChart>
+                            </ResponsiveContainer>
+                        </div>
+                        <div className="flex items-center justify-center gap-4 mt-2">
+                            {charts.genderSiswa.map(d => (
+                                <div key={d.name} className="flex items-center gap-1.5 text-xs">
+                                    <span className="h-2.5 w-2.5 rounded-full" style={{ background: d.color }} />
+                                    <span className="text-muted-foreground">{d.name}</span>
+                                    <span className="font-bold">{d.value.toLocaleString('id-ID')}</span>
+                                </div>
+                            ))}
                         </div>
                     </CardContent>
                 </Card>
 
-                {/* System Status */}
+                {/* Chart: Komposisi GTK */}
                 <Card>
-                    <CardHeader>
-                        <CardTitle className="text-base">Status Sistem</CardTitle>
-                        <CardDescription>Monitoring layanan real-time</CardDescription>
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-semibold">Komposisi GTK</CardTitle>
+                        <CardDescription className="text-xs">Status kepegawaian aktif</CardDescription>
                     </CardHeader>
-                    <CardContent className="space-y-0">
-                        {systemStatus.map((item, idx) => {
-                            const config: Record<string, { icon: typeof CheckCircle2; label: string; variant: 'default' | 'secondary' | 'outline' }> = {
-                                online:  { icon: CheckCircle2, label: 'Online', variant: 'default' },
-                                standby: { icon: Clock, label: 'Standby', variant: 'secondary' },
-                                setup:   { icon: AlertCircle, label: 'Perlu Setup', variant: 'outline' },
-                            };
-                            const { icon: Icon, label, variant } = config[item.status];
+                    <CardContent>
+                        <div className="h-40">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={charts.komposisiGtk} barSize={28}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                                    <XAxis dataKey="name" tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} axisLine={false} tickLine={false} />
+                                    <YAxis tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} axisLine={false} tickLine={false} />
+                                    <Tooltip content={<CustomTooltip />} />
+                                    <Bar dataKey="value" radius={[4, 4, 0, 0]} label={{ position: 'top', fontSize: 11, fill: 'hsl(var(--foreground))' }}>
+                                        {charts.komposisiGtk.map((entry, i) => (
+                                            <Cell key={i} fill={entry.color} />
+                                        ))}
+                                    </Bar>
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                        <p className="text-xs text-muted-foreground text-center mt-2">
+                            {stats.gtkSertifikasi} dari {stats.totalGtk} guru telah bersertifikasi
+                        </p>
+                    </CardContent>
+                </Card>
+
+                {/* Status Sistem */}
+                <Card>
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-semibold">Status Layanan</CardTitle>
+                        <CardDescription className="text-xs">Monitoring real-time</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-1">
+                        {systemStatus.map((item) => {
+                            const cfg = statusConfig[item.status];
                             return (
-                                <div key={item.label}>
-                                    {idx > 0 && <Separator className="my-1" />}
-                                    <div className="flex items-center justify-between py-1.5">
-                                        <span className="text-sm text-foreground">{item.label}</span>
-                                        <Badge variant={variant} className="gap-1 text-xs">
-                                            <Icon className="h-3 w-3" />
-                                            {label}
-                                        </Badge>
+                                <div key={item.label} className="flex items-center justify-between py-1.5">
+                                    <span className="text-sm">{item.label}</span>
+                                    <div className="flex items-center gap-1.5">
+                                        <span className={`h-1.5 w-1.5 rounded-full ${cfg.dot} ${item.status === 'online' ? 'animate-pulse' : ''}`} />
+                                        <span className={`text-xs font-medium ${cfg.color}`}>{cfg.label}</span>
                                     </div>
                                 </div>
                             );
                         })}
                     </CardContent>
                 </Card>
+            </div>
 
-                {/* Progress Kelengkapan Admin */}
+            {/* ── Baris 3: Quick Links + Progress ─────────────────────── */}
+            <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
+
+                {/* Quick Links */}
                 <Card className="lg:col-span-3">
                     <CardHeader>
-                        <CardTitle className="text-base">Progress Kelengkapan Administrasi</CardTitle>
-                        <CardDescription>Status pengisian data tahun ajaran {stats.tahunAjaran}</CardDescription>
+                        <CardTitle className="text-sm font-semibold">Akses Cepat</CardTitle>
+                        <CardDescription className="text-xs">Menu yang sering digunakan</CardDescription>
                     </CardHeader>
                     <CardContent>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-                            {adminProgress.map((item) => (
-                                <div key={item.label} className="space-y-2">
-                                    <div className="flex justify-between text-sm">
-                                        <span className="text-muted-foreground font-medium">{item.label}</span>
-                                        <span className="font-semibold text-foreground">{item.value}%</span>
-                                    </div>
-                                    <Progress value={item.value} className="h-2" />
-                                    <p className="text-xs text-muted-foreground">
-                                        {item.value === 0 ? 'Belum dimulai' : `${item.value} dari ${item.total} selesai`}
-                                    </p>
-                                </div>
-                            ))}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {quickLinks.map((item) => {
+                                const Icon = item.icon;
+                                return (
+                                    <Link
+                                        key={item.label}
+                                        href={item.href}
+                                        className="group flex items-center gap-3 rounded-lg border border-border/60 p-3 hover:border-primary/40 hover:bg-accent transition-all duration-150"
+                                    >
+                                        <div className="rounded-lg bg-primary/10 p-2 group-hover:bg-primary/15 transition-colors shrink-0">
+                                            <Icon className="h-4 w-4 text-primary" />
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-sm font-medium truncate">{item.label}</p>
+                                            <p className="text-xs text-muted-foreground truncate">{item.desc}</p>
+                                        </div>
+                                        <ArrowUpRight className="h-3.5 w-3.5 text-muted-foreground group-hover:text-primary transition-colors shrink-0" />
+                                    </Link>
+                                );
+                            })}
                         </div>
+                    </CardContent>
+                </Card>
+
+                {/* Progress Kelengkapan Data */}
+                <Card className="lg:col-span-2">
+                    <CardHeader>
+                        <CardTitle className="text-sm font-semibold">Kelengkapan Data Siswa</CardTitle>
+                        <CardDescription className="text-xs">Tahun ajaran {stats.tahunAjaran}</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-5">
+                        {[
+                            {
+                                label: 'Siswa Ber-NISN', pct: completeness.siswaBerNisn,
+                                desc: `${completeness.siswaBerNisn}% terisi`, color: 'bg-blue-500'
+                            },
+                            {
+                                label: 'Data NIK Terisi', pct: completeness.siswaWithNik,
+                                desc: `${completeness.siswaWithNik}% terisi`, color: 'bg-amber-500'
+                            },
+                            {
+                                label: 'Diverifikasi AI', pct: completeness.siswaVerifiedAi,
+                                desc: `${completeness.siswaVerifiedAi}% terverifikasi`, color: 'bg-emerald-500'
+                            },
+                        ].map((item) => (
+                            <div key={item.label} className="space-y-1.5">
+                                <div className="flex justify-between text-xs">
+                                    <span className="text-muted-foreground font-medium">{item.label}</span>
+                                    <span className="font-bold text-foreground">{item.pct}%</span>
+                                </div>
+                                <div className="h-2 rounded-full bg-muted overflow-hidden">
+                                    <div
+                                        className={`h-full rounded-full ${item.color} transition-all duration-700`}
+                                        style={{ width: `${item.pct}%` }}
+                                    />
+                                </div>
+                                <p className="text-xs text-muted-foreground">{item.desc}</p>
+                            </div>
+                        ))}
+
+                        {/* PPDB Summary */}
+                        {stats.ppdbTotal > 0 && (
+                            <div className="mt-4 pt-4 border-t border-border">
+                                <p className="text-xs font-medium text-muted-foreground mb-2">PPDB Aktif</p>
+                                <div className="flex gap-2">
+                                    <Badge variant="outline" className="text-amber-500 border-amber-500/30 text-xs">
+                                        {stats.ppdbPending} Pending
+                                    </Badge>
+                                    <Badge variant="outline" className="text-emerald-500 border-emerald-500/30 text-xs">
+                                        {stats.ppdbAccepted} Diterima
+                                    </Badge>
+                                </div>
+                            </div>
+                        )}
                     </CardContent>
                 </Card>
             </div>

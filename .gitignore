@@ -25,3 +25,17 @@ _ide_helper.php
 Homestead.json
 Homestead.yaml
 Thumbs.db
+# ── Pintu Madrasah: data lokal & scratch (jangan commit) ──
+*.pdf
+*.xlsm
+*.xlsx
+composer.phar
+scratch.json
+fix-routes.mjs
+read_excel.php
+test_*.php
+test-*.js
+test-*.mjs
+test-lucide.*
+test-render.*
+/storage/api-docs/

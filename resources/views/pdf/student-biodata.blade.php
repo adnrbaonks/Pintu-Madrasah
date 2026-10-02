@@ -99,7 +99,7 @@
 
     <div class="section-title">C. DATA AKADEMIK</div>
     <table class="table">
-        <tr><td class="label">Rombel Saat Ini</td><td class="colon">:</td><td class="value">{{ $student->currentRombel?->name ?? 'Belum masuk rombel' }}</td></tr>
+        <tr><td class="label">Rombel Saat Ini</td><td class="colon">:</td><td class="value">{{ $student->currentRombel()?->name ?? 'Belum masuk rombel' }}</td></tr>
         <tr><td class="label">Tahun Ajaran</td><td class="colon">:</td><td class="value">{{ $student->currentCohort?->academicYear?->full_label ?? '-' }}</td></tr>
         <tr><td class="label">Status Siswa</td><td class="colon">:</td><td class="value">{{ $student->status_label }}</td></tr>
     </table>

@@ -99,7 +99,7 @@ export default function SeatLayout({ rombels, students: initialStudents, activeR
     const handleSelectRombel = (e: React.ChangeEvent<HTMLSelectElement>) => {
         const rombel_id = e.target.value;
         if (rombel_id) {
-            router.get(route('students.seat-layout'), { rombel_id }, { preserveState: true });
+            router.get('/students/seat-layout', { rombel_id }, { preserveState: true });
         }
     };
 
