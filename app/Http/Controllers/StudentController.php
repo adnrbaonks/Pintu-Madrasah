@@ -183,10 +183,26 @@ class StudentController extends Controller
     {
         $student->load(['currentCohort.rombel', 'currentCohort.academicYear']);
 
+        $verification = \App\Models\DocumentVerification::issue(
+            \App\Models\DocumentVerification::TYPE_BIODATA,
+            $student,
+            [
+                'madrasah' => \App\Models\Setting::get('madrasah_name', env('MADRASAH_NAME', 'MTs')),
+                'nama' => $student->name,
+                'nisn' => $student->nisn,
+                'nik' => $student->nik,
+                'rombel' => $student->currentCohort?->rombel?->name,
+                'status' => $student->status_label,
+                'tanggal_cetak' => now()->format('d-m-Y'),
+            ]
+        );
+
         $pdf = Pdf::loadView('pdf.student-biodata', [
             'student' => $student,
             'madrasahName' => Setting::get('madrasah_name', env('MADRASAH_NAME', 'MTs Negeri Contoh')),
             'madrasahAddress' => Setting::get('school_address', env('MADRASAH_ADDRESS', 'Jl. Contoh No. 1')),
+            'qrDataUri' => \App\Support\Qr::dataUri($verification->verifyUrl()),
+            'verifyUrl' => $verification->verifyUrl(),
         ]);
 
         return $pdf->stream("Biodata_{$student->nisn}_{$student->name}.pdf");

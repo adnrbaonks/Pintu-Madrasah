@@ -71,9 +71,13 @@
         <p>{{ $madrasahAddress }}</p>
     </div>
 
-    <!-- Placeholder for QR code. Laravel DomPDF supports img tag, so we could generate a base64 QR code and put it here -->
+    <!-- QR verifikasi keaslian: pindai untuk cek di portal /v/{token} -->
     <div class="qr-code">
-        [QR CODE]
+        @isset($qrDataUri)
+            <img src="{{ $qrDataUri }}" style="width: 78px; height: 78px;" alt="QR verifikasi">
+        @else
+            [QR CODE]
+        @endisset
     </div>
 
     <h3 style="text-align: center;">BIODATA PESERTA DIDIK</h3>
@@ -109,6 +113,10 @@
         <br><br><br>
         <p><strong>Kepala Madrasah</strong></p>
     </div>
+
+    @isset($verifyUrl)
+        <p style="font-size: 10px; color: #666; margin-top: 20px;">Verifikasi keaslian: {{ $verifyUrl }}</p>
+    @endisset
 
 </body>
 </html>

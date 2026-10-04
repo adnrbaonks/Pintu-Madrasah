@@ -26,6 +26,14 @@ use Inertia\Inertia;
 |--------------------------------------------------------------------------
 */
 
+// ── Verifikasi Dokumen Publik via QR (tanpa login) ────────────────────
+Route::get('/v/{token}', [\App\Http\Controllers\VerifyController::class, 'show'])
+    ->where('token', '[A-Za-z0-9]+')
+    ->name('verify.show');
+Route::get('/v/{token}/qr', [\App\Http\Controllers\VerifyController::class, 'qr'])
+    ->where('token', '[A-Za-z0-9]+')
+    ->name('verify.qr');
+
 // ── PPDB Publik (Guest Only) ───────────────────────────────────────────
 Route::middleware(['guest', 'throttle:10,1'])->group(function () {
     Route::get('/ppdb/daftar', [\App\Http\Controllers\PpdbController::class, 'publicForm'])->name('ppdb.public.form');

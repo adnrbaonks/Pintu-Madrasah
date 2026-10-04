@@ -90,11 +90,24 @@ class LetterController extends Controller
             $attachmentPath = $request->file('attachment')->store('persuratan', 'public');
         }
 
-        Letter::create([
+        $letter = Letter::create([
             ...$data,
             'attachment_path' => $attachmentPath ? '/storage/' . $attachmentPath : null,
             'created_by'      => auth()->id(),
         ]);
+
+        // Token verifikasi QR (stabil per surat)
+        \App\Models\DocumentVerification::issue(
+            \App\Models\DocumentVerification::TYPE_SURAT_KELUAR,
+            $letter,
+            [
+                'madrasah' => Setting::get('madrasah_name', 'MTs'),
+                'nomor' => $data['number'] ?? $letter->number,
+                'perihal' => $data['subject'],
+                'tanggal' => $data['letter_date'],
+                'tujuan' => $data['from_to'],
+            ]
+        );
 
         return redirect()->route('persuratan.index')
             ->with('success', 'Surat berhasil disimpan.');
@@ -102,9 +115,18 @@ class LetterController extends Controller
 
     public function show(Letter $letter): Response
     {
+        $verification = \App\Models\DocumentVerification::where('document_type', \App\Models\DocumentVerification::TYPE_SURAT_KELUAR)
+            ->where('verifiable_type', Letter::class)
+            ->where('verifiable_id', $letter->getKey())
+            ->first();
+
         return Inertia::render('Persuratan/Show', [
             'letter'     => $letter->load('creator:id,name'),
             'categories' => $this->categories(),
+            'verification' => $verification ? [
+                'token' => $verification->token,
+                'url' => $verification->verifyUrl(),
+            ] : null,
         ]);
     }
 

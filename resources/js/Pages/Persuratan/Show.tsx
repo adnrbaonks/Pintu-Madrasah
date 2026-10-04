@@ -21,7 +21,7 @@ interface Letter {
     creator?: { id: string; name: string };
 }
 
-export default function PersuratanShow({ letter }: { letter: Letter; categories: string[] }) {
+export default function PersuratanShow({ letter, verification }: { letter: Letter; categories: string[]; verification?: { token: string; url: string } | null }) {
     const isKeluar = letter.type === 'keluar';
     const rows: [string, string | undefined][] = [
         ['Nomor Surat', letter.number || '-'],
@@ -88,6 +88,13 @@ export default function PersuratanShow({ letter }: { letter: Letter; categories:
                             </a>
                         ) : (
                             <p className="text-sm text-muted-foreground">Tidak ada lampiran.</p>
+                        )}
+                        {verification && (
+                            <div className="mt-4 pt-4 border-t">
+                                <p className="text-sm font-medium mb-2">QR Verifikasi</p>
+                                <img src={`/v/${verification.token}/qr`} alt="QR verifikasi surat" className="w-32 h-32 border rounded" />
+                                <p className="text-[11px] text-muted-foreground mt-2 break-all">{verification.url}</p>
+                            </div>
                         )}
                     </CardContent>
                 </Card>
