@@ -160,13 +160,11 @@ class MutationController extends Controller
             if ($student) {
                 if ($mutation->type === 'in') {
                     $student->update(['status' => 'active']);
+                    // Penempatan rombel dilakukan manual via Penempatan Siswa
                 } else if ($mutation->type === 'out') {
                     $student->update(['status' => 'mutated_out']);
-                    // Nonaktifkan cohort saat ini jika ada
-                    $currentCohort = $student->cohorts()->where('is_active', true)->first();
-                    if ($currentCohort) {
-                        $currentCohort->update(['is_active' => false]);
-                    }
+                    // Nonaktifkan semua cohort aktif (kolom status, bukan is_active)
+                    $student->cohorts()->where('status', 'active')->update(['status' => 'inactive']);
                 }
             }
 

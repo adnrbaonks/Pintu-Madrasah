@@ -70,7 +70,7 @@ class StudentController extends Controller
     public function updateStatus(Request $request, Student $student)
     {
         $validated = $request->validate([
-            'status' => 'required|in:active,graduated,moved,dropped_out',
+            'status' => 'required|in:active,graduated,mutated_out,dropped',
         ]);
 
         $student->update($validated);
@@ -79,6 +79,24 @@ class StudentController extends Controller
         if ($validated['status'] !== 'active') {
             if ($cohort = $student->currentCohort) {
                 $cohort->update(['status' => 'inactive']);
+            }
+            // Sinkron balik ke register mutasi agar tidak timpang:
+            // status non-aktif manual wajib punya jejak record mutasi.
+            if (in_array($validated['status'], ['mutated_out', 'dropped'], true)) {
+                $exists = \App\Models\StudentMutation::where('student_id', $student->id)
+                    ->where('status', 'completed')
+                    ->exists();
+                if (! $exists) {
+                    \App\Models\StudentMutation::create([
+                        'student_id' => $student->id,
+                        'name' => $student->name,
+                        'nisn' => $student->nisn,
+                        'type' => 'out',
+                        'mutation_date' => now()->toDateString(),
+                        'reason' => 'Dicatat manual dari Master Siswa',
+                        'status' => 'completed',
+                    ]);
+                }
             }
         } else {
             // Jika dikembalikan ke aktif

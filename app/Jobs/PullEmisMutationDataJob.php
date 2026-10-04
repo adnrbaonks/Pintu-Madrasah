@@ -47,13 +47,21 @@ class PullEmisMutationDataJob implements ShouldQueue
                         if (!$emisStudentId) continue;
 
                         $student = $item['student'] ?? [];
-                        
+
+                        // Tautkan ke siswa lokal bila NISN cocok — tetap draft (pending)
+                        // sampai TU memverifikasi dokumen dan menyelesaikan manual.
+                        $localId = null;
+                        if (! empty($student['nisn'])) {
+                            $localId = \App\Models\Student::where('nisn', $student['nisn'])->value('id');
+                        }
+
                         StudentMutation::updateOrCreate(
                             [
                                 'emis_student_id' => $emisStudentId,
                                 'type' => $type,
                             ],
                             [
+                                'student_id' => $localId,
                                 'nisn' => $student['nisn'] ?? null,
                                 'name' => $student['full_name'] ?? $item['name'] ?? null,
                                 'mutation_date' => $item['mutation_date'] ?? $item['mutation_plan_date'] ?? null,

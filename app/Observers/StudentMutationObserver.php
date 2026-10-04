@@ -7,18 +7,22 @@ use App\Support\Webhook;
 
 class StudentMutationObserver
 {
-    public function created(StudentMutation $mutation): void
+    /**
+     * Mutasi keluar diliput StudentObserver (perubahan status siswa).
+     * Di sini hanya: mutasi MASUK yang selesai = siswa aktif baru
+     * (antrean kartu RFID SIPSMAD).
+     */
+    public function updated(StudentMutation $mutation): void
     {
-        $student = $mutation->student;
-
-        Webhook::fire('student.mutated', $student
-            ? Webhook::studentPayload($student, [
-                'reason' => $mutation->type ?? 'mutated_out',
+        if ($mutation->wasChanged('status')
+            && $mutation->status === 'completed'
+            && $mutation->type === 'in'
+            && $mutation->student
+        ) {
+            Webhook::fire('student.created', Webhook::studentPayload($mutation->student, [
+                'via' => 'mutation_in',
                 'mutation_id' => $mutation->id,
-            ])
-            : [
-                'mutation_id' => $mutation->id,
-                'reason' => $mutation->type ?? 'mutated_out',
-            ]);
+            ]));
+        }
     }
 }

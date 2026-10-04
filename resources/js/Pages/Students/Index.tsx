@@ -431,8 +431,8 @@ export default function Index({ students, filters, rombels }: { students: Pagina
                                                 <SelectItem value="all">Semua Status</SelectItem>
                                                 <SelectItem value="active">Aktif</SelectItem>
                                                 <SelectItem value="graduated">Lulus</SelectItem>
-                                                <SelectItem value="moved">Mutasi</SelectItem>
-                                                <SelectItem value="dropped_out">Keluar/DO</SelectItem>
+                                                <SelectItem value="mutated_out">Mutasi</SelectItem>
+                                                <SelectItem value="dropped">Keluar/DO</SelectItem>
                                             </SelectContent>
                                         </Select>
                                     </div>
