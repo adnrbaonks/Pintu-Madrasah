@@ -348,11 +348,9 @@ export default function AppLayout({ children }: AppLayoutProps) {
                                     </div>
                                 </DropdownMenuLabel>
                                 <DropdownMenuSeparator />
-                                <DropdownMenuItem asChild>
-                                    <Link href="/profile" className="cursor-pointer">
-                                        <User className="w-4 h-4 mr-2" />
-                                        Profil Saya
-                                    </Link>
+                                <DropdownMenuItem render={<Link href="/profile" className="cursor-pointer" />}>
+                                    <User className="w-4 h-4 mr-2" />
+                                    Profil Saya
                                 </DropdownMenuItem>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem className="text-destructive cursor-pointer" onClick={handleLogout}>
@@ -409,11 +407,9 @@ export default function AppLayout({ children }: AppLayoutProps) {
                                         </div>
                                     </DropdownMenuLabel>
                                     <DropdownMenuSeparator />
-                                    <DropdownMenuItem asChild>
-                                        <Link href="/profile" className="cursor-pointer">
-                                            <User className="w-4 h-4 mr-2" />
-                                            Profil Saya
-                                        </Link>
+                                    <DropdownMenuItem render={<Link href="/profile" className="cursor-pointer" />}>
+                                        <User className="w-4 h-4 mr-2" />
+                                        Profil Saya
                                     </DropdownMenuItem>
                                     <DropdownMenuSeparator />
                                     <DropdownMenuItem className="text-destructive cursor-pointer" onClick={handleLogout}>
