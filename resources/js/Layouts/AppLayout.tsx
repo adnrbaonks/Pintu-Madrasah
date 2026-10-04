@@ -1,4 +1,4 @@
-import { ReactNode, useState, useEffect, useCallback } from 'react';
+import { ReactNode, useState, useEffect, useCallback, useRef } from 'react';
 import { Link, router, usePage } from '@inertiajs/react';
 import {
     LayoutDashboard, GraduationCap, Users, BookOpen,
@@ -252,9 +252,17 @@ export default function AppLayout({ children }: AppLayoutProps) {
         return () => window.removeEventListener('keydown', handleKey);
     }, []);
 
-    // Show flash messages
-    if (flash?.success) toast.success(flash.success);
-    if (flash?.error)   toast.error(flash.error);
+    // Show flash messages — sekali per pesan (bukan tiap render)
+    const shownFlash = useRef<string | null>(null);
+    useEffect(() => {
+        const key = flash?.success ? `ok:${flash.success}` : flash?.error ? `err:${flash.error}` : null;
+        if (key && shownFlash.current !== key) {
+            shownFlash.current = key;
+            if (flash?.success) toast.success(flash.success);
+            else if (flash?.error) toast.error(flash.error);
+        }
+        if (!key) shownFlash.current = null;
+    }, [flash?.success, flash?.error]);
 
     const toggleMenu = (label: string) => {
         setExpandedMenus((prev) =>
