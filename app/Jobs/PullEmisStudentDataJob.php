@@ -16,45 +16,82 @@ class PullEmisStudentDataJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public int $tries   = 3;
-    public int $timeout = 300;
+    public int $tries   = 1;
+    public int $timeout = 1200;
 
     public function handle(EmisService $emis): void
     {
         Log::info('[JOB] PullEmisStudentDataJob dimulai');
 
+        $progress = function (array $p) {
+            Cache::put('emis:pull:progress', $p, now()->addMinutes(30));
+        };
+
         try {
-            Cache::put('emis:pull:progress', [
-                'status' => 'Mengambil data siswa dari EMIS...',
-                'progress' => 5,
-            ], now()->addMinutes(15));
+            $progress(['status' => 'Mengambil data siswa dari EMIS...', 'progress' => 2]);
 
             $page = 1;
             $perPage = 100;
-            $stats = ['total_pulled' => 0, 'failed' => 0];
+            $lastPage = null;
+            $expectedTotal = null;
+            $emptyStreak = 0;
+            $stats = ['total_pulled' => 0, 'failed' => 0, 'skipped_no_nisn' => 0, 'pages' => 0];
 
             while (true) {
+                // Hentikan berdasar metadata resmi bila tersedia
+                if ($lastPage !== null && $page > $lastPage) {
+                    break;
+                }
+
                 $response = $emis->fetchAllStudents($page, $perPage);
-                $students = $response['results'];
+                $students = $response['results'] ?? [];
                 $count = count($students);
 
-                Log::info("[JOB] Halaman {$page}: {$count} siswa ditarik");
+                if ($expectedTotal === null && ! empty($response['total'])) {
+                    $expectedTotal = (int) $response['total'];
+                }
+                if ($lastPage === null && ! empty($response['last_page'])) {
+                    $lastPage = max(1, (int) $response['last_page']);
+                }
 
-                if ($count === 0) break;
+                // Halaman kosong tapi masih ada ekspektasi → coba sekali lagi (token/rate-limit sesaat)
+                if ($count === 0) {
+                    $emptyStreak++;
+                    Log::warning("[JOB] Halaman {$page} kosong (percobaan {$emptyStreak})", [
+                        'last_page' => $lastPage, 'expected_total' => $expectedTotal,
+                    ]);
+                    if ($emptyStreak >= 2) {
+                        break;
+                    }
+                    sleep(3);
+                    continue;
+                }
+                $emptyStreak = 0;
+
+                Log::info("[JOB] Halaman {$page}/" . ($lastPage ?? '?') . ": {$count} siswa ditarik");
+                $stats['pages']++;
 
                 foreach ($students as $emisStudent) {
                     try {
                         $parsed = $emis->parseEmisStudentRaw($emisStudent);
 
+                        // NISN kosong tidak boleh jadi kunci updateOrCreate
+                        // (WHERE nisn IS NULL akan menimpa baris yang sama berulang-ulang)
+                        $nisn = $parsed['nisn'] ?: null;
+                        if (empty($nisn)) {
+                            $nisn = 'NONISN-' . ($parsed['emis_student_id'] ?? $parsed['nik'] ?? uniqid());
+                            $stats['skipped_no_nisn']++;
+                        }
+
                         EmisStaging::updateOrCreate(
-                            ['nisn' => $parsed['nisn']],
+                            ['nisn' => $nisn],
                             [
-                                'nik'       => $parsed['nik'],
-                                'name'      => $parsed['full_name'],
-                                'gender'    => $parsed['gender'],
+                                'nik'         => $parsed['nik'],
+                                'name'        => $parsed['full_name'],
+                                'gender'      => $parsed['gender'],
                                 'rombel_name' => $parsed['rombel_name'],
-                                'raw_data'  => $emisStudent,
-                                'status'    => 'pending',
+                                'raw_data'    => $emisStudent,
+                                'status'      => 'pending',
                             ]
                         );
                         $stats['total_pulled']++;
@@ -64,25 +101,52 @@ class PullEmisStudentDataJob implements ShouldQueue
                     }
                 }
 
-                if ($count < $perPage) break;
+                $pct = $lastPage
+                    ? min(98, (int) round($page / $lastPage * 100))
+                    : min(98, 5 + $stats['pages'] * 5);
+                $progress([
+                    'status' => "Menarik halaman {$page}" . ($lastPage ? " dari {$lastPage}" : '') . " ...",
+                    'progress' => $pct,
+                    'stats' => $stats + ['expected_total' => $expectedTotal],
+                ]);
+
+                // Fallback heuristik lama bila metadata tak tersedia
+                if ($lastPage === null && $count < $perPage) {
+                    break;
+                }
+
                 $page++;
                 usleep(200_000);
+
+                // Pengaman: jangan loop selamanya
+                if ($page > 500) {
+                    Log::error('[JOB] Batas 500 halaman tercapai, hentikan.');
+                    break;
+                }
             }
 
-            Cache::put('emis:pull:progress', [
-                'status' => 'Selesai menarik data. Siap direview.',
-                'progress' => 100,
-                'stats' => $stats,
-            ], now()->addMinutes(15));
+            $done = $stats + ['expected_total' => $expectedTotal];
 
-            Log::info('[JOB] Pull selesai', $stats);
+            // Peringatan bila hasil jauh dari ekspektasi metadata
+            if ($expectedTotal && $stats['total_pulled'] < $expectedTotal) {
+                $msg = "Hanya {$stats['total_pulled']} dari {$expectedTotal} data EMIS yang tertarik. Ulangi penarikan (token mungkin kedaluwarsa di tengah jalan).";
+                Log::warning('[JOB] Pull tidak lengkap', $done);
+                $progress(['status' => $msg, 'progress' => 100, 'stats' => $done, 'incomplete' => true]);
+            } else {
+                $progress([
+                    'status' => 'Selesai menarik data. Siap direview.',
+                    'progress' => 100,
+                    'stats' => $done,
+                ]);
+            }
 
+            Log::info('[JOB] Pull selesai', $done);
         } catch (\Throwable $e) {
             Log::error('[JOB] Pull gagal', ['error' => $e->getMessage()]);
-            Cache::put('emis:pull:progress', [
+            $progress([
                 'status' => 'ERROR: ' . $e->getMessage(),
                 'progress' => 100,
-            ], now()->addMinutes(15));
+            ]);
             throw $e;
         }
     }
