@@ -52,7 +52,7 @@ class CommitEmisStagingJob implements ShouldQueue
             return;
         }
 
-        $stats = ['created' => 0, 'updated' => 0, 'failed' => 0, 'rombel_created' => 0];
+        $stats = ['created' => 0, 'updated' => 0, 'failed' => 0, 'rombel_created' => 0, 'failures' => []];
         $processedNisn = [];
 
         foreach ($stagings as $staging) {
@@ -141,6 +141,13 @@ class CommitEmisStagingJob implements ShouldQueue
             } catch (\Throwable $e) {
                 $stats['failed']++;
                 Log::error("[JOB] Gagal commit NISN: {$staging->nisn}", ['error' => $e->getMessage()]);
+                if (count($stats['failures']) < 50) {
+                    $stats['failures'][] = [
+                        'nisn' => $staging->nisn,
+                        'name' => $staging->name,
+                        'reason' => self::humanReason($e),
+                    ];
+                }
             }
         }
 
@@ -154,6 +161,32 @@ class CommitEmisStagingJob implements ShouldQueue
         ], now()->addMinutes(15));
 
         Log::info('[JOB] Commit selesai', $stats);
+    }
+
+    /**
+     * Terjemahkan error teknis menjadi bahasa operator TU.
+     */
+    private static function humanReason(\Throwable $e): string
+    {
+        $msg = $e->getMessage();
+
+        if (preg_match('/NOT NULL constraint failed: (\w+)\.(\w+)/', $msg, $m)) {
+            $field = $m[2];
+            $label = [
+                'birth_place' => 'tempat lahir', 'birth_date' => 'tanggal lahir',
+                'name' => 'nama', 'nisn' => 'NISN', 'nik' => 'NIK',
+                'gender' => 'jenis kelamin', 'status' => 'status',
+            ][$field] ?? $field;
+            return "Data {$label} kosong dari EMIS dan wajib diisi — lengkapi manual di EMIS/baris ini.";
+        }
+        if (str_contains($msg, 'UNIQUE constraint failed') || str_contains($msg, 'Duplicate entry')) {
+            return 'Data ganda (NISN/NIK sudah dipakai siswa lain) — cek duplikat di Master Siswa.';
+        }
+        if (str_contains($msg, 'FOREIGN KEY') || str_contains($msg, 'foreign key')) {
+            return 'Relasi data (rombel/tahun ajaran) tidak ditemukan — pastikan rombel & tahun aktif benar.';
+        }
+
+        return 'Kesalahan sistem: ' . mb_substr($msg, 0, 160);
     }
 
     /**

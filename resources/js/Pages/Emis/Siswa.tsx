@@ -27,7 +27,12 @@ export default function EmisSiswaSync() {
     const [showClearConfirm, setShowClearConfirm] = useState(false);
     const [showCommitConfirm, setShowCommitConfirm] = useState(false);
     const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+    const [showFailures, setShowFailures] = useState(false);
     const [reviewPage, setReviewPage] = useState(1);
+
+    const failures: { nisn?: string; name?: string; reason?: string }[] =
+        progressData?.stats?.failures ?? [];
+    const failedCount: number = progressData?.stats?.failed ?? 0;
 
     const ITEMS_PER_PAGE = 20;
     const totalPages = Math.ceil(stagingData.length / ITEMS_PER_PAGE);
@@ -55,6 +60,10 @@ export default function EmisSiswaSync() {
             } else if (commitProg && commitProg.progress === 100 && step === 'committing') {
                 setProgressData(commitProg);
                 setStep('commit_done');
+                // Langsung tampilkan dialog bila ada yang gagal
+                if ((commitProg.stats?.failed ?? 0) > 0) {
+                    setShowFailures(true);
+                }
             }
         } catch {
             // polling status: abaikan error jaringan sesaat, coba lagi 2 detik
@@ -284,8 +293,23 @@ export default function EmisSiswaSync() {
                             )}
 
                             {step === 'commit_done' && (
-                                <div className="text-center p-4 bg-green-50 text-green-700 border border-green-200 rounded-lg font-bold">
-                                    ✅ Sinkronisasi & Penempatan Rombel Selesai!
+                                <div className={`text-center p-4 border rounded-lg font-bold ${failedCount > 0 ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-green-50 text-green-700 border-green-200'}`}>
+                                    {failedCount > 0
+                                        ? `✅ Tersimpan, tapi ${failedCount} gagal — klik untuk melihat.`
+                                        : '✅ Sinkronisasi & Penempatan Rombel Selesai!'}
+                                    {failedCount > 0 && (
+                                        <div>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                className="mt-2 border-amber-300 text-amber-700 hover:bg-amber-100"
+                                                onClick={() => setShowFailures(true)}
+                                            >
+                                                <AlertCircle className="h-4 w-4 mr-1.5" />
+                                                Lihat {failedCount} Data Gagal
+                                            </Button>
+                                        </div>
+                                    )}
                                 </div>
                             )}
 
@@ -472,6 +496,50 @@ export default function EmisSiswaSync() {
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>
+            {/* ── Dialog: Data Gagal Simpan ─────────────────── */}
+            <Dialog open={showFailures} onOpenChange={setShowFailures}>
+                <DialogContent className="w-[95vw] sm:max-w-2xl max-h-[90vh] flex flex-col">
+                    <DialogHeader>
+                        <DialogTitle className="text-lg flex items-center gap-2 text-amber-700">
+                            <AlertCircle className="h-5 w-5" />
+                            {failedCount} Data Gagal Tersimpan
+                        </DialogTitle>
+                        <DialogDescription>
+                            Data di bawah ini tidak masuk database. Perbaiki sesuai saran, lalu ulangi Tarik → Simpan (data yang sudah masuk tidak akan ganda).
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="flex-1 overflow-y-auto border rounded-md">
+                        <table className="w-full text-sm">
+                            <thead className="sticky top-0 bg-slate-100 border-b">
+                                <tr>
+                                    <th className="px-4 py-2 text-left font-medium text-slate-600">NISN</th>
+                                    <th className="px-4 py-2 text-left font-medium text-slate-600">Nama</th>
+                                    <th className="px-4 py-2 text-left font-medium text-slate-600">Sebab & Saran</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {failures.map((f, i) => (
+                                    <tr key={i} className="border-b last:border-0 hover:bg-slate-50 align-top">
+                                        <td className="px-4 py-2.5 font-mono">{f.nisn || '—'}</td>
+                                        <td className="px-4 py-2.5 font-medium">{f.name || '—'}</td>
+                                        <td className="px-4 py-2.5 text-slate-600">{f.reason || 'Sebab tidak tercatat.'}</td>
+                                    </tr>
+                                ))}
+                                {failures.length === 0 && (
+                                    <tr>
+                                        <td colSpan={3} className="px-4 py-6 text-center text-slate-500">
+                                            Rincian tidak tersimpan (kegagalan terjadi sebelum pencatatan). Cek log server atau ulangi proses.
+                                        </td>
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                    <DialogFooter className="pt-3">
+                        <Button variant="outline" onClick={() => setShowFailures(false)}>Tutup</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </AppLayout>
     );
 }
