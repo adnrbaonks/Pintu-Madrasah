@@ -40,6 +40,7 @@ interface SharedProps {
     };
     appName: string;
     madrasahName: string;
+    madrasahPhoto?: string | null;
 }
 
 interface AppLayoutProps {
@@ -232,7 +233,7 @@ function NavItem({ item, expanded, onToggle }: {
 }
 
 export default function AppLayout({ children }: AppLayoutProps) {
-    const { auth, flash, appName, madrasahName } = usePage<SharedProps>().props;
+    const { auth, flash, appName, madrasahName, madrasahPhoto } = usePage<SharedProps>().props;
     const user = auth?.user;
 
     const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -292,9 +293,13 @@ export default function AppLayout({ children }: AppLayoutProps) {
                 )}>
                     {/* Logo */}
                     <div className="flex h-16 items-center gap-3 border-b border-sidebar-border px-5">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground font-bold text-sm shrink-0">
-                            PM
-                        </div>
+                        {madrasahPhoto ? (
+                            <img src={madrasahPhoto} alt="Logo madrasah" className="h-9 w-9 rounded-lg object-cover shrink-0" />
+                        ) : (
+                            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground font-bold text-sm shrink-0">
+                                PM
+                            </div>
+                        )}
                         <div className="min-w-0">
                             <p className="text-sm font-bold text-sidebar-foreground truncate">{appName}</p>
                             <p className="text-xs text-sidebar-foreground/50 truncate">{madrasahName}</p>

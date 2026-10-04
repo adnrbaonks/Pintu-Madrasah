@@ -10,10 +10,11 @@ import { cn } from '@/lib/utils';
 interface LoginProps {
     appName: string;
     madrasahName: string;
+    madrasahPhoto?: string | null;
     errors: Record<string, string>;
 }
 
-export default function Login({ appName, madrasahName }: LoginProps) {
+export default function Login({ appName, madrasahName, madrasahPhoto }: LoginProps) {
     const [showPassword, setShowPassword] = useState(false);
 
     const { data, setData, post, processing, errors } = useForm({
@@ -63,9 +64,13 @@ export default function Login({ appName, madrasahName }: LoginProps) {
 
                         {/* Header */}
                         <div className="text-center mb-8">
-                            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-teal-500 to-emerald-600 shadow-lg shadow-teal-500/25 mb-4">
-                                <School className="w-8 h-8 text-white" />
-                            </div>
+                            {madrasahPhoto ? (
+                                <img src={madrasahPhoto} alt="Logo madrasah" className="w-16 h-16 rounded-2xl object-cover mx-auto mb-4 shadow-lg" />
+                            ) : (
+                                <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-teal-500 to-emerald-600 shadow-lg shadow-teal-500/25 mb-4">
+                                    <School className="w-8 h-8 text-white" />
+                                </div>
+                            )}
                             <h1 className="text-2xl font-bold text-white tracking-tight">
                                 {appName}
                             </h1>

@@ -6,6 +6,7 @@ use App\Models\Student;
 use App\Models\Rombel;
 use App\Models\AcademicYear;
 use App\Models\PpdbRegistration;
+use App\Models\Setting;
 use App\Models\StudentAcademicCohort;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -184,8 +185,8 @@ class StudentController extends Controller
 
         $pdf = Pdf::loadView('pdf.student-biodata', [
             'student' => $student,
-            'madrasahName' => env('MADRASAH_NAME', 'MTs Negeri Contoh'),
-            'madrasahAddress' => env('MADRASAH_ADDRESS', 'Jl. Contoh No. 1'),
+            'madrasahName' => Setting::get('madrasah_name', env('MADRASAH_NAME', 'MTs Negeri Contoh')),
+            'madrasahAddress' => Setting::get('school_address', env('MADRASAH_ADDRESS', 'Jl. Contoh No. 1')),
         ]);
 
         return $pdf->stream("Biodata_{$student->nisn}_{$student->name}.pdf");
@@ -211,7 +212,7 @@ class StudentController extends Controller
         $pdf = Pdf::loadView('pdf.exam-cards', [
             'rombel' => $rombel,
             'students' => $students,
-            'madrasahName' => env('MADRASAH_NAME', 'MTs Negeri Contoh'),
+            'madrasahName' => Setting::get('madrasah_name', env('MADRASAH_NAME', 'MTs Negeri Contoh')),
             'examName' => $request->input('exam_name', 'Ujian Akhir Semester'),
         ]);
 
@@ -335,7 +336,7 @@ class StudentController extends Controller
         $pdf = Pdf::loadView('pdf.student-report', [
             'students' => $students,
             'type' => $type,
-            'madrasahName' => env('MADRASAH_NAME', 'MTs Negeri Contoh'),
+            'madrasahName' => Setting::get('madrasah_name', env('MADRASAH_NAME', 'MTs Negeri Contoh')),
         ]);
 
         $pdf->setPaper('a4', 'landscape'); // Format laporan tabel lebih cocok landscape

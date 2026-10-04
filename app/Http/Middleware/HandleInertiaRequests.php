@@ -55,7 +55,8 @@ class HandleInertiaRequests extends Middleware
             ],
 
             'appName'      => config('app.app_name', 'PINTU MADRASAH'),
-            'madrasahName' => env('MADRASAH_NAME', 'MTs Negeri'),
+            'madrasahName' => \App\Models\Setting::get('madrasah_name', env('MADRASAH_NAME', 'MTs Negeri')),
+            'madrasahPhoto' => \App\Models\Setting::get('madrasah_photo'),
         ];
     }
 }
