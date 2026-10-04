@@ -25,6 +25,7 @@ _ide_helper.php
 Homestead.json
 Homestead.yaml
 Thumbs.db
+.fuse_hidden*
 # ── Pintu Madrasah: data lokal & scratch (jangan commit) ──
 *.pdf
 *.xlsm
