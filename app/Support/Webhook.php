@@ -14,6 +14,16 @@ class Webhook
 {
     public static function fire(string $event, array $data): void
     {
+        // Jangan banjiri antrean bila tak ada pelanggan event ini
+        // (commit massal 700 siswa = 700 job sia-sia tanpa guard ini).
+        $hasSub = \App\Models\WebhookSubscription::where('is_active', true)
+            ->where('event', $event)
+            ->exists();
+
+        if (! $hasSub) {
+            return;
+        }
+
         DispatchWebhookJob::dispatch($event, $data)->onQueue('webhooks');
     }
 
