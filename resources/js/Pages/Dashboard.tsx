@@ -166,9 +166,10 @@ export default function Dashboard({ appName, madrasahName, stats, completeness, 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4 mb-6">
                 {statCards.map((card) => {
                     const Icon = card.icon;
+                    const longValue = String(card.value).length > 8;
                     return (
-                        <Link key={card.label} href={card.href}>
-                            <Card className={`hover:shadow-lg transition-all duration-200 hover:-translate-y-0.5 cursor-pointer bg-gradient-to-br ${card.gradient} border-border/60`}>
+                        <Link key={card.label} href={card.href} className="h-full">
+                            <Card className={`h-full flex flex-col hover:shadow-lg transition-all duration-200 hover:-translate-y-0.5 cursor-pointer bg-gradient-to-br ${card.gradient} border-border/60`}>
                                 <CardHeader className="flex flex-row items-center justify-between pb-2">
                                     <CardDescription className="text-xs font-medium uppercase tracking-wide text-foreground/60">
                                         {card.label}
@@ -177,13 +178,15 @@ export default function Dashboard({ appName, madrasahName, stats, completeness, 
                                         <Icon className={`h-4 w-4 ${card.iconColor}`} />
                                     </div>
                                 </CardHeader>
-                                <CardContent>
-                                    <p className="text-3xl font-bold">{card.value}</p>
+                                <CardContent className="flex-1">
+                                    <p className={longValue ? 'text-xl font-bold leading-snug' : 'text-3xl font-bold'}>{card.value}</p>
                                     <p className="text-xs text-muted-foreground mt-1">{card.subtitle}</p>
-                                    {card.badge && (
+                                    {card.badge ? (
                                         <Badge variant={card.badgeVariant} className="mt-2 text-xs">
                                             {card.badge}
                                         </Badge>
+                                    ) : (
+                                        <span className="block mt-2 text-xs invisible">—</span>
                                     )}
                                 </CardContent>
                             </Card>
