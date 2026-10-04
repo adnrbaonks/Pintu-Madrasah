@@ -38,11 +38,8 @@ class PullEmisStudentDataJob implements ShouldQueue
             $stats = ['total_pulled' => 0, 'failed' => 0, 'skipped_no_nisn' => 0, 'pages' => 0];
 
             while (true) {
-                // Hentikan berdasar metadata resmi bila tersedia
-                if ($lastPage !== null && $page > $lastPage) {
-                    break;
-                }
-
+                // Metadata last_page EMIS tidak dipercaya (pernah 1 padahal data bersambung);
+                // satu-satunya sinyal berhenti yang valid = halaman pendek/kosong.
                 $response = $emis->fetchAllStudents($page, $perPage);
                 $students = $response['results'] ?? [];
                 $count = count($students);
@@ -102,17 +99,19 @@ class PullEmisStudentDataJob implements ShouldQueue
                     }
                 }
 
-                $pct = $lastPage
+                $pct = $lastPage && $lastPage > 1
                     ? min(98, (int) round($page / $lastPage * 100))
                     : min(98, 5 + $stats['pages'] * 5);
                 $progress([
-                    'status' => "Menarik halaman {$page}" . ($lastPage ? " dari {$lastPage}" : '') . " ...",
+                    'status' => "Menarik halaman {$page}" . ($lastPage && $lastPage > 1 ? " dari {$lastPage}" : '') . " ...",
                     'progress' => $pct,
                     'stats' => $stats + ['expected_total' => $expectedTotal],
                 ]);
 
-                // Fallback heuristik lama bila metadata tak tersedia
-                if ($lastPage === null && $count < $perPage) {
+                // Berhenti hanya saat halaman pendek/kosong.
+                // (Metadata last_page EMIS tidak bisa dipercaya: pernah berisi 1
+                // padahal halaman berikut masih penuh.)
+                if ($count < $perPage) {
                     break;
                 }
 
