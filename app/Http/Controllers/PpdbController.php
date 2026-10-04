@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\AcademicYear;
 use App\Models\PpdbPeriod;
 use App\Models\PpdbRegistration;
+use App\Models\Setting;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
@@ -159,6 +160,75 @@ class PpdbController extends Controller
             'periods' => $periods,
             'activePeriodId' => $selectedPeriodId,
             'filters' => $request->only(['status', 'search', 'period_id']),
+        ]);
+    }
+
+    /**
+     * Formulir publik PPDB (guest, tanpa login).
+     * Hanya tampil bila ada periode aktif; jika tidak, tampil info penutupan.
+     */
+    public function publicForm()
+    {
+        $activePeriod = PpdbPeriod::active();
+
+        return Inertia::render('Ppdb/PublicForm', [
+            'activePeriod' => $activePeriod,
+            'madrasahName' => Setting::get('madrasah_name', env('MADRASAH_NAME', 'MTs')),
+            'madrasahAddress' => Setting::get('school_address', env('MADRASAH_ADDRESS', '')),
+        ]);
+    }
+
+    /**
+     * Simpan pendaftaran publik (guest, throttle anti-spam).
+     */
+    public function publicStore(Request $request)
+    {
+        $period = PpdbPeriod::active();
+        if (! $period) {
+            return redirect()->back()->withErrors(['period' => 'Pendaftaran PPDB sedang ditutup.']);
+        }
+
+        $validated = $request->validate([
+            'name' => 'required|string|max:255',
+            'gender' => 'required|in:L,P',
+            'birth_place' => 'required|string|max:255',
+            'birth_date' => 'required|date|before:today',
+            'nisn' => 'nullable|string|max:20',
+            'nik' => 'nullable|string|max:20',
+            'phone_number' => 'required|string|max:30',
+            'address' => 'required|string',
+            'village' => 'nullable|string|max:100',
+            'district' => 'nullable|string|max:100',
+            'regency' => 'nullable|string|max:100',
+            'prev_school_name' => 'required|string|max:255',
+            'father_name' => 'nullable|string|max:255',
+            'father_phone' => 'nullable|string|max:30',
+            'mother_name' => 'required|string|max:255',
+            'mother_phone' => 'nullable|string|max:30',
+        ]);
+
+        // Tolak NISN ganda di periode yang sama
+        if (! empty($validated['nisn'])) {
+            $exists = PpdbRegistration::where('ppdb_period_id', $period->id)
+                ->where('nisn', $validated['nisn'])
+                ->exists();
+            if ($exists) {
+                return redirect()->back()->withErrors(['nisn' => 'NISN ini sudah terdaftar di periode ini.']);
+            }
+        }
+
+        $registration = PpdbRegistration::create([
+            ...$validated,
+            'ppdb_period_id' => $period->id,
+            'academic_year_id' => $period->academic_year_id ?? AcademicYear::active()?->id,
+            'status' => PpdbRegistration::STATUS_REGISTERED,
+            'registered_by' => null,
+        ]);
+
+        return Inertia::render('Ppdb/PublicSuccess', [
+            'registrationNumber' => $registration->registration_number,
+            'name' => $registration->name,
+            'madrasahName' => Setting::get('madrasah_name', env('MADRASAH_NAME', 'MTs')),
         ]);
     }
 

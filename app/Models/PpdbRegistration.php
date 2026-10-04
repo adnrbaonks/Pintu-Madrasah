@@ -86,8 +86,12 @@ class PpdbRegistration extends Model
 
             if (empty($model->registration_number)) {
                 $year = date('Y');
-                $count = static::whereYear('created_at', $year)->count() + 1;
-                $model->registration_number = 'PPDB-' . $year . '-' . str_pad($count, 4, '0', STR_PAD_LEFT);
+                // Loop hingga unik (count()+1 tabrakan bila ada data terhapus)
+                $seq = static::whereYear('created_at', $year)->count() + 1;
+                do {
+                    $model->registration_number = 'PPDB-' . $year . '-' . str_pad($seq, 4, '0', STR_PAD_LEFT);
+                    $seq++;
+                } while (static::where('registration_number', $model->registration_number)->exists());
             }
         });
 

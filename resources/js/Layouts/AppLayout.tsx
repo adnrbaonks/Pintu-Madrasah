@@ -135,6 +135,14 @@ function buildNavItems(role: string) {
             ],
         },
         {
+            label: 'Kesiswaan',
+            icon: GraduationCap,
+            roles: ['admin', 'staf', 'guru'],
+            children: [
+                { label: 'BK & Kedisiplinan', href: '/bk' },
+            ],
+        },
+        {
             label: 'Keamanan & Audit',
             icon: Shield,
             roles: ['admin'],

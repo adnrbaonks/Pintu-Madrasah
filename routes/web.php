@@ -26,6 +26,12 @@ use Inertia\Inertia;
 |--------------------------------------------------------------------------
 */
 
+// ── PPDB Publik (Guest Only) ───────────────────────────────────────────
+Route::middleware(['guest', 'throttle:10,1'])->group(function () {
+    Route::get('/ppdb/daftar', [\App\Http\Controllers\PpdbController::class, 'publicForm'])->name('ppdb.public.form');
+    Route::post('/ppdb/daftar', [\App\Http\Controllers\PpdbController::class, 'publicStore'])->name('ppdb.public.store');
+});
+
 // ── Autentikasi (Guest Only) ───────────────────────────────────────────
 Route::middleware('guest')->group(function () {
     Route::get('/login', [AuthController::class, 'showLogin'])->name('login');
@@ -81,6 +87,14 @@ Route::middleware('auth')->group(function () {
         Route::post('/{webhook}/regenerate-secret', [\App\Http\Controllers\WebhookSubscriptionController::class, 'regenerateSecret'])->name('regenerate-secret');
         Route::post('/{webhook}/test', [\App\Http\Controllers\WebhookSubscriptionController::class, 'test'])->name('test');
         Route::delete('/{webhook}', [\App\Http\Controllers\WebhookSubscriptionController::class, 'destroy'])->name('destroy');
+    });
+    // ── BK (Pembinaan Karakter & Kedisiplinan) ────────────────────
+    Route::middleware('checkrole:admin,staf,guru')->prefix('bk')->name('bk.')->group(function () {
+        Route::get('/', [\App\Http\Controllers\BkController::class, 'index'])->name('index');
+        Route::post('/', [\App\Http\Controllers\BkController::class, 'store'])->name('store');
+        Route::put('/{bk}', [\App\Http\Controllers\BkController::class, 'update'])->name('update');
+        Route::delete('/{bk}', [\App\Http\Controllers\BkController::class, 'destroy'])->name('destroy');
+        Route::get('/{bk}/summon', [\App\Http\Controllers\BkController::class, 'printSummon'])->name('summon');
     });
     // ── Audit Logs — admin only ────────────────────────────────────
     Route::middleware('checkrole:admin')->prefix('audit-logs')->name('audit-logs.')->group(function () {
@@ -184,6 +198,7 @@ Route::middleware('auth')->group(function () {
 
         // Leger Nilai
         Route::get('/kelas/leger', [LegerController::class, 'index'])->name('leger.index');
+        Route::get('/kelas/leger/export', [LegerController::class, 'export'])->name('leger.export');
         Route::post('/kelas/leger/grade', [LegerController::class, 'upsertGrade'])->name('leger.grade.upsert');
 
         // Rombel

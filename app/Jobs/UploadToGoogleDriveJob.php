@@ -62,10 +62,13 @@ class UploadToGoogleDriveJob implements ShouldQueue
         $mimeType = mime_content_type($absolutePath);
 
         try {
-            $driveFile = $driveService->uploadFile($absolutePath, $fileName, $mimeType);
+            $folderId = $driveService->ensureFolderPath(
+                $driveService->resolveArchivePath($this->type, $model)
+            );
+            $driveFile = $driveService->uploadFile($absolutePath, $mimeType, $fileName, $folderId);
 
-            if ($driveFile && isset($driveFile['id'])) {
-                $this->updateSuccess($model, $driveFile['id'], $driveFile['webViewLink']);
+            if ($driveFile && isset($driveFile['gdrive_file_id'])) {
+                $this->updateSuccess($model, $driveFile['gdrive_file_id'], $driveFile['gdrive_view_url']);
             } else {
                 throw new \Exception("Google Drive upload failed, invalid response.");
             }

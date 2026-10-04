@@ -104,6 +104,85 @@ class LegerController extends Controller
     }
 
     /**
+     * Ekspor CSV siap salin-tempel ke template RDM.
+     * - Tanpa subject_id: format lebar (1 baris/siswa, kolom per mapel = nilai akhir).
+     * - Dengan subject_id: format per mapel (No, NISN, NIS, Nama, P1, P2, STS, SAS, Akhir, Predikat).
+     * Template RDM per-instalasi terproteksi, jadi CSV ini menjadi jembatan salin-tempel.
+     */
+    public function export(Request $request)
+    {
+        $request->validate([
+            'rombel_id' => 'required|exists:rombels,id',
+            'semester' => 'required|in:Ganjil,Genap',
+            'subject_id' => 'nullable|exists:subjects,id',
+        ]);
+
+        $activeYear = AcademicYear::active();
+        abort_unless($activeYear, 422, 'Tahun ajaran aktif belum diatur.');
+
+        $rombel = Rombel::findOrFail($request->rombel_id);
+
+        $cohorts = StudentAcademicCohort::with('student:id,name,nisn,nis_local')
+            ->where('rombel_id', $rombel->id)
+            ->where('academic_year_id', $activeYear->id)
+            ->where('status', 'active')
+            ->orderBy('attendance_number')
+            ->get();
+
+        $fileName = 'RDM_' . preg_replace('/\W+/', '_', $rombel->name) . '_' . $request->semester . '.csv';
+
+        $callback = function () use ($cohorts, $request, $activeYear, $rombel) {
+            $file = fopen('php://output', 'w');
+            fputs($file, "\xEF\xBB\xBF"); // BOM agar Excel baca UTF-8
+
+            if ($request->subject_id) {
+                $subject = Subject::findOrFail($request->subject_id);
+                fputcsv($file, ['No', 'NISN', 'NIS', 'Nama', 'P1', 'P2', 'STS', 'SAS', 'Nilai Akhir', 'Predikat']);
+                $grades = StudentGrade::where('rombel_id', $rombel->id)
+                    ->where('academic_year_id', $activeYear->id)
+                    ->where('semester', $request->semester)
+                    ->where('subject_id', $subject->id)
+                    ->get()->keyBy('student_id');
+                $no = 1;
+                foreach ($cohorts as $c) {
+                    $g = $grades->get($c->student_id);
+                    fputcsv($file, [
+                        $no++, $c->student?->nisn, $c->student?->nis_local, $c->student?->name,
+                        $g?->nilai_p1, $g?->nilai_p2, $g?->nilai_sts, $g?->nilai_sas,
+                        $g?->nilai_akhir, $g?->predikat,
+                    ]);
+                }
+            } else {
+                $gradeLevel = $rombel->schoolClass?->grade_level;
+                $subjects = Subject::where('is_active', true)
+                    ->when($gradeLevel, fn ($q) => $q->where('grade_level', $gradeLevel))
+                    ->orderBy('order')->orderBy('name')->get();
+                $header = ['No', 'NISN', 'NIS', 'Nama'];
+                foreach ($subjects as $s) {
+                    $header[] = $s->code . ' (P1|P2|STS|SAS|Akhir)';
+                }
+                fputcsv($file, $header);
+                $grades = StudentGrade::where('rombel_id', $rombel->id)
+                    ->where('academic_year_id', $activeYear->id)
+                    ->where('semester', $request->semester)
+                    ->get()->keyBy(fn ($g) => "{$g->student_id}_{$g->subject_id}");
+                $no = 1;
+                foreach ($cohorts as $c) {
+                    $row = [$no++, $c->student?->nisn, $c->student?->nis_local, $c->student?->name];
+                    foreach ($subjects as $s) {
+                        $g = $grades->get("{$c->student_id}_{$s->id}");
+                        $row[] = implode('|', [$g?->nilai_p1, $g?->nilai_p2, $g?->nilai_sts, $g?->nilai_sas, $g?->nilai_akhir]);
+                    }
+                    fputcsv($file, $row);
+                }
+            }
+            fclose($file);
+        };
+
+        return response()->streamDownload($callback, $fileName, ['Content-Type' => 'text/csv']);
+    }
+
+    /**
      * Simpan/update nilai satu siswa satu mapel.
      */
     public function upsertGrade(Request $request)

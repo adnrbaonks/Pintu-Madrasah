@@ -215,6 +215,17 @@ export default function LegerIndex({ rombels, selectedRombelId, selectedSemester
                                 </SelectContent>
                             </Select>
                         </div>
+                        {selectedRombelId && (
+                            <div className="space-y-1.5">
+                                <Label className="text-xs text-muted-foreground">Ekspor RDM (CSV)</Label>
+                                <div className="flex gap-2">
+                                    <a href={`/kelas/leger/export?rombel_id=${selectedRombelId}&semester=${selectedSemester}`}>
+                                        <Button variant="outline" size="sm">Leger CSV</Button>
+                                    </a>
+                                </div>
+                                <p className="text-[11px] text-muted-foreground">Salin-tempel ke template RDM per mapel.</p>
+                            </div>
+                        )}
                     </div>
                 </CardContent>
             </Card>
