@@ -86,6 +86,7 @@ class PullEmisStudentDataJob implements ShouldQueue
                         EmisStaging::updateOrCreate(
                             ['nisn' => $nisn],
                             [
+                                'source'      => 'emis_siswa',
                                 'nik'         => $parsed['nik'],
                                 'name'        => $parsed['full_name'],
                                 'gender'      => $parsed['gender'],
