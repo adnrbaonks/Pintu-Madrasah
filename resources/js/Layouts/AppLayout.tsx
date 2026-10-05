@@ -4,7 +4,7 @@ import {
     LayoutDashboard, GraduationCap, Users, BookOpen,
     FileText, Settings, Menu, X, ChevronDown,
     RefreshCw, Search, Bell, Shield, UserPlus, LogOut, User,
-    TrendingUp, Mail, Command
+    TrendingUp, Mail, Command, PanelLeftClose, PanelLeftOpen
 } from 'lucide-react';
 import CommandPalette from '@/components/CommandPalette';
 import { Button } from '@/components/ui/button';
@@ -171,26 +171,47 @@ function buildNavItems(role: string) {
         }));
 }
 
-function NavItem({ item, expanded, onToggle }: {
+function NavItem({ item, expanded, onToggle, collapsed, onExpand }: {
     item: ReturnType<typeof buildNavItems>[0];
     expanded: boolean;
     onToggle: () => void;
+    collapsed: boolean;
+    onExpand: () => void;
 }) {
     const Icon = item.icon;
 
+    const linkCls = (extra = '') => cn(
+        'group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium',
+        'text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+        'transition-colors duration-150',
+        collapsed && 'justify-center px-0',
+        extra
+    );
+
+    const iconEl = <Icon className="h-4 w-4 shrink-0 text-sidebar-foreground/50 group-hover:text-sidebar-primary transition-colors" />;
+
+    const withTip = (el: React.ReactElement) => collapsed ? (
+        <Tooltip>
+            <TooltipTrigger render={el} />
+            <TooltipContent side="right">{item.label}</TooltipContent>
+        </Tooltip>
+    ) : el;
+
     if (!item.children || item.children.length === 0) {
-        return (
-            <Link
-                href={item.href!}
-                className={cn(
-                    'group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium',
-                    'text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
-                    'transition-colors duration-150'
-                )}
-            >
-                <Icon className="h-4 w-4 shrink-0 text-sidebar-foreground/50 group-hover:text-sidebar-primary transition-colors" />
-                {item.label}
+        return withTip(
+            <Link href={item.href!} className={linkCls()}>
+                {iconEl}
+                {!collapsed && item.label}
             </Link>
+        );
+    }
+
+    // Mode ikon: klik ikon = buka sidebar (ala shadcn collapsible="icon")
+    if (collapsed) {
+        return withTip(
+            <button onClick={onExpand} className={linkCls('w-full')}>
+                {iconEl}
+            </button>
         );
     }
 
@@ -237,6 +258,9 @@ export default function AppLayout({ children }: AppLayoutProps) {
     const user = auth?.user;
 
     const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [collapsed, setCollapsed] = useState(() => {
+        try { return localStorage.getItem('pm-sidebar') === 'collapsed'; } catch { return false; }
+    });
     const [expandedMenus, setExpandedMenus] = useState<string[]>([]);
     const [cmdOpen, setCmdOpen] = useState(false);
 
@@ -270,6 +294,13 @@ export default function AppLayout({ children }: AppLayoutProps) {
         );
     };
 
+    const toggleCollapsed = () => {
+        setCollapsed((prev) => {
+            try { localStorage.setItem('pm-sidebar', prev ? 'expanded' : 'collapsed'); } catch { /* abaikan */ }
+            return !prev;
+        });
+    };
+
     const navItems = buildNavItems(user?.role ?? 'staf');
 
     const initials = user?.name
@@ -295,12 +326,13 @@ export default function AppLayout({ children }: AppLayoutProps) {
 
                 {/* Sidebar */}
                 <aside className={cn(
-                    'fixed inset-y-0 left-0 z-30 flex w-64 flex-col bg-sidebar transition-transform duration-300 ease-in-out',
+                    'fixed inset-y-0 left-0 z-30 flex flex-col bg-sidebar transition-all duration-300 ease-in-out',
                     'lg:static lg:translate-x-0',
-                    sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+                    sidebarOpen ? 'translate-x-0 w-64' : '-translate-x-full w-64',
+                    collapsed ? 'lg:w-[76px]' : 'lg:w-64'
                 )}>
                     {/* Logo */}
-                    <div className="flex h-16 items-center gap-3 border-b border-sidebar-border px-5">
+                    <div className={cn('flex h-16 items-center gap-3 border-b border-sidebar-border px-5', collapsed && 'lg:justify-center lg:px-0')}>
                         {madrasahPhoto ? (
                             <img src={madrasahPhoto} alt="Logo madrasah" className="h-9 w-9 rounded-lg object-cover shrink-0" />
                         ) : (
@@ -308,10 +340,12 @@ export default function AppLayout({ children }: AppLayoutProps) {
                                 PM
                             </div>
                         )}
-                        <div className="min-w-0">
-                            <p className="text-sm font-bold text-sidebar-foreground truncate">{appName}</p>
-                            <p className="text-xs text-sidebar-foreground/50 truncate">{madrasahName}</p>
-                        </div>
+                        {!collapsed && (
+                            <div className="min-w-0">
+                                <p className="text-sm font-bold text-sidebar-foreground truncate">{appName}</p>
+                                <p className="text-xs text-sidebar-foreground/50 truncate">{madrasahName}</p>
+                            </div>
+                        )}
                         <Button
                             variant="ghost"
                             size="icon"
@@ -330,6 +364,8 @@ export default function AppLayout({ children }: AppLayoutProps) {
                                 item={item}
                                 expanded={expandedMenus.includes(item.label)}
                                 onToggle={() => toggleMenu(item.label)}
+                                collapsed={collapsed}
+                                onExpand={() => { if (collapsed) toggleCollapsed(); }}
                             />
                         ))}
                     </nav>
@@ -339,17 +375,21 @@ export default function AppLayout({ children }: AppLayoutProps) {
                     {/* User Footer */}
                     <div className="p-4">
                         <DropdownMenu>
-                            <DropdownMenuTrigger render={<button className="w-full flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-sidebar-accent transition-colors" />}>
+                            <DropdownMenuTrigger render={<button className={cn('w-full flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-sidebar-accent transition-colors', collapsed && 'lg:justify-center lg:px-0')} />}>
                                     <Avatar className="h-8 w-8 shrink-0">
                                         <AvatarFallback className="bg-sidebar-primary text-sidebar-primary-foreground text-xs font-bold">
                                             {initials}
                                         </AvatarFallback>
                                     </Avatar>
-                                    <div className="min-w-0 text-left">
-                                        <p className="text-xs font-semibold text-sidebar-foreground truncate">{user?.name ?? '—'}</p>
-                                        <p className="text-xs text-sidebar-foreground/50 truncate">{roleLabel[user?.role ?? 'staf']}</p>
-                                    </div>
-                                    <ChevronDown className="h-3.5 w-3.5 text-sidebar-foreground/40 ml-auto shrink-0" />
+                                    {!collapsed && (
+                                        <>
+                                            <div className="min-w-0 text-left">
+                                                <p className="text-xs font-semibold text-sidebar-foreground truncate">{user?.name ?? '—'}</p>
+                                                <p className="text-xs text-sidebar-foreground/50 truncate">{roleLabel[user?.role ?? 'staf']}</p>
+                                            </div>
+                                            <ChevronDown className="h-3.5 w-3.5 text-sidebar-foreground/40 ml-auto shrink-0" />
+                                        </>
+                                    )}
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end" className="w-52">
                                 <DropdownMenuLabel>
@@ -386,6 +426,15 @@ export default function AppLayout({ children }: AppLayoutProps) {
                             onClick={() => setSidebarOpen(true)}
                         >
                             <Menu className="h-5 w-5" />
+                        </Button>
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="hidden lg:inline-flex"
+                            onClick={toggleCollapsed}
+                            title={collapsed ? 'Bentangkan sidebar' : 'Ciutkan sidebar'}
+                        >
+                            {collapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
                         </Button>
 
                         {/* Search → Command Palette trigger */}
