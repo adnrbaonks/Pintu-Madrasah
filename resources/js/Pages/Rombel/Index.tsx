@@ -108,7 +108,7 @@ export default function Index({ rombels, summary, academicYears, filters, select
                         <h1 className="text-2xl font-bold tracking-tight text-slate-900">Rombongan Belajar</h1>
                         <p className="text-sm text-slate-500">{rombels.total} rombel · {totalSiswa.toLocaleString('id-ID')} total siswa</p>
                     </div>
-                    <Button onClick={openCreate} className="gap-2 bg-lime-600 hover:bg-lime-700 self-start sm:self-auto">
+                    <Button onClick={openCreate} className="gap-2 bg-teal-700 hover:bg-teal-800 self-start sm:self-auto">
                         <Plus className="w-4 h-4" /> Tambah Rombel
                     </Button>
                 </div>
@@ -285,7 +285,7 @@ export default function Index({ rombels, summary, academicYears, filters, select
                         </div>
                         <DialogFooter>
                             <Button type="button" variant="outline" onClick={() => setIsCreateOpen(false)}>Batal</Button>
-                            <Button type="submit" disabled={processing} className="bg-lime-600 hover:bg-lime-700">Simpan</Button>
+                            <Button type="submit" disabled={processing} className="bg-teal-700 hover:bg-teal-800">Simpan</Button>
                         </DialogFooter>
                     </form>
                 </DialogContent>
@@ -302,7 +302,7 @@ export default function Index({ rombels, summary, academicYears, filters, select
                         </div>
                         <DialogFooter>
                             <Button type="button" variant="outline" onClick={() => setEditRombel(null)}>Batal</Button>
-                            <Button type="submit" disabled={processing} className="bg-lime-600 hover:bg-lime-700">Simpan Perubahan</Button>
+                            <Button type="submit" disabled={processing} className="bg-teal-700 hover:bg-teal-800">Simpan Perubahan</Button>
                         </DialogFooter>
                     </form>
                 </DialogContent>

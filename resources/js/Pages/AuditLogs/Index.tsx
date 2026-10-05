@@ -52,7 +52,7 @@ export default function Index({ logs, filters }: Props) {
     const getActionBadge = (action: string) => {
         switch (action) {
             case 'created':
-                return <Badge className="bg-lime-500 hover:bg-lime-600">Created</Badge>;
+                return <Badge className="bg-teal-600 hover:bg-teal-700">Created</Badge>;
             case 'updated':
                 return <Badge className="bg-blue-500 hover:bg-blue-600">Updated</Badge>;
             case 'deleted':
@@ -86,7 +86,7 @@ export default function Index({ logs, filters }: Props) {
                             value={search}
                             onChange={(e) => setSearch(e.target.value)}
                             onKeyDown={handleSearch}
-                            className="bg-neutral-50 focus-visible:ring-lime-500"
+                            className="bg-neutral-50 focus-visible:ring-teal-600"
                         />
                     </div>
                 </div>
@@ -150,7 +150,7 @@ export default function Index({ logs, filters }: Props) {
                                 disabled={!link.url}
                                 className={`px-3 py-1 rounded-md text-sm border ${
                                     link.active
-                                        ? 'bg-lime-500 text-white border-lime-600 font-medium'
+                                        ? 'bg-teal-600 text-white border-teal-700 font-medium'
                                         : 'bg-white text-neutral-700 border-neutral-200 hover:bg-neutral-50 disabled:opacity-50'
                                 }`}
                                 dangerouslySetInnerHTML={{ __html: link.label }}

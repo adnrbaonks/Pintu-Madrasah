@@ -186,7 +186,7 @@ export default function EmisSiswaSync() {
                                 <div className="space-y-2 p-3 bg-slate-50 border rounded-lg">
                                     <div className="flex justify-between items-center text-sm">
                                         <span className="font-medium text-slate-700">Progress</span>
-                                        <span className="font-bold text-lime-600">{progressData.progress}%</span>
+                                        <span className="font-bold text-teal-700">{progressData.progress}%</span>
                                     </div>
                                     <Progress value={progressData.progress} className="h-2" />
                                     <p className="text-xs text-slate-600 font-medium">{progressData.status}</p>
@@ -241,7 +241,7 @@ export default function EmisSiswaSync() {
                                         <React.Fragment key={s}>
                                             {i > 0 && <div className="flex-1 h-px bg-slate-200 mx-1" />}
                                             <div className={`px-2 py-1 rounded-full font-medium ${
-                                                active ? 'bg-lime-100 text-lime-700 ring-1 ring-lime-300' :
+                                                active ? 'bg-teal-100 text-teal-800 ring-1 ring-teal-300' :
                                                 done ? 'bg-green-100 text-green-700' :
                                                 'bg-slate-100 text-slate-400'
                                             }`}>
@@ -255,7 +255,7 @@ export default function EmisSiswaSync() {
                             {/* Action Buttons per Step */}
                             {step === 'idle' && (
                                 <Button 
-                                    className="w-full gap-2 bg-lime-600 hover:bg-lime-700" 
+                                    className="w-full gap-2 bg-teal-700 hover:bg-teal-800" 
                                     disabled={!tokenActive}
                                     onClick={() => setShowClearConfirm(true)}
                                 >
@@ -438,7 +438,7 @@ export default function EmisSiswaSync() {
                         <Button 
                             onClick={() => setShowCommitConfirm(true)}
                             disabled={stagingData.length === 0 || committing}
-                            className="gap-2 bg-lime-600 hover:bg-lime-700"
+                            className="gap-2 bg-teal-700 hover:bg-teal-800"
                         >
                             <Save className="h-4 w-4" />
                             Konfirmasi & Simpan
@@ -458,7 +458,7 @@ export default function EmisSiswaSync() {
                     </AlertDialogHeader>
                     <AlertDialogFooter>
                         <AlertDialogCancel>Batal</AlertDialogCancel>
-                        <AlertDialogAction onClick={() => { setShowClearConfirm(false); handlePull(); }} className="bg-lime-600 hover:bg-lime-700">
+                        <AlertDialogAction onClick={() => { setShowClearConfirm(false); handlePull(); }} className="bg-teal-700 hover:bg-teal-800">
                             Ya, Tarik Data
                         </AlertDialogAction>
                     </AlertDialogFooter>
@@ -476,7 +476,7 @@ export default function EmisSiswaSync() {
                     </AlertDialogHeader>
                     <AlertDialogFooter>
                         <AlertDialogCancel disabled={committing}>Batal</AlertDialogCancel>
-                        <AlertDialogAction onClick={handleCommit} disabled={committing} className="bg-lime-600 hover:bg-lime-700">
+                        <AlertDialogAction onClick={handleCommit} disabled={committing} className="bg-teal-700 hover:bg-teal-800">
                             {committing ? 'Menyimpan...' : 'Ya, Simpan Permanen'}
                         </AlertDialogAction>
                     </AlertDialogFooter>

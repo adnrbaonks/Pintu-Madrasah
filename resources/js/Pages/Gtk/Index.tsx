@@ -47,7 +47,7 @@ export default function Index({ staff, filters }: { staff: PaginationProps, filt
                 </div>
             </div>
 
-            <Card className="border-t-4 border-t-lime-500">
+            <Card className="border-t-4 border-t-teal-600">
                 <CardHeader>
                     <CardTitle className="flex justify-between items-center text-lg">
                         <span>Daftar Pegawai</span>
@@ -133,7 +133,7 @@ export default function Index({ staff, filters }: { staff: PaginationProps, filt
                                     <Link 
                                         key={i} 
                                         href={link.url || '#'}
-                                        className={`px-3 py-1 border rounded ${link.active ? 'bg-lime-600 text-white border-lime-600' : 'bg-white hover:bg-slate-50'} ${!link.url ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                        className={`px-3 py-1 border rounded ${link.active ? 'bg-teal-700 text-white border-teal-700' : 'bg-white hover:bg-slate-50'} ${!link.url ? 'opacity-50 cursor-not-allowed' : ''}`}
                                         dangerouslySetInnerHTML={{ __html: link.label }}
                                         preserveState
                                     />

@@ -132,19 +132,19 @@ export default function PrintIndex({ academicYears, rombels }: Props) {
                                 disabled={s.num >= step}
                                 className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium transition-all
                                     ${step === s.num ? 'bg-slate-900 text-white shadow-sm' : ''}
-                                    ${step > s.num ? 'text-lime-700 cursor-pointer hover:bg-lime-50' : ''}
+                                    ${step > s.num ? 'text-teal-800 cursor-pointer hover:bg-teal-50' : ''}
                                     ${step < s.num ? 'text-slate-400 cursor-default' : ''}
                                 `}
                             >
                                 {step > s.num
-                                    ? <CheckCircle2 className="h-4 w-4 text-lime-600" />
+                                    ? <CheckCircle2 className="h-4 w-4 text-teal-700" />
                                     : <span className={`h-5 w-5 rounded-full flex items-center justify-center text-xs font-bold border-2
                                         ${step === s.num ? 'border-white/50 text-white' : 'border-slate-300 text-slate-400'}`}>{s.num}</span>
                                 }
                                 {s.label}
                             </button>
                             {i < STEPS.length - 1 && (
-                                <ChevronRight className={`h-4 w-4 mx-1 ${step > s.num ? 'text-lime-400' : 'text-slate-300'}`} />
+                                <ChevronRight className={`h-4 w-4 mx-1 ${step > s.num ? 'text-teal-500' : 'text-slate-300'}`} />
                             )}
                         </div>
                     ))}
@@ -178,7 +178,7 @@ export default function PrintIndex({ academicYears, rombels }: Props) {
                                         <p className="text-xs text-slate-500 leading-relaxed">{f.description}</p>
                                         {isSelected && (
                                             <div className="mt-3 flex items-center gap-1 text-xs font-semibold text-slate-800">
-                                                <CheckCircle2 className="h-3.5 w-3.5 text-lime-600" /> Dipilih
+                                                <CheckCircle2 className="h-3.5 w-3.5 text-teal-700" /> Dipilih
                                             </div>
                                         )}
                                     </button>
@@ -350,7 +350,7 @@ export default function PrintIndex({ academicYears, rombels }: Props) {
                                 <Button variant="outline" onClick={() => setStep(2)}>← Kembali</Button>
                                 <Button
                                     onClick={handlePrint}
-                                    className="gap-2 bg-lime-600 hover:bg-lime-700 text-white"
+                                    className="gap-2 bg-teal-700 hover:bg-teal-800 text-white"
                                 >
                                     <Printer className="h-4 w-4" />
                                     Buka Halaman Cetak

@@ -40,7 +40,7 @@ export default function GenerateNism({ studentsWithoutNismCount }: GenerateNismP
                 <Card className="max-w-3xl">
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2">
-                            <KeyRound className="h-5 w-5 text-lime-600" />
+                            <KeyRound className="h-5 w-5 text-teal-700" />
                             Auto-Generate NISM Siswa
                         </CardTitle>
                         <CardDescription>
@@ -49,8 +49,8 @@ export default function GenerateNism({ studentsWithoutNismCount }: GenerateNismP
                         </CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-6">
-                        <div className={`p-4 rounded-lg border flex gap-3 ${studentsWithoutNismCount > 0 ? "bg-amber-50 text-amber-900 border-amber-200" : "bg-lime-50 text-lime-900 border-lime-200"}`}>
-                            <AlertCircle className={`h-5 w-5 shrink-0 ${studentsWithoutNismCount > 0 ? "text-amber-600" : "text-lime-600"}`} />
+                        <div className={`p-4 rounded-lg border flex gap-3 ${studentsWithoutNismCount > 0 ? "bg-amber-50 text-amber-900 border-amber-200" : "bg-teal-50 text-teal-900 border-teal-200"}`}>
+                            <AlertCircle className={`h-5 w-5 shrink-0 ${studentsWithoutNismCount > 0 ? "text-amber-600" : "text-teal-700"}`} />
                             <div className="flex flex-col gap-1">
                                 <h5 className="font-semibold leading-none tracking-tight">Status Data NISM</h5>
                                 <p className="text-sm">
@@ -65,7 +65,7 @@ export default function GenerateNism({ studentsWithoutNismCount }: GenerateNismP
                             <Button 
                                 onClick={handleGenerate} 
                                 disabled={isGenerating || studentsWithoutNismCount === 0}
-                                className="bg-lime-600 hover:bg-lime-700 text-white gap-2"
+                                className="bg-teal-700 hover:bg-teal-800 text-white gap-2"
                             >
                                 {isGenerating ? (
                                     <RefreshCw className="h-4 w-4 animate-spin" />

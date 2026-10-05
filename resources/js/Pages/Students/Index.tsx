@@ -167,7 +167,7 @@ function EmisSyncModal({ children }: { children: React.ReactNode }) {
 
                         <DialogFooter className="flex gap-2 sm:justify-end mt-4">
                             <DialogClose render={<Button type="button" variant="outline">Batal</Button>} />
-                            <Button className="gap-2 bg-lime-600 hover:bg-lime-700 text-white" onClick={handleStartSync}>
+                            <Button className="gap-2 bg-teal-700 hover:bg-teal-800 text-white" onClick={handleStartSync}>
                                 <RefreshCw className="h-4 w-4" /> Mulai Sinkronisasi Sekarang
                             </Button>
                         </DialogFooter>
@@ -176,7 +176,7 @@ function EmisSyncModal({ children }: { children: React.ReactNode }) {
                     <div className="space-y-4 py-4">
                         {isStartingSync && !syncProgress ? (
                             <div className="text-center py-8">
-                                <RefreshCw className="h-8 w-8 animate-spin mx-auto text-lime-600 mb-4" />
+                                <RefreshCw className="h-8 w-8 animate-spin mx-auto text-teal-700 mb-4" />
                                 <p className="text-slate-600">Sedang memulai sinkronisasi di latar belakang...</p>
                             </div>
                         ) : (
@@ -223,7 +223,7 @@ function EmisSyncModal({ children }: { children: React.ReactNode }) {
                                                             <TableCell>{d.nisn}</TableCell>
                                                             <TableCell>{d.rombel_name}</TableCell>
                                                             <TableCell>
-                                                                <Badge variant={d.match_status === 'new' ? 'default' : 'secondary'} className={d.match_status === 'new' ? 'bg-lime-500 hover:bg-lime-600' : ''}>
+                                                                <Badge variant={d.match_status === 'new' ? 'default' : 'secondary'} className={d.match_status === 'new' ? 'bg-teal-600 hover:bg-teal-700' : ''}>
                                                                     {d.match_status === 'new' ? 'Siswa Baru' : 'Update Data'}
                                                                 </Badge>
                                                             </TableCell>
@@ -238,7 +238,7 @@ function EmisSyncModal({ children }: { children: React.ReactNode }) {
                                         </div>
                                         <DialogFooter>
                                             <DialogClose render={<Button type="button" variant="outline">Tutup Dulu</Button>} />
-                                            <Button className="bg-lime-600 hover:bg-lime-700" onClick={handleCommit} disabled={isCommitting || stagingData.length === 0}>
+                                            <Button className="bg-teal-700 hover:bg-teal-800" onClick={handleCommit} disabled={isCommitting || stagingData.length === 0}>
                                                 {isCommitting ? 'Menyimpan...' : 'Simpan Permanen ke Database'}
                                             </Button>
                                         </DialogFooter>
@@ -349,7 +349,7 @@ export default function Index({ students, filters, rombels }: { students: Pagina
                             </DialogContent>
                         </Dialog>
                         <EmisSyncModal>
-                            <Button className="gap-2 bg-lime-600 hover:bg-lime-700 text-white">
+                            <Button className="gap-2 bg-teal-700 hover:bg-teal-800 text-white">
                                 Sinkron EMIS
                             </Button>
                         </EmisSyncModal>
@@ -514,7 +514,7 @@ export default function Index({ students, filters, rombels }: { students: Pagina
                                                 </TableCell>
                                                 <TableCell>
                                                     <Badge variant={student.status === 'active' ? 'default' : 'secondary'}
-                                                           className={student.status === 'active' ? 'bg-lime-500 hover:bg-lime-600' : ''}>
+                                                           className={student.status === 'active' ? 'bg-teal-600 hover:bg-teal-700' : ''}>
                                                         {student.status_label || student.status}
                                                     </Badge>
                                                 </TableCell>
@@ -568,7 +568,7 @@ export default function Index({ students, filters, rombels }: { students: Pagina
                                         <Link 
                                             key={i} 
                                             href={link.url || '#'}
-                                            className={`px-3 py-1 border rounded ${link.active ? 'bg-lime-600 text-white border-lime-600' : 'bg-white hover:bg-slate-50'} ${!link.url ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                            className={`px-3 py-1 border rounded ${link.active ? 'bg-teal-700 text-white border-teal-700' : 'bg-white hover:bg-slate-50'} ${!link.url ? 'opacity-50 cursor-not-allowed' : ''}`}
                                             dangerouslySetInnerHTML={{ __html: link.label }}
                                             preserveState
                                         />
@@ -626,7 +626,7 @@ export default function Index({ students, filters, rombels }: { students: Pagina
                             <div className="flex flex-col gap-1">
                                 <span className="text-xs text-slate-500">Status Siswa</span>
                                 <div>
-                                    <Badge variant={selectedStudent.status === 'active' ? 'default' : 'secondary'} className={selectedStudent.status === 'active' ? 'bg-lime-500' : ''}>
+                                    <Badge variant={selectedStudent.status === 'active' ? 'default' : 'secondary'} className={selectedStudent.status === 'active' ? 'bg-teal-600' : ''}>
                                         {selectedStudent.status_label || selectedStudent.status}
                                     </Badge>
                                 </div>

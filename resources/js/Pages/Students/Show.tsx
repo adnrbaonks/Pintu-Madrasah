@@ -325,13 +325,13 @@ export default function Show({ student, activityLogs }: { student: any; activity
                                     {student.is_verified_by_ai && !isEditing && (
                                         <HoverCard>
                                             <HoverCardTrigger>
-                                                <div className="flex items-center justify-center rounded-full bg-lime-100 p-1 cursor-help hover:bg-lime-200 transition-colors">
-                                                    <ShieldCheck className="h-5 w-5 text-lime-600" />
+                                                <div className="flex items-center justify-center rounded-full bg-teal-100 p-1 cursor-help hover:bg-teal-200 transition-colors">
+                                                    <ShieldCheck className="h-5 w-5 text-teal-700" />
                                                 </div>
                                             </HoverCardTrigger>
                                             <HoverCardContent align="start" className="w-80 p-3 shadow-lg border-slate-200">
                                                 <div className="space-y-2">
-                                                    <h4 className="text-sm font-semibold flex items-center gap-2 text-lime-700">
+                                                    <h4 className="text-sm font-semibold flex items-center gap-2 text-teal-800">
                                                         <ShieldCheck className="h-4 w-4" />
                                                         Terverifikasi AI (Gemini)
                                                     </h4>
@@ -373,7 +373,7 @@ export default function Show({ student, activityLogs }: { student: any; activity
                                             </HoverCard>
                                         )}
                                         {(student as any).data_completeness.percentage === 100 && (
-                                            <Badge variant="outline" className="text-[10px] h-5 px-1.5 border-lime-200 text-lime-700 bg-lime-50">
+                                            <Badge variant="outline" className="text-[10px] h-5 px-1.5 border-teal-200 text-teal-800 bg-teal-50">
                                                 Lengkap
                                             </Badge>
                                         )}
@@ -398,7 +398,7 @@ export default function Show({ student, activityLogs }: { student: any; activity
                                     <Button type="button" variant="outline" className="gap-2" onClick={() => setIsEditing(true)}>
                                         <Edit className="h-4 w-4" /> Edit Data
                                     </Button>
-                                    <Button type="button" variant="outline" className="gap-2 text-lime-700 border-lime-300 hover:bg-lime-50" onClick={handleSyncEmisDetail} disabled={isSyncingEmis || !student.emis_student_id}>
+                                    <Button type="button" variant="outline" className="gap-2 text-teal-800 border-teal-300 hover:bg-teal-50" onClick={handleSyncEmisDetail} disabled={isSyncingEmis || !student.emis_student_id}>
                                         {isSyncingEmis ? <Loader2 className="h-4 w-4 animate-spin" /> : <CloudDownload className="h-4 w-4" />}
                                         Tarik Detail EMIS
                                     </Button>
@@ -551,7 +551,7 @@ export default function Show({ student, activityLogs }: { student: any; activity
                                                                 <div className="flex items-center gap-2">
                                                                     <HoverCard>
                                                                         <HoverCardTrigger>
-                                                                            <Badge variant={doc.is_verified_ai ? "default" : "secondary"} className={`cursor-help ${doc.is_verified_ai ? "bg-lime-500 hover:bg-lime-600 text-white" : ""}`}>
+                                                                            <Badge variant={doc.is_verified_ai ? "default" : "secondary"} className={`cursor-help ${doc.is_verified_ai ? "bg-teal-600 hover:bg-teal-700 text-white" : ""}`}>
                                                                                 Skor AI: {doc.ai_verification_result.match_score || 0}%
                                                                             </Badge>
                                                                         </HoverCardTrigger>

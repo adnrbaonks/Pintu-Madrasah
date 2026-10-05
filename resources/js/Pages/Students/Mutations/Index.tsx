@@ -439,7 +439,7 @@ export default function Index({ auth, mutations, students, filters = {}, flash =
                                 <Link 
                                     key={i} 
                                     href={link.url || '#'}
-                                    className={`px-3 py-1 border rounded ${link.active ? 'bg-lime-600 text-white border-lime-600' : 'bg-white hover:bg-slate-50'} ${!link.url ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                    className={`px-3 py-1 border rounded ${link.active ? 'bg-teal-700 text-white border-teal-700' : 'bg-white hover:bg-slate-50'} ${!link.url ? 'opacity-50 cursor-not-allowed' : ''}`}
                                     dangerouslySetInnerHTML={{ __html: link.label }}
                                     preserveState
                                 />

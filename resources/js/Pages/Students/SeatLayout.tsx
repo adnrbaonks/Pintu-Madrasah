@@ -56,7 +56,7 @@ function SortableSeat({ id, student, index }: { id: string, student: Student, in
             style={style}
             {...attributes}
             {...listeners}
-            className={`border rounded-md p-3 flex flex-col h-24 bg-white shadow-sm cursor-grab active:cursor-grabbing hover:border-lime-500 transition-colors ${isDragging ? 'opacity-50 ring-2 ring-lime-500' : ''}`}
+            className={`border rounded-md p-3 flex flex-col h-24 bg-white shadow-sm cursor-grab active:cursor-grabbing hover:border-teal-600 transition-colors ${isDragging ? 'opacity-50 ring-2 ring-teal-600' : ''}`}
         >
             <div className="flex justify-between items-start mb-2">
                 <span className="text-xs font-bold text-slate-400">Meja {index + 1}</span>
@@ -119,7 +119,7 @@ export default function SeatLayout({ rombels, students: initialStudents, activeR
                     </div>
                     <div className="flex gap-2 items-center">
                         <select 
-                            className="border-slate-300 rounded-md shadow-sm focus:border-lime-500 focus:ring-lime-500 sm:text-sm"
+                            className="border-slate-300 rounded-md shadow-sm focus:border-teal-600 focus:ring-teal-600 sm:text-sm"
                             onChange={handleSelectRombel}
                             defaultValue={activeRombel?.id || ""}
                         >
