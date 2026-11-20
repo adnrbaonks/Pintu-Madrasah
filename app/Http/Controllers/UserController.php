@@ -54,7 +54,7 @@ class UserController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'username' => ['required', 'string', 'max:255', 'unique:users,username'],
             'password' => ['required', 'string', 'min:8'],
-            'role' => ['required', Rule::in(['admin', 'staf', 'guru'])],
+            'role' => ['required', Rule::in(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator', 'guru', 'pegawai'])],
             'staff_id' => ['nullable', 'exists:staff,id'],
         ]);
 
@@ -71,7 +71,7 @@ class UserController extends Controller
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'username' => ['required', 'string', 'max:255', Rule::unique('users')->ignore($user->id)],
-            'role' => ['required', Rule::in(['admin', 'staf', 'guru'])],
+            'role' => ['required', Rule::in(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator', 'guru', 'pegawai'])],
             'staff_id' => ['nullable', 'exists:staff,id'],
             'is_active' => ['boolean'],
         ]);

@@ -51,7 +51,11 @@ interface PageProps {
 
 const roleBadge = (role: string) => {
     if (role === 'admin') return <Badge className="bg-rose-500/15 text-rose-500 border-rose-500/20 hover:bg-rose-500/20"><ShieldCheck className="w-3 h-3 mr-1" />Admin</Badge>;
-    if (role === 'staf') return <Badge className="bg-blue-500/15 text-blue-500 border-blue-500/20 hover:bg-blue-500/20"><UserCircle className="w-3 h-3 mr-1" />Staf</Badge>;
+    if (role === 'kepala_madrasah') return <Badge className="bg-purple-500/15 text-purple-500 border-purple-500/20 hover:bg-purple-500/20"><ShieldCheck className="w-3 h-3 mr-1" />Kamad</Badge>;
+    if (role === 'kaur_tu') return <Badge className="bg-indigo-500/15 text-indigo-500 border-indigo-500/20 hover:bg-indigo-500/20"><UserCircle className="w-3 h-3 mr-1" />Kaur TU</Badge>;
+    if (role === 'operator') return <Badge className="bg-cyan-500/15 text-cyan-500 border-cyan-500/20 hover:bg-cyan-500/20"><UserCircle className="w-3 h-3 mr-1" />Operator</Badge>;
+    if (role === 'staf') return <Badge className="bg-blue-500/15 text-blue-500 border-blue-500/20 hover:bg-blue-500/20"><UserCircle className="w-3 h-3 mr-1" />Staf TU</Badge>;
+    if (role === 'pegawai') return <Badge className="bg-slate-500/15 text-slate-500 border-slate-500/20 hover:bg-slate-500/20"><UserCircle className="w-3 h-3 mr-1" />Pegawai</Badge>;
     return <Badge className="bg-emerald-500/15 text-emerald-500 border-emerald-500/20 hover:bg-emerald-500/20"><GraduationCap className="w-3 h-3 mr-1" />Guru</Badge>;
 };
 
@@ -117,8 +121,12 @@ function UserFormModal({
                             <SelectTrigger><SelectValue /></SelectTrigger>
                             <SelectContent>
                                 <SelectItem value="admin">Administrator</SelectItem>
+                                <SelectItem value="kepala_madrasah">Kepala Madrasah</SelectItem>
+                                <SelectItem value="kaur_tu">Kepala Tata Usaha (Kaur TU)</SelectItem>
+                                <SelectItem value="operator">Operator Madrasah</SelectItem>
                                 <SelectItem value="staf">Staf Tata Usaha</SelectItem>
                                 <SelectItem value="guru">Guru</SelectItem>
+                                <SelectItem value="pegawai">Pegawai</SelectItem>
                             </SelectContent>
                         </Select>
                         {errors.role && <p className="text-xs text-destructive">{errors.role}</p>}

@@ -47,16 +47,24 @@ interface AppLayoutProps {
     children: ReactNode;
 }
 
-const roleLabel = {
-    admin: 'Administrator',
-    staf:  'Staf Tata Usaha',
-    guru:  'Guru',
+const roleLabel: Record<string, string> = {
+    admin:           'Administrator',
+    kepala_madrasah: 'Kepala Madrasah',
+    kaur_tu:         'Kepala Tata Usaha',
+    staf:            'Staf Tata Usaha',
+    operator:        'Operator Madrasah',
+    guru:            'Guru',
+    pegawai:         'Pegawai',
 };
 
-const roleColor = {
-    admin: 'bg-rose-500/10 text-rose-500',
-    staf:  'bg-blue-500/10 text-blue-500',
-    guru:  'bg-emerald-500/10 text-emerald-500',
+const roleColor: Record<string, string> = {
+    admin:           'bg-rose-500/10 text-rose-500',
+    kepala_madrasah: 'bg-purple-500/10 text-purple-500',
+    kaur_tu:         'bg-indigo-500/10 text-indigo-500',
+    staf:            'bg-blue-500/10 text-blue-500',
+    operator:        'bg-cyan-500/10 text-cyan-500',
+    guru:            'bg-emerald-500/10 text-emerald-500',
+    pegawai:         'bg-slate-500/10 text-slate-500',
 };
 
 function buildNavItems(role: string) {
@@ -66,19 +74,19 @@ function buildNavItems(role: string) {
             label: 'Dashboard',
             href: '/',
             icon: LayoutDashboard,
-            roles: ['admin', 'staf', 'guru'],
+            roles: ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator', 'guru', 'pegawai'],
         },
         // ── Kesiswaan ────────────────────────────────────────────
         {
             label: 'Kesiswaan',
             icon: GraduationCap,
-            roles: ['admin', 'staf', 'guru'],
+            roles: ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator', 'guru'],
             children: [
-                { label: 'Master Siswa', href: '/students' },
-                { label: 'Rombel', href: '/rombel' },
-                { label: 'Penempatan Siswa', href: '/siswa/penempatan', roles: ['admin', 'staf'] },
-                { label: 'Kenaikan Kelas', href: '/siswa/kenaikan-kelas', roles: ['admin', 'staf'] },
-                { label: 'Mutasi', href: '/siswa/mutasi', roles: ['admin', 'staf'] },
+                { label: 'Master Siswa', href: '/students', roles: ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'] },
+                { label: 'Rombel', href: '/rombel', roles: ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'] },
+                { label: 'Penempatan Siswa', href: '/siswa/penempatan', roles: ['admin', 'kaur_tu', 'staf', 'operator'] },
+                { label: 'Kenaikan Kelas', href: '/siswa/kenaikan-kelas', roles: ['admin', 'kaur_tu', 'staf', 'operator'] },
+                { label: 'Mutasi', href: '/siswa/mutasi', roles: ['admin', 'kaur_tu', 'staf', 'operator'] },
                 { label: 'BK & Kedisiplinan', href: '/bk' },
             ],
         },
@@ -86,31 +94,31 @@ function buildNavItems(role: string) {
         {
             label: 'Akademik',
             icon: BookOpen,
-            roles: ['admin', 'staf', 'guru'],
+            roles: ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'],
             children: [
                 { label: 'Leger Nilai', href: '/kelas/leger' },
                 { label: 'Denah Kelas', href: '/students/seat-layout' },
                 { label: 'Kartu Ujian', href: '/students/print-exam-cards' },
                 { label: 'Form Cetak', href: '/siswa/form-cetak' },
                 { label: 'Format Cetak', href: '/cetak-format' },
-                { label: 'Generate NISM', href: '/students/generate-nism', roles: ['admin', 'staf'] },
+                { label: 'Generate NISM', href: '/students/generate-nism', roles: ['admin', 'operator'] },
             ],
         },
         // ── GTK ──────────────────────────────────────────────────
         {
             label: 'GTK',
             icon: Users,
-            roles: ['admin', 'staf'],
+            roles: ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'],
             children: [
                 { label: 'Master GTK', href: '/gtk' },
-                { label: 'Validasi TPG', href: '/gtk/tpg' },
+                { label: 'Validasi TPG', href: '/gtk/tpg', roles: ['admin', 'kepala_madrasah', 'operator', 'kaur_tu'] },
             ],
         },
         // ── PPDB ─────────────────────────────────────────────────
         {
             label: 'PPDB',
             icon: UserPlus,
-            roles: ['admin', 'staf'],
+            roles: ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'],
             children: [
                 { label: 'Dashboard PPDB', href: '/ppdb' },
                 { label: 'Daftar Pendaftar', href: '/ppdb/registrations' },
@@ -121,7 +129,7 @@ function buildNavItems(role: string) {
         {
             label: 'Administrasi',
             icon: Mail,
-            roles: ['admin', 'staf'],
+            roles: ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'],
             children: [
                 { label: 'Persuratan', href: '/persuratan' },
                 { label: 'Demografi', href: '/statistik/demografi' },
@@ -131,7 +139,7 @@ function buildNavItems(role: string) {
         {
             label: 'Integrasi',
             icon: RefreshCw,
-            roles: ['admin', 'staf'],
+            roles: ['admin', 'operator'],
             children: [
                 { label: 'EMIS Siswa', href: '/emis/siswa' },
                 { label: 'EMIS GTK', href: '/emis/gtk' },
@@ -143,11 +151,11 @@ function buildNavItems(role: string) {
         {
             label: 'Sistem',
             icon: Shield,
-            roles: ['admin'],
+            roles: ['admin', 'kepala_madrasah'],
             children: [
-                { label: 'Pengguna & Akses', href: '/users' },
+                { label: 'Pengguna & Akses', href: '/users', roles: ['admin'] },
                 { label: 'Activity Logs', href: '/audit-logs' },
-                { label: 'Pengaturan', href: '/pengaturan' },
+                { label: 'Pengaturan', href: '/pengaturan', roles: ['admin'] },
             ],
         },
     ];

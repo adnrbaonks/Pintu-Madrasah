@@ -110,20 +110,21 @@ Route::middleware('auth')->group(function () {
         Route::delete('/{webhook}', [WebhookSubscriptionController::class, 'destroy'])->name('destroy');
     });
     // ── BK (Pembinaan Karakter & Kedisiplinan) ────────────────────
-    Route::middleware('checkrole:admin,staf,guru')->prefix('bk')->name('bk.')->group(function () {
+    Route::middleware('checkrole:admin,kepala_madrasah,kaur_tu,staf,operator,guru')->prefix('bk')->name('bk.')->group(function () {
         Route::get('/', [BkController::class, 'index'])->name('index');
         Route::post('/', [BkController::class, 'store'])->name('store');
         Route::put('/{bk}', [BkController::class, 'update'])->name('update');
         Route::delete('/{bk}', [BkController::class, 'destroy'])->name('destroy');
         Route::get('/{bk}/summon', [BkController::class, 'printSummon'])->name('summon');
     });
+
     // ── Audit Logs — admin only ────────────────────────────────────
-    Route::middleware('checkrole:admin')->prefix('audit-logs')->name('audit-logs.')->group(function () {
+    Route::middleware('checkrole:admin,kepala_madrasah')->prefix('audit-logs')->name('audit-logs.')->group(function () {
         Route::get('/', [AuditLogController::class, 'index'])->name('index');
     });
 
-    // ── Data Siswa, GTK, PPDB — admin & staf ──────────────────────
-    Route::middleware('checkrole:admin,staf')->group(function () {
+    // ── Data Siswa, GTK, PPDB — staf, operator, kaur TU, kamad, admin ──
+    Route::middleware('checkrole:admin,kepala_madrasah,kaur_tu,staf,operator')->group(function () {
 
         // Siswa
         Route::prefix('students')->name('students.')->group(function () {

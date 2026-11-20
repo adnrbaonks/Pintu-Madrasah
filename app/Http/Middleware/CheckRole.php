@@ -18,7 +18,13 @@ class CheckRole
     {
         $user = $request->user();
 
-        if (! $user || ! in_array($user->role, $roles, true)) {
+        // Cek apakah user punya salah satu role (kolom role atau Spatie role)
+        $hasRole = $user && (
+            in_array($user->role, $roles, true) ||
+            $user->hasAnyRole($roles)
+        );
+
+        if (! $hasRole) {
             if ($request->inertia()) {
                 return redirect()->route('dashboard')
                     ->with('error', 'Anda tidak memiliki izin untuk mengakses halaman ini.');

@@ -46,6 +46,18 @@ class User extends Authenticatable
     {
         parent::boot();
         static::creating(fn ($m) => $m->id ??= (string) Str::uuid());
+
+        static::created(function (User $user) {
+            if ($user->role && ! $user->hasRole($user->role)) {
+                $user->assignRole($user->role);
+            }
+        });
+
+        static::updated(function (User $user) {
+            if ($user->wasChanged('role') && $user->role) {
+                $user->syncRoles([$user->role]);
+            }
+        });
     }
 
     // ── Relationships ─────────────────────────────────────────────────
