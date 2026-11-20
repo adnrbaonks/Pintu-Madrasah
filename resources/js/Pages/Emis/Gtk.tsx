@@ -19,15 +19,18 @@ import { cn } from '@/lib/utils';
 interface GtkStaging {
     id: number;
     name: string;
+    full_name_with_titles: string | null;
     nik: string | null;
     nip: string | null;
     npk: string | null;
+    nuptk: string | null;
+    nrg: string | null;
     peg_id: string | null;
     function_role: string | null;
     employment_status: string | null;
     highest_education: string | null;
-    is_sertifikasi: boolean;
-    k_aktif: boolean;
+    is_sertifikasi: boolean | null;
+    k_aktif: boolean | null;
 }
 
 interface SyncStatus {
@@ -39,7 +42,7 @@ interface SyncStatus {
 
 interface Props {
     stagings: { data: GtkStaging[]; total: number; from: number; to: number };
-    summary: { total: number; sertifikasi: number; aktif: number; last_sync: string | null; has_sso: boolean };
+    summary: { total: number; pending: number; sertifikasi: number; aktif: number; last_sync: string | null; has_sso: boolean };
     flash: { success?: string; error?: string };
 }
 
@@ -239,7 +242,7 @@ export default function EmisGtkPage({ stagings, summary, flash }: Props) {
                                 ) : stagings.data.map(ptk => (
                                     <TableRow key={ptk.id}>
                                         <TableCell>
-                                            <div className="font-medium text-sm">{ptk.name}</div>
+                                            <div className="font-medium text-sm">{ptk.full_name_with_titles ?? ptk.name}</div>
                                             {ptk.peg_id && <div className="text-xs text-muted-foreground font-mono">ID: {ptk.peg_id}</div>}
                                         </TableCell>
                                         <TableCell className="text-xs font-mono">
@@ -250,14 +253,18 @@ export default function EmisGtkPage({ stagings, summary, flash }: Props) {
                                         <TableCell><Badge variant="outline" className="text-xs">{ptk.employment_status ?? '—'}</Badge></TableCell>
                                         <TableCell className="text-xs">{ptk.highest_education ?? '—'}</TableCell>
                                         <TableCell>
-                                            {ptk.is_sertifikasi
-                                                ? <Badge className="bg-emerald-500/15 text-emerald-500 border-emerald-500/20 text-xs">Sudah</Badge>
-                                                : <Badge variant="outline" className="text-muted-foreground text-xs">Belum</Badge>}
+                                            {ptk.is_sertifikasi === null
+                                                ? <span className="text-xs text-muted-foreground">—</span>
+                                                : ptk.is_sertifikasi
+                                                    ? <Badge className="bg-emerald-500/15 text-emerald-500 border-emerald-500/20 text-xs">Sudah</Badge>
+                                                    : <Badge variant="outline" className="text-muted-foreground text-xs">Belum</Badge>}
                                         </TableCell>
                                         <TableCell>
-                                            {ptk.k_aktif
-                                                ? <Badge className="bg-blue-500/15 text-blue-500 border-blue-500/20 text-xs">Aktif</Badge>
-                                                : <Badge variant="outline" className="text-muted-foreground text-xs">Nonaktif</Badge>}
+                                            {ptk.k_aktif === null
+                                                ? <span className="text-xs text-muted-foreground">—</span>
+                                                : ptk.k_aktif
+                                                    ? <Badge className="bg-blue-500/15 text-blue-500 border-blue-500/20 text-xs">Aktif</Badge>
+                                                    : <Badge variant="outline" className="text-muted-foreground text-xs">Nonaktif</Badge>}
                                         </TableCell>
                                     </TableRow>
                                 ))}

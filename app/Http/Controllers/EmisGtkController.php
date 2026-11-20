@@ -5,7 +5,6 @@ namespace App\Http\Controllers;
 use App\Jobs\RunEmisGtkSyncJob;
 use App\Models\EmisGtkStaging;
 use App\Models\Setting;
-use App\Services\EmisGtkScraperService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -22,21 +21,22 @@ class EmisGtkController extends Controller
      */
     public function index(): Response
     {
-        $lastSync  = Setting::get('emis_gtk_last_sync');
-        $stagings  = EmisGtkStaging::orderBy('name')->paginate(100);
+        $lastSync = Setting::get('emis_gtk_last_sync');
+        $stagings = EmisGtkStaging::orderBy('full_name_with_titles')->paginate(100);
         $hasSsoToken = filled(Setting::get('emis_sso_token'));
 
         $summary = [
-            'total'        => EmisGtkStaging::count(),
-            'sertifikasi'  => EmisGtkStaging::where('is_sertifikasi', true)->count(),
-            'aktif'        => EmisGtkStaging::where('k_aktif', true)->count(),
-            'last_sync'    => $lastSync,
-            'has_sso'      => $hasSsoToken,
+            'total' => EmisGtkStaging::count(),
+            'pending' => EmisGtkStaging::where('status', 'pending')->count(),
+            'sertifikasi' => EmisGtkStaging::where('is_sertifikasi', true)->count(),
+            'aktif' => EmisGtkStaging::where('k_aktif', true)->count(),
+            'last_sync' => $lastSync,
+            'has_sso' => $hasSsoToken,
         ];
 
         return Inertia::render('Emis/Gtk', [
             'stagings' => $stagings,
-            'summary'  => $summary,
+            'summary' => $summary,
         ]);
     }
 
@@ -47,16 +47,16 @@ class EmisGtkController extends Controller
     public function sync(Request $request): JsonResponse|RedirectResponse
     {
         // Cek apakah sudah ada sync berjalan
-        if (Cache::has(self::SYNC_CACHE_KEY . '.running')) {
+        if (Cache::has(self::SYNC_CACHE_KEY.'.running')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Sinkronisasi sedang berjalan. Harap tunggu...',
             ], 409);
         }
 
-        Cache::put(self::SYNC_CACHE_KEY . '.running', true, 300); // 5 menit timeout
-        Cache::put(self::SYNC_CACHE_KEY . '.started_at', now()->toDateTimeString(), 300);
-        Cache::put(self::SYNC_CACHE_KEY . '.progress', 'Memulai koneksi ke EMIS GTK...', 300);
+        Cache::put(self::SYNC_CACHE_KEY.'.running', true, 300); // 5 menit timeout
+        Cache::put(self::SYNC_CACHE_KEY.'.started_at', now()->toDateTimeString(), 300);
+        Cache::put(self::SYNC_CACHE_KEY.'.progress', 'Memulai koneksi ke EMIS GTK...', 300);
 
         // Dispatch ke background queue
         RunEmisGtkSyncJob::dispatch();
@@ -73,10 +73,10 @@ class EmisGtkController extends Controller
     public function syncStatus(): JsonResponse
     {
         return response()->json([
-            'running'    => Cache::has(self::SYNC_CACHE_KEY . '.running'),
-            'started_at' => Cache::get(self::SYNC_CACHE_KEY . '.started_at'),
-            'progress'   => Cache::get(self::SYNC_CACHE_KEY . '.progress', '—'),
-            'result'     => Cache::get(self::SYNC_CACHE_KEY . '.result'),
+            'running' => Cache::has(self::SYNC_CACHE_KEY.'.running'),
+            'started_at' => Cache::get(self::SYNC_CACHE_KEY.'.started_at'),
+            'progress' => Cache::get(self::SYNC_CACHE_KEY.'.progress', '—'),
+            'result' => Cache::get(self::SYNC_CACHE_KEY.'.result'),
         ]);
     }
 }

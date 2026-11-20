@@ -3,10 +3,20 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Services\EmisService;
+use App\Jobs\CommitEmisGtkStagingJob;
+use App\Jobs\CommitEmisStagingJob;
+use App\Jobs\PullEmisGtkDataJob;
 use App\Jobs\PullEmisStudentDataJob;
+use App\Models\AcademicYear;
+use App\Models\EmisGtkStaging;
+use App\Models\EmisStaging;
+use App\Models\Staff;
+use App\Models\Student;
+use App\Services\EmisService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 
 class EmisController extends Controller
@@ -22,7 +32,7 @@ class EmisController extends Controller
     public function receiveToken(Request $request): JsonResponse
     {
         $request->validate([
-            'token'  => 'required|string|min:20',
+            'token' => 'required|string|min:20',
             'source' => 'sometimes|string',
         ]);
 
@@ -54,10 +64,10 @@ class EmisController extends Controller
     /**
      * POST /api/emis-gtk/token
      * Menerima cookie Django session dari bookmarklet (bukan JWT).
-     * 
+     *
      * Website emisgtk.kemenag.go.id menggunakan SSR + Django session,
      * bukan REST API JSON + JWT Bearer Token.
-     * 
+     *
      * Payload yang dikirim bookmarklet:
      * {
      *   "csrftoken": "...",
@@ -85,8 +95,8 @@ class EmisController extends Controller
 
             Log::info('[API] Cookie EMIS GTK diterima dari bookmarklet', [
                 'ip' => $request->ip(),
-                'has_csrf' => !empty($cookies['csrftoken']),
-                'has_session' => !empty($cookies['sessionid']),
+                'has_csrf' => ! empty($cookies['csrftoken']),
+                'has_session' => ! empty($cookies['sessionid']),
             ]);
 
             return response()->json([
@@ -122,15 +132,15 @@ class EmisController extends Controller
     {
         return response()->json([
             'emis_siswa' => [
-                'active'  => $this->emis->hasActiveEmisToken(),
+                'active' => $this->emis->hasActiveEmisToken(),
                 'message' => $this->emis->hasActiveEmisToken()
                     ? 'Token aktif — sinkronisasi siap dijalankan'
                     : 'Token tidak tersedia atau kadaluwarsa — klik bookmarklet',
-                'pull_progress'  => \Illuminate\Support\Facades\Cache::get('emis:pull:progress', null),
-                'commit_progress'=> \Illuminate\Support\Facades\Cache::get('emis:commit:progress', null),
+                'pull_progress' => Cache::get('emis:pull:progress', null),
+                'commit_progress' => Cache::get('emis:commit:progress', null),
             ],
             'emis_gtk' => [
-                'active'  => $this->emis->hasActiveGtkToken(),
+                'active' => $this->emis->hasActiveGtkToken(),
                 'message' => $this->emis->hasActiveGtkToken()
                     ? 'Token GTK aktif'
                     : 'Token GTK tidak tersedia — klik bookmarklet GTK',
@@ -156,8 +166,8 @@ class EmisController extends Controller
         $clearStaging = filter_var($request->input('clear_staging', false), FILTER_VALIDATE_BOOLEAN);
 
         if ($clearStaging) {
-            \App\Models\EmisStaging::truncate();
-            \Illuminate\Support\Facades\Cache::forget('emis:pull:progress');
+            EmisStaging::truncate();
+            Cache::forget('emis:pull:progress');
         }
 
         PullEmisStudentDataJob::dispatch()->onQueue('emis');
@@ -175,10 +185,10 @@ class EmisController extends Controller
     public function cancelSync(Request $request): JsonResponse
     {
         // Beri tanda ke worker agar berhenti (jika didukung)
-        \Illuminate\Support\Facades\Cache::put('emis:sync:cancel', true, now()->addMinutes(5));
-        
+        Cache::put('emis:sync:cancel', true, now()->addMinutes(5));
+
         // Hapus cache progress agar UI langsung berhenti
-        \Illuminate\Support\Facades\Cache::forget('emis:sync:progress');
+        Cache::forget('emis:sync:progress');
 
         return response()->json([
             'success' => true,
@@ -192,11 +202,11 @@ class EmisController extends Controller
      */
     public function stagingList(Request $request): JsonResponse
     {
-        $stagings = \App\Models\EmisStaging::where('status', 'pending')->get();
+        $stagings = EmisStaging::where('status', 'pending')->get();
 
         // Bandingkan dengan data siswa yang ada untuk menentukan status
         $results = $stagings->map(function ($staging) {
-            $existing = \App\Models\Student::withTrashed()->where('nisn', $staging->nisn)->first();
+            $existing = Student::withTrashed()->where('nisn', $staging->nisn)->first();
 
             $matchStatus = 'new';
             $isProtected = false;
@@ -229,14 +239,14 @@ class EmisController extends Controller
      */
     public function commitStaging(Request $request): JsonResponse
     {
-        $activeYear = \App\Models\AcademicYear::active();
+        $activeYear = AcademicYear::active();
         if (! $activeYear) {
             return response()->json(['success' => false, 'message' => 'Tahun Ajaran Aktif belum diatur.'], 422);
         }
 
-        \Illuminate\Support\Facades\Cache::forget('emis:commit:progress');
+        Cache::forget('emis:commit:progress');
 
-        \App\Jobs\CommitEmisStagingJob::dispatch()->onQueue('emis');
+        CommitEmisStagingJob::dispatch()->onQueue('emis');
 
         return response()->json([
             'success' => true,
@@ -247,18 +257,19 @@ class EmisController extends Controller
     private function parseGradeLevel(string $rombelName): string
     {
         $name = strtoupper($rombelName);
-        
+
         // Match roman numerals VII, VIII, IX, X, XI, XII
         if (preg_match('/(?:KELAS\s*)?(VII|VIII|IX|X|XI|XII)/', $name, $matches)) {
             return $matches[1];
         }
-        
+
         // Match numbers 7, 8, 9, 10, 11, 12
         if (preg_match('/(?:KELAS\s*)?([789]|10|11|12)/', $name, $matches)) {
             $map = ['7' => 'VII', '8' => 'VIII', '9' => 'IX', '10' => 'X', '11' => 'XI', '12' => 'XII'];
+
             return $map[$matches[1]] ?? 'VII';
         }
-        
+
         return 'VII'; // Default fallback
     }
     // ── GTK Sync Methods ──────────────────────────────────────────────
@@ -275,11 +286,11 @@ class EmisController extends Controller
         $clearStaging = filter_var($request->input('clear_staging', false), FILTER_VALIDATE_BOOLEAN);
 
         if ($clearStaging) {
-            \App\Models\EmisGtkStaging::truncate();
-            \Illuminate\Support\Facades\Cache::forget('emis_gtk:pull:progress');
+            EmisGtkStaging::truncate();
+            Cache::forget('emis_gtk:pull:progress');
         }
 
-        \App\Jobs\PullEmisGtkDataJob::dispatch()->onQueue('emis');
+        PullEmisGtkDataJob::dispatch()->onQueue('emis');
 
         return response()->json([
             'success' => true,
@@ -289,15 +300,21 @@ class EmisController extends Controller
 
     public function gtkStagingList(Request $request): JsonResponse
     {
-        $stagings = \App\Models\EmisGtkStaging::where('status', 'pending')->get();
+        $stagings = EmisGtkStaging::where('status', 'pending')->get();
 
         $results = $stagings->map(function ($staging) {
-            $existing = \App\Models\Staff::withTrashed()
+            $existing = Staff::withTrashed()
                 ->where('nik', $staging->nik)
                 ->orWhere(function ($q) use ($staging) {
-                    if ($staging->nuptk) $q->orWhere('nuptk', $staging->nuptk);
-                    if ($staging->nip) $q->orWhere('nip', $staging->nip);
-                    if ($staging->npk) $q->orWhere('npk', $staging->npk);
+                    if ($staging->nuptk) {
+                        $q->orWhere('nuptk', $staging->nuptk);
+                    }
+                    if ($staging->nip) {
+                        $q->orWhere('nip', $staging->nip);
+                    }
+                    if ($staging->npk) {
+                        $q->orWhere('npk', $staging->npk);
+                    }
                 })
                 ->first();
 
@@ -324,9 +341,9 @@ class EmisController extends Controller
 
     public function commitGtkStaging(Request $request): JsonResponse
     {
-        \Illuminate\Support\Facades\Cache::forget('emis_gtk:commit:progress');
+        Cache::forget('emis_gtk:commit:progress');
 
-        \App\Jobs\CommitEmisGtkStagingJob::dispatch()->onQueue('emis');
+        CommitEmisGtkStagingJob::dispatch()->onQueue('emis');
 
         return response()->json([
             'success' => true,
@@ -335,13 +352,30 @@ class EmisController extends Controller
     }
 
     /**
+     * Tentukan kunci identitas staging dari data bookmarklet.
+     *
+     * @param  array<string, mixed>  $item
+     * @return array<string, string>
+     */
+    private function gtkIdentity(array $item, string $name): array
+    {
+        foreach (['nik', 'nuptk', 'nip', 'npk'] as $column) {
+            if (filled($item[$column] ?? null)) {
+                return [$column => $item[$column]];
+            }
+        }
+
+        return ['full_name_with_titles' => $name];
+    }
+
+    /**
      * POST /api/emis-gtk/import
-     * 
+     *
      * Endpoint baru: menerima data GTK yang sudah di-scrape langsung
      * oleh bookmarklet dari browser. Bookmarklet berjalan di konteks
      * emisgtk.kemenag.go.id sehingga cookies otomatis disertakan
      * saat fetch ke EMIS, lalu hasilnya dikirim ke sini.
-     * 
+     *
      * Payload: {
      *   data: [{name, uuid, phone, active}, ...],
      *   page: 1,
@@ -358,59 +392,68 @@ class EmisController extends Controller
         $corsOrigin = in_array($origin, $allowedOrigins) ? $origin : '*';
 
         $request->validate([
-            'data'        => 'required|array|min:1',
+            'data' => 'required|array|min:1',
             'data.*.name' => 'required|string',
-            'page'        => 'sometimes|integer|min:1',
+            'page' => 'sometimes|integer|min:1',
         ]);
 
         $items = $request->input('data', []);
-        $page  = (int) $request->input('page', 1);
+        $page = (int) $request->input('page', 1);
         $totalPages = (int) $request->input('total_pages', 1);
         $totalCount = (int) $request->input('total_count', count($items));
         $clear = filter_var($request->input('clear', false), FILTER_VALIDATE_BOOLEAN);
 
         // Hapus staging lama jika di halaman pertama atau ini adalah sync baru
         if ($page === 1) {
-            \App\Models\EmisGtkStaging::truncate();
+            EmisGtkStaging::truncate();
         }
 
         $saved = 0;
         foreach ($items as $item) {
             $name = mb_strtoupper(trim($item['name'] ?? ''));
-            if (empty($name)) continue;
+            if (empty($name)) {
+                continue;
+            }
 
             $uuid = $item['uuid'] ?? null;
+            $identity = $uuid
+                ? ['emis_gtk_id' => $uuid]
+                : $this->gtkIdentity($item, $name);
 
             $data = [
-                'emis_gtk_id'           => $uuid,
+                'emis_gtk_id' => $uuid,
                 'full_name_with_titles' => $name,
-                'nik'                   => $item['nik'] ?? null,
-                'nip'                   => $item['nip'] ?? null,
-                'npk'                   => $item['npk'] ?? null,
-                'employment_status'     => $item['employment'] ?? null,
-                'raw_data'              => json_encode($item),
-                'status'                => 'pending',
+                'nik' => $item['nik'] ?? null,
+                'nip' => $item['nip'] ?? null,
+                'npk' => $item['npk'] ?? null,
+                'nuptk' => $item['nuptk'] ?? null,
+                'nrg' => $item['nrg'] ?? null,
+                'peg_id' => $item['peg_id'] ?? null,
+                'function_role' => $item['fungsi'] ?? $item['function_role'] ?? null,
+                'employment_status' => $item['employment'] ?? $item['employment_status'] ?? null,
+                'source' => 'bookmarklet',
+                'last_seen_at' => now(),
+                'raw_data' => $item,
+                'status' => 'pending',
             ];
 
-            if ($uuid) {
-                \App\Models\EmisGtkStaging::updateOrCreate(
-                    ['emis_gtk_id' => $uuid],
-                    $data
-                );
-            } else {
-                \App\Models\EmisGtkStaging::updateOrCreate(
-                    ['full_name_with_titles' => $name],
-                    $data
-                );
+            if (array_key_exists('active', $item)) {
+                $data['k_aktif'] = filter_var($item['active'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
             }
+
+            if (array_key_exists('is_sertifikasi', $item)) {
+                $data['is_sertifikasi'] = filter_var($item['is_sertifikasi'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+            }
+
+            EmisGtkStaging::updateOrCreate($identity, $data);
             $saved++;
         }
 
         // Simpan progress ke cache untuk polling UI
         $progress = $totalPages > 0 ? min(100, (int) round(($page / $totalPages) * 100)) : 100;
-        \Illuminate\Support\Facades\Cache::put('emis_gtk:pull:progress', [
-            'progress'    => $progress,
-            'status'      => $progress >= 100
+        Cache::put('emis_gtk:pull:progress', [
+            'progress' => $progress,
+            'status' => $progress >= 100
                 ? "Selesai! {$totalCount} data GTK berhasil dikirim dari bookmarklet."
                 : "Menerima data halaman {$page} dari {$totalPages}...",
         ], now()->addHours(2));
@@ -419,11 +462,11 @@ class EmisController extends Controller
 
         return response()->json([
             'success' => true,
-            'saved'   => $saved,
-            'page'    => $page,
+            'saved' => $saved,
+            'page' => $page,
             'message' => "Halaman {$page}/{$totalPages}: {$saved} data diterima.",
         ])->withHeaders([
-            'Access-Control-Allow-Origin'  => $corsOrigin,
+            'Access-Control-Allow-Origin' => $corsOrigin,
             'Access-Control-Allow-Methods' => 'POST, OPTIONS',
             'Access-Control-Allow-Headers' => 'Content-Type, Accept, X-Requested-With',
         ]);
@@ -435,14 +478,14 @@ class EmisController extends Controller
      */
     public function gtkProgress(): JsonResponse
     {
-        $pull   = \Illuminate\Support\Facades\Cache::get('emis_gtk:pull:progress');
-        $commit = \Illuminate\Support\Facades\Cache::get('emis_gtk:commit:progress');
-        $total  = \App\Models\EmisGtkStaging::where('status', 'pending')->count();
+        $pull = Cache::get('emis_gtk:pull:progress');
+        $commit = Cache::get('emis_gtk:commit:progress');
+        $total = EmisGtkStaging::where('status', 'pending')->count();
 
         return response()->json([
-            'pull_progress'   => $pull,
+            'pull_progress' => $pull,
             'commit_progress' => $commit,
-            'staging_count'   => $total,
+            'staging_count' => $total,
         ]);
     }
 
@@ -457,13 +500,13 @@ class EmisController extends Controller
         $corsOrigin = in_array($origin, $allowedOrigins) ? $origin : '*';
 
         $html = $request->getContent();
-        \Illuminate\Support\Facades\File::put(storage_path('logs/emisgtk_dump.html'), $html);
+        File::put(storage_path('logs/emisgtk_dump.html'), $html);
 
         return response()->json([
             'success' => true,
             'message' => 'Raw HTML berhasil diterima untuk dianalisa.',
         ])->withHeaders([
-            'Access-Control-Allow-Origin'  => $corsOrigin,
+            'Access-Control-Allow-Origin' => $corsOrigin,
             'Access-Control-Allow-Methods' => 'POST, OPTIONS',
             'Access-Control-Allow-Headers' => 'Content-Type, Accept, X-Requested-With',
         ]);
