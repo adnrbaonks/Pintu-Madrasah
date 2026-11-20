@@ -22,6 +22,7 @@ class Student extends Model
         'emis_student_id',
         'nisn', 'nik', 'nis_local', 'kk_number',
         'profile_photo',
+        'gdrive_photo_id', 'gdrive_photo_url', 'photo_upload_status', 'photo_upload_retries',
         'name', 'nickname', 'gender', 'birth_place', 'birth_date',
         'religion', 'citizenship', 'child_order', 'siblings_count', 'living_status',
         'address', 'rt', 'rw', 'village', 'district', 'regency', 'postal_code',
@@ -47,6 +48,7 @@ class Student extends Model
             'is_locked' => 'boolean',
             'father_income' => 'integer',
             'mother_income' => 'integer',
+            'photo_upload_retries' => 'integer',
         ];
     }
 

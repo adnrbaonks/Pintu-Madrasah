@@ -11,11 +11,11 @@ class StudentDocument extends Model
 
     public $incrementing = false;
 
-    protected $fillable = ['student_id', 'document_type', 'gdrive_file_id', 'gdrive_view_url', 'file_size', 'is_verified_ai', 'ai_verification_result', 'status'];
+    protected $fillable = ['student_id', 'document_type', 'gdrive_file_id', 'gdrive_view_url', 'file_size', 'is_verified_ai', 'ai_verification_result', 'status', 'upload_retries'];
 
     protected function casts(): array
     {
-        return ['id' => 'string', 'student_id' => 'string', 'is_verified_ai' => 'boolean', 'ai_verification_result' => 'array'];
+        return ['id' => 'string', 'student_id' => 'string', 'is_verified_ai' => 'boolean', 'ai_verification_result' => 'array', 'upload_retries' => 'integer'];
     }
 
     protected static function boot(): void

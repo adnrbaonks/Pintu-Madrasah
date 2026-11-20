@@ -22,11 +22,16 @@ class StudentMutation extends Model
         'destination_school',
         'status',
         'document_path',
+        'gdrive_file_id',
+        'gdrive_view_url',
+        'document_status',
+        'upload_retries',
         'raw_data',
     ];
 
     protected $casts = [
         'mutation_date' => 'date',
+        'upload_retries' => 'integer',
         'raw_data' => 'array',
     ];
 

@@ -33,19 +33,19 @@ class ArchiveController extends Controller
         // $type can be: ppdb, mutation, student_document, photo
         if ($type === 'ppdb') {
             $model = PpdbDocument::findOrFail($id);
-            $model->update(['status' => 'pending']);
+            $model->update(['status' => 'pending', 'upload_retries' => 0]);
             UploadToGoogleDriveJob::dispatch('ppdb', $model->id);
         } elseif ($type === 'mutation') {
             $model = StudentMutation::findOrFail($id);
-            $model->update(['document_status' => 'pending']);
+            $model->update(['document_status' => 'pending', 'upload_retries' => 0]);
             UploadToGoogleDriveJob::dispatch('mutation', $model->id);
         } elseif ($type === 'student_document') {
             $model = StudentDocument::findOrFail($id);
-            $model->update(['status' => 'pending']);
+            $model->update(['status' => 'pending', 'upload_retries' => 0]);
             UploadToGoogleDriveJob::dispatch('student_document', $model->id);
         } elseif ($type === 'photo') {
             $model = Student::findOrFail($id);
-            $model->update(['photo_upload_status' => 'pending']);
+            $model->update(['photo_upload_status' => 'pending', 'photo_upload_retries' => 0]);
             UploadToGoogleDriveJob::dispatch('photo', $model->id);
         } else {
             abort(400, 'Invalid document type');

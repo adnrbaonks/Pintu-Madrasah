@@ -16,6 +16,10 @@ class PpdbDocument extends Model
         'document_type',
         'document_name',
         'file_path',
+        'gdrive_file_id',
+        'gdrive_view_url',
+        'status',
+        'upload_retries',
         'file_size',
         'mime_type',
         'ai_extracted_data',
@@ -28,6 +32,7 @@ class PpdbDocument extends Model
         return [
             'id' => 'string',
             'file_size' => 'integer',
+            'upload_retries' => 'integer',
             'is_verified' => 'boolean',
             'verified_at' => 'datetime',
             'ai_extracted_data' => 'array',

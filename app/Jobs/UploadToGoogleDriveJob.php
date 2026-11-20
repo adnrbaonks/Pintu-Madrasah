@@ -107,10 +107,22 @@ class UploadToGoogleDriveJob implements ShouldQueue
         return match ($this->type) {
             'ppdb' => $model->file_path,
             'mutation' => $model->document_path,
-            'student_document' => 'archives/student_document/'.$model->id.'.pdf', // Need to check how StudentDocumentController saves it
+            'student_document' => $this->findStudentDocumentPath($model),
             'photo' => $model->profile_photo,
             default => null,
         };
+    }
+
+    /**
+     * Cari berkas arsip dokumen siswa dengan ekstensi aslinya.
+     *
+     * ProcessStudentDocumentJob menyimpan berkas sebagai
+     * archives/student_document/{id}.{ext}; ekstensi tidak selalu pdf.
+     */
+    protected function findStudentDocumentPath(StudentDocument $model): ?string
+    {
+        return collect(Storage::disk('local')->files('archives/student_document'))
+            ->first(fn (string $path) => str_starts_with(basename($path), $model->id.'.'));
     }
 
     protected function updateStatus($model, string $status): void
