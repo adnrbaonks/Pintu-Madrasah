@@ -66,6 +66,14 @@ class Staff extends Model
         return implode(' ', $parts);
     }
 
+    /**
+     * Nama kanonik GTK. Tabel staff tidak memiliki kolom name.
+     */
+    public function getNameAttribute(): string
+    {
+        return $this->full_name_with_titles;
+    }
+
     public function getEmploymentStatusLabelAttribute(): string
     {
         return match ($this->employment_status) {

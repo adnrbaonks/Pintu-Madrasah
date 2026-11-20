@@ -28,7 +28,7 @@ class PrintController extends Controller
                 'id' => $r->id,
                 'name' => $r->name,
                 'academic_year_id' => $r->academic_year_id,
-                'homeroom_teacher' => $r->homeroomTeacher?->name ?? '-',
+                'homeroom_teacher' => $r->homeroomTeacher?->full_name_with_titles ?? '-',
             ]);
 
         return Inertia::render('Print/Index', [
@@ -74,7 +74,7 @@ class PrintController extends Controller
                 'name' => $rombel->name,
                 'academic_year' => $rombel->academicYear->year,
                 'semester' => $rombel->academicYear->semester,
-                'homeroom_teacher' => $rombel->homeroomTeacher?->name ?? '-',
+                'homeroom_teacher' => $rombel->homeroomTeacher?->full_name_with_titles ?? '-',
             ],
             'students' => $students,
             'settings' => $settings,
@@ -112,7 +112,7 @@ class PrintController extends Controller
                 'name' => $rombel->name,
                 'academic_year' => $rombel->academicYear->year,
                 'semester' => $rombel->academicYear->semester,
-                'homeroom_teacher' => $rombel->homeroomTeacher?->name ?? '-',
+                'homeroom_teacher' => $rombel->homeroomTeacher?->full_name_with_titles ?? '-',
             ],
             'students' => $students,
             'settings' => $settings,
@@ -157,7 +157,7 @@ class PrintController extends Controller
                 'name' => $rombel->name,
                 'academic_year' => $rombel->academicYear->year,
                 'semester' => $rombel->academicYear->semester,
-                'homeroom_teacher' => $rombel->homeroomTeacher?->name ?? '-',
+                'homeroom_teacher' => $rombel->homeroomTeacher?->full_name_with_titles ?? '-',
             ],
             'students' => $students,
             'month' => $request->month,

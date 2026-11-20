@@ -1,7 +1,6 @@
 <?php
 
 use App\Http\Controllers\Api\EmisController;
-use App\Http\Controllers\Api\SearchController;
 use App\Http\Controllers\Api\V1\AcademicYearApiController;
 use App\Http\Controllers\Api\V1\ClassApiController;
 use App\Http\Controllers\Api\V1\StaffApiController;
@@ -16,9 +15,6 @@ use Illuminate\Support\Facades\Route;
 
 // ── Health Check ──────────────────────────────────────────────────────
 Route::get('/health', fn () => response()->json(['status' => 'ok', 'app' => config('app.name')]));
-
-// ── Global Search (Command Palette) ───────────────────────────────────
-Route::middleware('auth')->get('/search', SearchController::class);
 
 // ── EMIS Integration — Token Reception dari Bookmarklet ───────────────
 // Endpoint ini dipanggil oleh bookmarklet di browser staf

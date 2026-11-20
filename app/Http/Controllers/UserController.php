@@ -17,7 +17,7 @@ class UserController extends Controller
      */
     public function index(Request $request): Response
     {
-        $users = User::with('staff:id,name,nip')
+        $users = User::with('staff:id,full_name_with_titles,nip')
             ->when($request->search, fn ($q, $s) => $q->where('name', 'like', "%{$s}%")->orWhere('username', 'like', "%{$s}%"))
             ->orderBy('name')
             ->paginate(20)
@@ -29,14 +29,14 @@ class UserController extends Controller
                 'role' => $u->role,
                 'is_active' => $u->is_active,
                 'staff_id' => $u->staff_id,
-                'staff_name' => $u->staff?->name,
+                'staff_name' => $u->staff?->full_name_with_titles,
                 'staff_nip' => $u->staff?->nip,
                 'created_at' => $u->created_at?->format('d/m/Y'),
             ]);
 
-        $staffOptions = Staff::orderBy('name')
-            ->get(['id', 'name', 'nip'])
-            ->map(fn ($s) => ['value' => $s->id, 'label' => "{$s->name} ({$s->nip})"]);
+        $staffOptions = Staff::orderBy('full_name_with_titles')
+            ->get(['id', 'full_name_with_titles', 'nip'])
+            ->map(fn ($s) => ['value' => $s->id, 'label' => "{$s->full_name_with_titles} ({$s->nip})"]);
 
         return Inertia::render('Users/Index', [
             'users' => $users,

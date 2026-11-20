@@ -34,13 +34,15 @@ class SearchController extends Controller
             ->select('id', 'name', 'nisn', 'status')
             ->limit(6)
             ->get()
-            ->each(fn ($s) => $results[] = [
-                'type' => 'siswa',
-                'label' => $s->name,
-                'subtitle' => 'NISN: '.($s->nisn ?? '—'),
-                'href' => "/students/{$s->id}",
-                'icon' => 'student',
-            ]);
+            ->each(function ($s) use (&$results) {
+                $results[] = [
+                    'type' => 'siswa',
+                    'label' => $s->name,
+                    'subtitle' => 'NISN: '.($s->nisn ?? '—'),
+                    'href' => "/students/{$s->id}",
+                    'icon' => 'student',
+                ];
+            });
 
         // ── GTK ────────────────────────────────────────────────────────
         Staff::where('is_active', true)
@@ -52,13 +54,15 @@ class SearchController extends Controller
             ->select('id', 'full_name_with_titles', 'nip', 'employment_status')
             ->limit(4)
             ->get()
-            ->each(fn ($g) => $results[] = [
-                'type' => 'gtk',
-                'label' => $g->full_name_with_titles,
-                'subtitle' => strtoupper($g->employment_status ?? 'GTK').($g->nip ? ' | NIP: '.$g->nip : ''),
-                'href' => "/gtk/{$g->id}",
-                'icon' => 'gtk',
-            ]);
+            ->each(function ($g) use (&$results) {
+                $results[] = [
+                    'type' => 'gtk',
+                    'label' => $g->full_name_with_titles,
+                    'subtitle' => strtoupper($g->employment_status ?? 'GTK').($g->nip ? ' | NIP: '.$g->nip : ''),
+                    'href' => '/gtk?search='.urlencode((string) ($g->nip ?? $g->full_name_with_titles)),
+                    'icon' => 'gtk',
+                ];
+            });
 
         // ── Surat ──────────────────────────────────────────────────────
         Letter::where(fn ($query) => $query->where('subject', 'like', "%{$q}%")
@@ -68,13 +72,15 @@ class SearchController extends Controller
             ->select('id', 'type', 'number', 'subject', 'letter_date')
             ->limit(3)
             ->get()
-            ->each(fn ($l) => $results[] = [
-                'type' => 'surat',
-                'label' => $l->subject,
-                'subtitle' => 'Surat '.ucfirst($l->type).' | '.$l->number,
-                'href' => "/persuratan/{$l->id}",
-                'icon' => 'letter',
-            ]);
+            ->each(function ($l) use (&$results) {
+                $results[] = [
+                    'type' => 'surat',
+                    'label' => $l->subject,
+                    'subtitle' => 'Surat '.ucfirst($l->type).' | '.$l->number,
+                    'href' => "/persuratan/{$l->id}",
+                    'icon' => 'letter',
+                ];
+            });
 
         // ── Menu / Halaman (Static) ─────────────────────────────────────
         $menuItems = [

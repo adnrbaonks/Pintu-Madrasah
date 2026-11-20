@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\SearchController;
 use App\Http\Controllers\ApiClientController;
 use App\Http\Controllers\ArchiveController;
 use App\Http\Controllers\AuditLogController;
@@ -57,6 +58,11 @@ Route::middleware('guest')->group(function () {
 Route::middleware('auth')->group(function () {
 
     Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
+
+    // ── Global Search (Command Palette) ────────────────────────────
+    // URL tetap /api/search agar frontend tidak berubah, tetapi route
+    // dijalankan pada middleware web agar sesi login tersedia.
+    Route::get('/api/search', SearchController::class)->name('search');
 
     // ── Profil Pengguna — semua role ───────────────────────────────
     Route::get('/profile', [ProfileController::class, 'show'])->name('profile.show');
