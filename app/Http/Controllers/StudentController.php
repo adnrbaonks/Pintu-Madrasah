@@ -435,14 +435,14 @@ class StudentController extends Controller
             'father_name' => 'nullable|string|max:255',
             'father_nik' => 'nullable|string|max:20',
             'father_job' => 'nullable|string|max:100',
-            'father_income' => 'nullable|integer',
+            'father_income' => 'nullable|string|max:50',
             'father_phone' => 'nullable|string|max:30',
 
             // Ibu
             'mother_name' => 'nullable|string|max:255',
             'mother_nik' => 'nullable|string|max:20',
             'mother_job' => 'nullable|string|max:100',
-            'mother_income' => 'nullable|integer',
+            'mother_income' => 'nullable|string|max:50',
             'mother_phone' => 'nullable|string|max:30',
 
             // Wali
@@ -729,40 +729,63 @@ class StudentController extends Controller
             return back()->with('error', 'NSM belum diatur di pengaturan aplikasi.');
         }
 
-        $students = Student::whereNull('nis_local')->orWhere('nis_local', '')->get();
+        // Cast to string and allow nullable for ones without NIS
+        $students = Student::whereNull('nis_local')
+            ->orWhere('nis_local', '')
+            ->get();
+
         $generated = 0;
+        $failedDuplicates = 0;
 
-        foreach ($students as $student) {
-            $firstCohort = $student->cohorts()->with('academicYear')->orderBy('created_at', 'asc')->first();
-            if (! $firstCohort || ! $firstCohort->academicYear) {
-                continue;
+        DB::transaction(function () use ($nsm, $students, &$generated, &$failedDuplicates) {
+            foreach ($students as $student) {
+                $firstCohort = $student->cohorts()->with('academicYear')->orderBy('created_at', 'asc')->first();
+                if (! $firstCohort || ! $firstCohort->academicYear) {
+                    continue;
+                }
+
+                $yearString = $firstCohort->academicYear->year;
+                $yearParts = explode('/', $yearString);
+                if (count($yearParts) < 1) {
+                    continue;
+                }
+
+                $entryYear = substr($yearParts[0], -2);
+                $prefix = $nsm.$entryYear;
+
+                // Lock for update row to avoid race conditions
+                $student->lockForUpdate();
+                $lastStudent = Student::where('nis_local', 'like', $prefix.'%')
+                    ->orderBy('nis_local', 'desc')
+                    ->first();
+
+                $urut = 1;
+                if ($lastStudent && $lastStudent->nis_local) {
+                    $lastUrut = (int) substr($lastStudent->nis_local, 14, 4);
+                    $urut = $lastUrut + 1;
+                }
+
+                $nism = $prefix.str_pad($urut, 4, '0', STR_PAD_LEFT);
+
+                // Check duplicate before update
+                if (Student::where('nis_local', $nism)->exists()) {
+                    $this->fresh();
+                    $failedDuplicates++;
+
+                    continue;
+                }
+
+                $student->update(['nis_local' => $nism]);
+                $generated++;
             }
+        });
 
-            $yearString = $firstCohort->academicYear->year; // e.g. "2026/2027"
-            $yearParts = explode('/', $yearString);
-            if (count($yearParts) < 1) {
-                continue;
-            }
-
-            $entryYear = substr($yearParts[0], -2); // "26"
-            $prefix = $nsm.$entryYear;
-
-            $lastStudent = Student::where('nis_local', 'like', $prefix.'%')
-                ->orderBy('nis_local', 'desc')
-                ->first();
-
-            $urut = 1;
-            if ($lastStudent && $lastStudent->nis_local) {
-                $lastUrut = (int) substr($lastStudent->nis_local, 14, 4);
-                $urut = $lastUrut + 1;
-            }
-
-            $nism = $prefix.str_pad($urut, 4, '0', STR_PAD_LEFT);
-            $student->update(['nis_local' => $nism]);
-            $generated++;
+        $msg = "$generated NISM berhasil di-generate secara otomatis sesuai urutan.";
+        if ($failedDuplicates > 0) {
+            $msg .= " Perhatian: $failedDuplicates nama siswa tidak memiliki NIS unik (competition after NISM generation).";
         }
 
-        return back()->with('success', "$generated NISM berhasil di-generate secara otomatis sesuai urutan.");
+        return back()->with('success', $msg);
     }
 
     /**

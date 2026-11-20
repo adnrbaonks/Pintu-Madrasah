@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\LocalTime;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
@@ -61,5 +62,21 @@ class PpdbPeriod extends Model
     {
         return static::where('is_active', true)->first()
             ?? static::orderBy('created_at', 'desc')->first();
+    }
+
+    /**
+     * Periode PPDB aktif *sekarang* (tampil di form publik).
+     * Syarat: is_active=true, is_public_form_active=true,
+     * open_date <= hari ini, close_date >= hari ini.
+     */
+    public static function activeForNow(): ?self
+    {
+        return static::query()
+            ->where('is_active', true)
+            ->where('is_public_form_active', true)
+            ->whereDate('open_date', '<=', LocalTime::now()->toDateString())
+            ->whereDate('close_date', '>=', LocalTime::now()->toDateString())
+            ->orderByDesc('open_date')
+            ->first();
     }
 }

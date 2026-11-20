@@ -60,8 +60,10 @@ class DashboardController extends Controller
             ->pluck('total', 'gender');
 
         // ── PPDB ───────────────────────────────────────────────────────
-        $ppdbPending = PpdbRegistration::where('status', 'pending')->count();
-        $ppdbAccepted = PpdbRegistration::where('status', 'accepted')->count();
+        $ppdbPending = PpdbRegistration::whereNotIn('status', [
+            PpdbRegistration::STATUS_PLACED,
+        ])->count();
+        $ppdbAccepted = PpdbRegistration::where('status', PpdbRegistration::STATUS_PLACED)->count();
         $ppdbTotal = PpdbRegistration::count();
 
         // ── Rombel ─────────────────────────────────────────────────────

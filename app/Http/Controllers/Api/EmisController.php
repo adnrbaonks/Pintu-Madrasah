@@ -170,6 +170,9 @@ class EmisController extends Controller
             Cache::forget('emis:pull:progress');
         }
 
+        // Hapus flag pembatalan sebelum menjalankan job baru
+        Cache::forget('emis:sync:cancel');
+
         PullEmisStudentDataJob::dispatch()->onQueue('emis');
 
         return response()->json([

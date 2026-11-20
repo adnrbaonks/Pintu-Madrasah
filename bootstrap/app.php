@@ -2,7 +2,6 @@
 
 use App\Http\Middleware\CheckApiKey;
 use App\Http\Middleware\CheckApiScope;
-use App\Http\Middleware\CheckCloudflareZeroTrust;
 use App\Http\Middleware\CheckRole;
 use App\Http\Middleware\HandleInertiaRequests;
 use Illuminate\Foundation\Application;
@@ -28,7 +27,6 @@ return Application::configure(basePath: dirname(__DIR__))
             'role' => RoleMiddleware::class,
             'permission' => PermissionMiddleware::class,
             'role_or_permission' => RoleOrPermissionMiddleware::class,
-            'cf.zero.trust' => CheckCloudflareZeroTrust::class,
             'checkrole' => CheckRole::class,
             'api.key' => CheckApiKey::class,
             'api.scope' => CheckApiScope::class,

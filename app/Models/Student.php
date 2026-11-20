@@ -46,8 +46,8 @@ class Student extends Model
             'kks_eligible' => 'boolean',
             'is_verified_by_ai' => 'boolean',
             'is_locked' => 'boolean',
-            'father_income' => 'integer',
-            'mother_income' => 'integer',
+            'father_income' => 'string',
+            'mother_income' => 'string',
             'photo_upload_retries' => 'integer',
         ];
     }
@@ -67,10 +67,13 @@ class Student extends Model
 
     public function currentCohort()
     {
-        $activeYear = AcademicYear::active();
+        static $activeYearId = false;
+        if ($activeYearId === false) {
+            $activeYearId = AcademicYear::active()?->id;
+        }
 
         return $this->hasOne(StudentAcademicCohort::class)
-            ->where('academic_year_id', $activeYear?->id);
+            ->where('academic_year_id', $activeYearId);
     }
 
     public function documents()

@@ -173,7 +173,24 @@ class PpdbController extends Controller
      */
     public function publicForm()
     {
-        $activePeriod = PpdbPeriod::active();
+        $activePeriod = PpdbPeriod::activeForNow();
+
+        if (! $activePeriod) {
+            $periodWithIsPublic = PpdbPeriod::query()
+                ->where('is_active', true)
+                ->where('is_public_form_active', true)
+                ->orderByDesc('open_date')
+                ->first();
+
+            // If no active period, show closed message with remaining periods info
+            return Inertia::render('Ppdb/PublicForm', [
+                'activePeriod' => null,
+                'periods' => PpdbPeriod::orderByDesc('open_date')->get(),
+                'closed' => true,
+                'madrasahName' => Setting::get('madrasah_name', env('MADRASAH_NAME', 'MTs')),
+                'madrasahAddress' => Setting::get('school_address', env('MADRASAH_ADDRESS', '')),
+            ]);
+        }
 
         return Inertia::render('Ppdb/PublicForm', [
             'activePeriod' => $activePeriod,
@@ -187,7 +204,7 @@ class PpdbController extends Controller
      */
     public function publicStore(Request $request)
     {
-        $period = PpdbPeriod::active();
+        $period = PpdbPeriod::activeForNow();
         if (! $period) {
             return redirect()->back()->withErrors(['period' => 'Pendaftaran PPDB sedang ditutup.']);
         }

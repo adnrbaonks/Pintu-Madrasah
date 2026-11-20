@@ -72,7 +72,7 @@ class PullEmisMutationDataJob implements ShouldQueue
                                 'reason' => $item['m_mutation_reason']['name'] ?? $item['m_mutation_reason_name'] ?? null,
                                 'origin_school' => $item['institution_origin_name'] ?? null,
                                 'destination_school' => $item['institution_destination_name'] ?? null,
-                                'raw_data' => json_encode($item),
+                                'raw_data' => $item,
                             ]
                         );
                         $stats[$type]++;

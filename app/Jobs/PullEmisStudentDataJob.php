@@ -39,6 +39,18 @@ class PullEmisStudentDataJob implements ShouldQueue
             $stats = ['total_pulled' => 0, 'failed' => 0, 'skipped_no_nisn' => 0, 'pages' => 0];
 
             while (true) {
+                if (Cache::get('emis:sync:cancel')) {
+                    Cache::forget('emis:sync:cancel');
+                    $progress([
+                        'status' => 'Sinkronisasi dibatalkan oleh pengguna.',
+                        'progress' => 100,
+                        'cancelled' => true,
+                    ]);
+                    Log::info('[JOB] Pull dibatalkan', compact('stats'));
+
+                    return;
+                }
+
                 // Metadata last_page EMIS tidak dipercaya (pernah 1 padahal data bersambung);
                 // satu-satunya sinyal berhenti yang valid = halaman pendek/kosong.
                 $response = $emis->fetchAllStudents($page, $perPage);
