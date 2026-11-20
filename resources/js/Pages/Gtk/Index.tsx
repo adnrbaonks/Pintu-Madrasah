@@ -54,8 +54,8 @@ export default function Index({ staff, filters }: { staff: PaginationProps, filt
                         <form onSubmit={handleSearch} className="flex gap-2 w-full md:w-auto">
                             <div className="relative">
                                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" />
-                                <Input 
-                                    placeholder="Cari nama, NIK, NIP..." 
+                                <Input
+                                    placeholder="Cari nama, NIK, NIP..."
                                     className="pl-9 w-full md:w-64"
                                     value={search}
                                     onChange={e => setSearch(e.target.value)}
@@ -75,6 +75,7 @@ export default function Index({ staff, filters }: { staff: PaginationProps, filt
                                     <TableHead>Status Pegawai</TableHead>
                                     <TableHead>Jabatan</TableHead>
                                     <TableHead>Status Aktif</TableHead>
+                                    <TableHead className="text-right">Aksi</TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
@@ -82,7 +83,9 @@ export default function Index({ staff, filters }: { staff: PaginationProps, filt
                                     staff.data.map((item) => (
                                         <TableRow key={item.id}>
                                             <TableCell className="font-medium">
-                                                {item.full_name_with_titles}
+                                                <Link href={`/gtk/${item.id}`} className="hover:underline text-teal-700 font-semibold">
+                                                    {item.full_name_with_titles}
+                                                </Link>
                                             </TableCell>
                                             <TableCell>
                                                 <div className="flex flex-col">
@@ -109,11 +112,25 @@ export default function Index({ staff, filters }: { staff: PaginationProps, filt
                                                     </Badge>
                                                 )}
                                             </TableCell>
+                                            <TableCell className="text-right">
+                                                <div className="flex justify-end gap-1">
+                                                    <Link href={`/gtk/${item.id}`}>
+                                                        <Button variant="ghost" size="sm" className="h-8 px-2 text-slate-600">
+                                                            Detail
+                                                        </Button>
+                                                    </Link>
+                                                    <Link href={`/gtk/${item.id}/edit`}>
+                                                        <Button variant="outline" size="sm" className="h-8 px-2">
+                                                            Edit
+                                                        </Button>
+                                                    </Link>
+                                                </div>
+                                            </TableCell>
                                         </TableRow>
                                     ))
                                 ) : (
                                     <TableRow>
-                                        <TableCell colSpan={5} className="text-center py-8 text-slate-500">
+                                        <TableCell colSpan={6} className="text-center py-8 text-slate-500">
                                             Tidak ada data pegawai yang ditemukan.
                                         </TableCell>
                                     </TableRow>
@@ -130,8 +147,8 @@ export default function Index({ staff, filters }: { staff: PaginationProps, filt
                             </div>
                             <div className="flex flex-wrap gap-1">
                                 {staff.links.map((link, i) => (
-                                    <Link 
-                                        key={i} 
+                                    <Link
+                                        key={i}
                                         href={link.url || '#'}
                                         className={`px-3 py-1 border rounded ${link.active ? 'bg-teal-700 text-white border-teal-700' : 'bg-white hover:bg-slate-50'} ${!link.url ? 'opacity-50 cursor-not-allowed' : ''}`}
                                         dangerouslySetInnerHTML={{ __html: link.label }}

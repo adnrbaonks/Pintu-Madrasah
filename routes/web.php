@@ -196,6 +196,9 @@ Route::middleware('auth')->group(function () {
             Route::get('/', [GtkController::class, 'index'])->name('index');
             Route::get('/tpg', [StatistikController::class, 'tpg'])->name('tpg');
             Route::put('/{staff}/tpg-status', [StatistikController::class, 'updateTpgStatus'])->name('tpg.update');
+            Route::get('/{staff}', [GtkController::class, 'show'])->name('show');
+            Route::get('/{staff}/edit', [GtkController::class, 'edit'])->name('edit');
+            Route::put('/{staff}', [GtkController::class, 'update'])->name('update');
         });
 
         // Statistik
