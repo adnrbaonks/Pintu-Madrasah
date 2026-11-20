@@ -2,11 +2,12 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Rombel;
 use App\Models\AcademicYear;
+use App\Models\Rombel;
 use App\Models\Setting;
-use Inertia\Inertia;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Inertia\Inertia;
 
 class PrintController extends Controller
 {
@@ -15,24 +16,24 @@ class PrintController extends Controller
      */
     public function index()
     {
-        $academicYears = AcademicYear::orderByDesc('created_at')->get()->map(fn($ay) => [
-            'id'    => $ay->id,
-            'label' => $ay->year . ' – ' . $ay->semester,
+        $academicYears = AcademicYear::orderByDesc('created_at')->get()->map(fn ($ay) => [
+            'id' => $ay->id,
+            'label' => $ay->year.' – '.$ay->semester,
         ]);
 
         $rombels = Rombel::with(['academicYear', 'homeroomTeacher'])
             ->orderBy('name')
             ->get()
-            ->map(fn($r) => [
-                'id'              => $r->id,
-                'name'            => $r->name,
-                'academic_year_id'=> $r->academic_year_id,
-                'homeroom_teacher'=> $r->homeroomTeacher?->name ?? '-',
+            ->map(fn ($r) => [
+                'id' => $r->id,
+                'name' => $r->name,
+                'academic_year_id' => $r->academic_year_id,
+                'homeroom_teacher' => $r->homeroomTeacher?->name ?? '-',
             ]);
 
         return Inertia::render('Print/Index', [
             'academicYears' => $academicYears,
-            'rombels'       => $rombels,
+            'rombels' => $rombels,
         ]);
     }
 
@@ -51,32 +52,32 @@ class PrintController extends Controller
             ->orderBy('attendance_number')
             ->get();
 
-        $students = $cohorts->map(fn($c) => [
-            'no'              => $c->attendance_number,
-            'name'            => $c->student->name,
-            'nisn'            => $c->student->nisn ?? '-',
-            'nism'            => $c->student->nis_local ?? '-',
-            'gender'          => $c->student->gender === 'L' ? 'L' : 'P',
-            'birth_place'     => $c->student->birth_place ?? '-',
-            'birth_date'      => $c->student->birth_date
-                                    ? \Carbon\Carbon::parse($c->student->birth_date)->format('d-m-Y')
+        $students = $cohorts->map(fn ($c) => [
+            'no' => $c->attendance_number,
+            'name' => $c->student->name,
+            'nisn' => $c->student->nisn ?? '-',
+            'nism' => $c->student->nis_local ?? '-',
+            'gender' => $c->student->gender === 'L' ? 'L' : 'P',
+            'birth_place' => $c->student->birth_place ?? '-',
+            'birth_date' => $c->student->birth_date
+                                    ? Carbon::parse($c->student->birth_date)->format('d-m-Y')
                                     : '-',
-            'address'         => $c->student->address ?? '-',
-            'father_name'     => $c->student->father_name ?? '-',
-            'mother_name'     => $c->student->mother_name ?? '-',
+            'address' => $c->student->address ?? '-',
+            'father_name' => $c->student->father_name ?? '-',
+            'mother_name' => $c->student->mother_name ?? '-',
         ]);
 
         $settings = Setting::all()->pluck('value', 'key');
 
         return Inertia::render('Print/DaftarSiswa', [
-            'rombel'   => [
-                'name'            => $rombel->name,
-                'academic_year'   => $rombel->academicYear->year,
-                'semester'        => $rombel->academicYear->semester,
-                'homeroom_teacher'=> $rombel->homeroomTeacher?->name ?? '-',
+            'rombel' => [
+                'name' => $rombel->name,
+                'academic_year' => $rombel->academicYear->year,
+                'semester' => $rombel->academicYear->semester,
+                'homeroom_teacher' => $rombel->homeroomTeacher?->name ?? '-',
             ],
-            'students'  => $students,
-            'settings'  => $settings,
+            'students' => $students,
+            'settings' => $settings,
         ]);
     }
 
@@ -96,21 +97,21 @@ class PrintController extends Controller
             ->orderBy('attendance_number')
             ->get();
 
-        $students = $cohorts->map(fn($c) => [
-            'no'     => $c->attendance_number,
-            'nis'    => $c->student->nis_local ?? '-',
-            'nisn'   => $c->student->nisn ?? '-',
-            'name'   => $c->student->name,
+        $students = $cohorts->map(fn ($c) => [
+            'no' => $c->attendance_number,
+            'nis' => $c->student->nis_local ?? '-',
+            'nisn' => $c->student->nisn ?? '-',
+            'name' => $c->student->name,
             'gender' => $c->student->gender === 'L' ? 'L' : 'P',
         ]);
 
         $settings = Setting::all()->pluck('value', 'key');
 
         return Inertia::render('Print/DaftarKelas', [
-            'rombel'   => [
-                'name'             => $rombel->name,
-                'academic_year'    => $rombel->academicYear->year,
-                'semester'         => $rombel->academicYear->semester,
+            'rombel' => [
+                'name' => $rombel->name,
+                'academic_year' => $rombel->academicYear->year,
+                'semester' => $rombel->academicYear->semester,
                 'homeroom_teacher' => $rombel->homeroomTeacher?->name ?? '-',
             ],
             'students' => $students,
@@ -125,8 +126,8 @@ class PrintController extends Controller
     {
         $request->validate([
             'rombel_id' => 'required|exists:rombels,id',
-            'month'     => 'required|integer|min:1|max:12',
-            'year'      => 'required|integer|min:2020|max:2099',
+            'month' => 'required|integer|min:1|max:12',
+            'year' => 'required|integer|min:2020|max:2099',
         ]);
 
         $rombel = Rombel::with(['academicYear', 'homeroomTeacher'])
@@ -137,8 +138,8 @@ class PrintController extends Controller
             ->orderBy('attendance_number')
             ->get();
 
-        $students = $cohorts->map(fn($c) => [
-            'no'   => $c->attendance_number,
+        $students = $cohorts->map(fn ($c) => [
+            'no' => $c->attendance_number,
             'name' => $c->student->name,
             'gender' => $c->student->gender === 'L' ? 'L' : 'P',
         ]);
@@ -147,23 +148,23 @@ class PrintController extends Controller
         $daysInMonth = cal_days_in_month(CAL_GREGORIAN, $request->month, $request->year);
 
         $months = ['', 'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
-                   'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+            'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
 
         $settings = Setting::all()->pluck('value', 'key');
 
         return Inertia::render('Print/AbsenHarian', [
-            'rombel'      => [
-                'name'             => $rombel->name,
-                'academic_year'    => $rombel->academicYear->year,
-                'semester'         => $rombel->academicYear->semester,
+            'rombel' => [
+                'name' => $rombel->name,
+                'academic_year' => $rombel->academicYear->year,
+                'semester' => $rombel->academicYear->semester,
                 'homeroom_teacher' => $rombel->homeroomTeacher?->name ?? '-',
             ],
-            'students'    => $students,
-            'month'       => $request->month,
-            'monthName'   => $months[$request->month],
-            'year'        => $request->year,
+            'students' => $students,
+            'month' => $request->month,
+            'monthName' => $months[$request->month],
+            'year' => $request->year,
             'daysInMonth' => $daysInMonth,
-            'settings'    => $settings,
+            'settings' => $settings,
         ]);
     }
 }

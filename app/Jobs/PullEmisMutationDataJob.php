@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Models\Student;
 use App\Models\StudentMutation;
 use App\Services\EmisService;
 use Illuminate\Bus\Queueable;
@@ -17,6 +18,7 @@ class PullEmisMutationDataJob implements ShouldQueue
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     public int $tries = 3;
+
     public int $timeout = 600;
 
     public function handle(EmisService $emis): void
@@ -44,7 +46,9 @@ class PullEmisMutationDataJob implements ShouldQueue
 
                     foreach ($results as $item) {
                         $emisStudentId = $item['student_id'] ?? null;
-                        if (!$emisStudentId) continue;
+                        if (! $emisStudentId) {
+                            continue;
+                        }
 
                         $student = $item['student'] ?? [];
 
@@ -52,7 +56,7 @@ class PullEmisMutationDataJob implements ShouldQueue
                         // sampai TU memverifikasi dokumen dan menyelesaikan manual.
                         $localId = null;
                         if (! empty($student['nisn'])) {
-                            $localId = \App\Models\Student::where('nisn', $student['nisn'])->value('id');
+                            $localId = Student::where('nisn', $student['nisn'])->value('id');
                         }
 
                         StudentMutation::updateOrCreate(
@@ -77,15 +81,15 @@ class PullEmisMutationDataJob implements ShouldQueue
                     Log::info("[JOB] Mutasi {$type} Halaman {$page} selesai ditarik.");
                 } catch (\Throwable $e) {
                     $stats['failed']++;
-                    Log::error("[JOB] Gagal mutasi {$type} hal {$page}: " . $e->getMessage());
+                    Log::error("[JOB] Gagal mutasi {$type} hal {$page}: ".$e->getMessage());
                     break; // stop this type on error
                 }
 
                 $page++;
-                
+
                 // Update progress loosely
                 Cache::put('emis:mutations:progress', [
-                    'status' => "Menarik mutasi {$type} halaman " . ($page - 1),
+                    'status' => "Menarik mutasi {$type} halaman ".($page - 1),
                     'progress' => $type === 'in' ? 25 : 75,
                     'stats' => $stats,
                 ], now()->addMinutes(15));

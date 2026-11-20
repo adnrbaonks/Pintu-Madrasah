@@ -32,8 +32,7 @@ class BkController extends Controller
         }
         if ($request->filled('q')) {
             $q = $request->q;
-            $query->whereHas('student', fn ($s) =>
-                $s->where('name', 'like', "%{$q}%")->orWhere('nisn', 'like', "%{$q}%"));
+            $query->whereHas('student', fn ($s) => $s->where('name', 'like', "%{$q}%")->orWhere('nisn', 'like', "%{$q}%"));
         }
 
         // Rekap poin per siswa (tahun aktif): negatif = pelanggaran

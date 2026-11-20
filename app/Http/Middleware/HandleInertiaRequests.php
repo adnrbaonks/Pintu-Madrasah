@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Models\Setting;
 use Illuminate\Http\Request;
 use Inertia\Middleware;
 
@@ -42,21 +43,21 @@ class HandleInertiaRequests extends Middleware
 
             'auth' => [
                 'user' => $user ? [
-                    'id'       => $user->id,
-                    'name'     => $user->name,
+                    'id' => $user->id,
+                    'name' => $user->name,
                     'username' => $user->username,
-                    'role'     => $user->role,
+                    'role' => $user->role,
                 ] : null,
             ],
 
             'flash' => [
                 'success' => fn () => $request->session()->get('success'),
-                'error'   => fn () => $request->session()->get('error'),
+                'error' => fn () => $request->session()->get('error'),
             ],
 
-            'appName'      => config('app.app_name', 'PINTU MADRASAH'),
-            'madrasahName' => \App\Models\Setting::get('madrasah_name', env('MADRASAH_NAME', 'MTs Negeri')),
-            'madrasahPhoto' => \App\Models\Setting::get('madrasah_photo'),
+            'appName' => config('app.app_name', 'PINTU MADRASAH'),
+            'madrasahName' => Setting::get('madrasah_name', env('MADRASAH_NAME', 'MTs Negeri')),
+            'madrasahPhoto' => Setting::get('madrasah_photo'),
         ];
     }
 }

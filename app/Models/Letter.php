@@ -3,8 +3,8 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Letter extends Model
 {
@@ -19,7 +19,7 @@ class Letter extends Model
     protected function casts(): array
     {
         return [
-            'letter_date'   => 'date',
+            'letter_date' => 'date',
             'received_date' => 'date',
         ];
     }
@@ -33,15 +33,15 @@ class Letter extends Model
     public function getCategoryLabelAttribute(): string
     {
         return [
-            'umum'          => 'Umum',
-            'undangan'      => 'Undangan',
-            'sk'            => 'Surat Keputusan (SK)',
-            'keterangan'    => 'Surat Keterangan',
-            'rekomendasi'   => 'Rekomendasi',
-            'permohonan'    => 'Permohonan',
+            'umum' => 'Umum',
+            'undangan' => 'Undangan',
+            'sk' => 'Surat Keputusan (SK)',
+            'keterangan' => 'Surat Keterangan',
+            'rekomendasi' => 'Rekomendasi',
+            'permohonan' => 'Permohonan',
             'pemberitahuan' => 'Pemberitahuan',
-            'edaran'        => 'Edaran',
-            'lainnya'       => 'Lainnya',
+            'edaran' => 'Edaran',
+            'lainnya' => 'Lainnya',
         ][$this->category] ?? ucfirst($this->category);
     }
 
@@ -57,7 +57,7 @@ class Letter extends Model
     public static function generateOutNumber(string $category = 'umum', ?string $prefix = null): string
     {
         $roman = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII'];
-        $year  = now()->year;
+        $year = now()->year;
         $month = now()->month;
 
         // Urutan di bulan + tahun ini
@@ -69,14 +69,14 @@ class Letter extends Model
         $seqStr = str_pad($seq, 3, '0', STR_PAD_LEFT);
 
         $catCode = match ($category) {
-            'sk'            => 'SK',
-            'undangan'      => 'UND',
-            'keterangan'    => 'SKET',
-            'rekomendasi'   => 'RKM',
-            'permohonan'    => 'PMH',
+            'sk' => 'SK',
+            'undangan' => 'UND',
+            'keterangan' => 'SKET',
+            'rekomendasi' => 'RKM',
+            'permohonan' => 'PMH',
             'pemberitahuan' => 'PBT',
-            'edaran'        => 'SE',
-            default         => 'SRT',
+            'edaran' => 'SE',
+            default => 'SRT',
         };
 
         $lembaga = $prefix ?? 'MTS.NM';

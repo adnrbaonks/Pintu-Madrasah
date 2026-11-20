@@ -2,12 +2,16 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\UploadToGoogleDriveJob;
 use App\Models\AcademicYear;
+use App\Models\PpdbDocument;
 use App\Models\PpdbPeriod;
 use App\Models\PpdbRegistration;
 use App\Models\Setting;
+use App\Services\FileCompressionService;
+use App\Services\GeminiPpdbService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
 
 class PpdbController extends Controller
@@ -95,7 +99,7 @@ class PpdbController extends Controller
      */
     public function togglePeriodActive(PpdbPeriod $period)
     {
-        if (!$period->is_active) {
+        if (! $period->is_active) {
             PpdbPeriod::where('is_active', true)->update(['is_active' => false]);
             $period->update(['is_active' => true]);
             $message = "Periode '{$period->name}' sekarang aktif.";
@@ -130,10 +134,10 @@ class PpdbController extends Controller
             $search = $request->search;
             $query->where(function ($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('registration_number', 'like', "%{$search}%")
-                  ->orWhere('nisn', 'like', "%{$search}%")
-                  ->orWhere('nik', 'like', "%{$search}%")
-                  ->orWhere('prev_school_name', 'like', "%{$search}%");
+                    ->orWhere('registration_number', 'like', "%{$search}%")
+                    ->orWhere('nisn', 'like', "%{$search}%")
+                    ->orWhere('nik', 'like', "%{$search}%")
+                    ->orWhere('prev_school_name', 'like', "%{$search}%");
             });
         }
 
@@ -298,7 +302,7 @@ class PpdbController extends Controller
         ]);
 
         $period = null;
-        if (!empty($validated['ppdb_period_id'])) {
+        if (! empty($validated['ppdb_period_id'])) {
             $period = PpdbPeriod::find($validated['ppdb_period_id']);
         } else {
             $period = PpdbPeriod::active();
@@ -448,7 +452,7 @@ class PpdbController extends Controller
     /**
      * Pindai dokumen form PPDB dengan AI dan simpan.
      */
-    public function scanDocument(Request $request, PpdbRegistration $registration, \App\Services\GeminiPpdbService $aiService, \App\Services\FileCompressionService $compressionService)
+    public function scanDocument(Request $request, PpdbRegistration $registration, GeminiPpdbService $aiService, FileCompressionService $compressionService)
     {
         $request->validate([
             'document' => 'required|file|mimes:pdf,jpg,jpeg,png|max:5120',
@@ -466,17 +470,17 @@ class PpdbController extends Controller
 
         // 2. Scan using Gemini (secara sinkron)
         $extractedData = $aiService->parseDocument($compressedPath, $mimeType);
-        if (!$extractedData) {
+        if (! $extractedData) {
             return back()->with('error', 'Gagal memindai dokumen menggunakan AI. Pastikan dokumen dapat terbaca dengan jelas.');
         }
 
         // 3. Upload to Local Private Storage
-        $newFilename = $registration->registration_number . '_' . time() . '.' . $extension;
-        $archivePath = 'archives/ppdb/' . $newFilename;
-        \Illuminate\Support\Facades\Storage::disk('local')->put($archivePath, file_get_contents($compressedPath));
+        $newFilename = $registration->registration_number.'_'.time().'.'.$extension;
+        $archivePath = 'archives/ppdb/'.$newFilename;
+        Storage::disk('local')->put($archivePath, file_get_contents($compressedPath));
 
         // 4. Save to ppdb_documents
-        $document = \App\Models\PpdbDocument::create([
+        $document = PpdbDocument::create([
             'ppdb_registration_id' => $registration->id,
             'document_type' => 'formulir_pendaftaran',
             'document_name' => $originalName,
@@ -491,7 +495,7 @@ class PpdbController extends Controller
         ]);
 
         // 5. Dispatch background job untuk upload ke GDrive
-        \App\Jobs\UploadToGoogleDriveJob::dispatch('ppdb', $document->id);
+        UploadToGoogleDriveJob::dispatch('ppdb', $document->id);
 
         // 5. Update Registration Data
         $updateData = [];
@@ -500,7 +504,7 @@ class PpdbController extends Controller
             'address', 'rt', 'rw', 'village', 'district', 'regency', 'postal_code',
             'prev_school_name', 'father_name', 'father_nik', 'father_job', 'father_income',
             'mother_name', 'mother_nik', 'mother_job', 'mother_income',
-            'guardian_name', 'guardian_nik', 'guardian_job'
+            'guardian_name', 'guardian_nik', 'guardian_job',
         ];
 
         foreach ($fillable as $field) {
@@ -508,7 +512,7 @@ class PpdbController extends Controller
                 $updateData[$field] = $extractedData[$field];
             }
         }
-        
+
         if (isset($updateData['name'])) {
             $updateData['name'] = mb_strtoupper($updateData['name'], 'UTF-8');
         }

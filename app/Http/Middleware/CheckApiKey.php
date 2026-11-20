@@ -34,6 +34,7 @@ class CheckApiKey
             $client->update(['last_used_at' => now()]);
             $request->attributes->set('api_client', $client);
             $request->attributes->set('api_scopes', $client->scopes ?? []);
+
             return $next($request);
         }
 
@@ -42,6 +43,7 @@ class CheckApiKey
         if ($legacy && hash_equals((string) $legacy, (string) $provided)) {
             $request->attributes->set('api_client', null);
             $request->attributes->set('api_scopes', array_keys(ApiClient::SCOPES));
+
             return $next($request);
         }
 

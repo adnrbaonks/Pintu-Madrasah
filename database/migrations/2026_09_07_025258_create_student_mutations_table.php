@@ -13,7 +13,8 @@ return new class extends Migration
     {
         Schema::create('student_mutations', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('student_id')->nullable()->constrained()->nullOnDelete();
+            // students.id adalah UUID; foreignId() akan gagal di MySQL.
+            $table->foreignUuid('student_id')->nullable()->constrained('students')->nullOnDelete();
             $table->string('emis_student_id')->nullable();
             $table->string('nisn')->nullable();
             $table->string('name')->nullable();

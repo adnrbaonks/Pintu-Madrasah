@@ -13,14 +13,14 @@ return new class extends Migration
             $table->uuid('id')->primary();
             $table->foreignUuid('student_id')->constrained('students')->cascadeOnDelete();
             $table->string('document_type')
-                  ->comment('akta_kelahiran | kartu_keluarga | ijazah_sd | foto | lainnya');
+                ->comment('akta_kelahiran | kartu_keluarga | ijazah_sd | foto | lainnya');
             $table->string('gdrive_file_id')->nullable()->comment('Google Drive File ID');
             $table->text('gdrive_view_url')->nullable()->comment('URL preview drive.google.com');
             $table->unsignedInteger('file_size')->nullable()->comment('Ukuran file dalam bytes');
             $table->boolean('is_verified_ai')->default(false)
-                  ->comment('Sudah diverifikasi Gemini AI');
+                ->comment('Sudah diverifikasi Gemini AI');
             $table->json('ai_verification_result')->nullable()
-                  ->comment('Hasil ekstraksi & skor kecocokan dari Gemini');
+                ->comment('Hasil ekstraksi & skor kecocokan dari Gemini');
             $table->timestamps();
 
             $table->index(['student_id', 'document_type']);
@@ -65,7 +65,7 @@ return new class extends Migration
             $table->string('nisn')->nullable();
             $table->json('raw_data')->comment('Data mentah dari EMIS sebelum di-parse');
             $table->string('sync_status')->default('pending')
-                  ->comment('pending | processing | synced | failed | skipped');
+                ->comment('pending | processing | synced | failed | skipped');
             $table->text('sync_notes')->nullable()->comment('Catatan hasil sinkronisasi / error');
             $table->timestamps();
 

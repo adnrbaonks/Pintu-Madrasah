@@ -10,13 +10,13 @@ use OpenApi\Attributes as OA;
 class StaffApiController extends Controller
 {
     #[OA\Get(
-        path: "/api/v1/staff",
-        summary: "Daftar Guru dan Staf TU",
+        path: '/api/v1/staff',
+        summary: 'Daftar Guru dan Staf TU',
         parameters: [
-            new OA\Parameter(name: "is_active", in: "query", required: false, schema: new OA\Schema(type: "boolean"))
+            new OA\Parameter(name: 'is_active', in: 'query', required: false, schema: new OA\Schema(type: 'boolean')),
         ],
         responses: [
-            new OA\Response(response: 200, description: "Successful operation")
+            new OA\Response(response: 200, description: 'Successful operation'),
         ]
     )]
     public function index(Request $request)

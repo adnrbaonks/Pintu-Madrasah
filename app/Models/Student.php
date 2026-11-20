@@ -3,16 +3,18 @@
 namespace App\Models;
 
 use App\Traits\Auditable;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Str;
 
 class Student extends Model
 {
-    use SoftDeletes, Auditable;
+    use Auditable, HasFactory, SoftDeletes;
 
-    protected $keyType    = 'string';
-    public    $incrementing = false;
+    protected $keyType = 'string';
+
+    public $incrementing = false;
 
     protected $appends = ['data_completeness'];
 
@@ -36,22 +38,22 @@ class Student extends Model
     protected function casts(): array
     {
         return [
-            'id'               => 'string',
-            'birth_date'       => 'date',
-            'pip_eligible'     => 'boolean',
-            'pkh_eligible'     => 'boolean',
-            'kks_eligible'     => 'boolean',
-            'is_verified_by_ai'=> 'boolean',
-            'is_locked'        => 'boolean',
-            'father_income'    => 'integer',
-            'mother_income'    => 'integer',
+            'id' => 'string',
+            'birth_date' => 'date',
+            'pip_eligible' => 'boolean',
+            'pkh_eligible' => 'boolean',
+            'kks_eligible' => 'boolean',
+            'is_verified_by_ai' => 'boolean',
+            'is_locked' => 'boolean',
+            'father_income' => 'integer',
+            'mother_income' => 'integer',
         ];
     }
 
     protected static function boot(): void
     {
         parent::boot();
-        static::creating(fn($m) => $m->id ??= (string) Str::uuid());
+        static::creating(fn ($m) => $m->id ??= (string) Str::uuid());
     }
 
     // ── Relationships ─────────────────────────────────────────────────
@@ -64,8 +66,9 @@ class Student extends Model
     public function currentCohort()
     {
         $activeYear = AcademicYear::active();
+
         return $this->hasOne(StudentAcademicCohort::class)
-                    ->where('academic_year_id', $activeYear?->id);
+            ->where('academic_year_id', $activeYear?->id);
     }
 
     public function documents()
@@ -81,8 +84,8 @@ class Student extends Model
     public function activityLogs()
     {
         return $this->morphMany(ActivityLog::class, null, 'model_type', 'model_id')
-                    ->where('model_type', static::class)
-                    ->latest('created_at');
+            ->where('model_type', static::class)
+            ->latest('created_at');
     }
 
     // ── Selective Upsert — Aturan Field Protection ────────────────────
@@ -113,12 +116,12 @@ class Student extends Model
 
     public function getStatusLabelAttribute(): string
     {
-        return match($this->status) {
-            'active'      => 'Aktif',
-            'graduated'   => 'Lulus',
+        return match ($this->status) {
+            'active' => 'Aktif',
+            'graduated' => 'Lulus',
             'mutated_out' => 'Mutasi Keluar',
-            'dropped'     => 'Dikeluarkan',
-            default       => $this->status,
+            'dropped' => 'Dikeluarkan',
+            default => $this->status,
         };
     }
 
@@ -154,7 +157,7 @@ class Student extends Model
 
         foreach ($requiredFields as $field => $label) {
             $val = $this->{$field};
-            if (empty(trim((string)$val)) || $val === '-') {
+            if (empty(trim((string) $val)) || $val === '-') {
                 $missing[] = $label;
             } else {
                 $filledCount++;
@@ -162,7 +165,7 @@ class Student extends Model
         }
 
         $total = count($requiredFields);
-        $percentage = $total > 0 ? (int)round(($filledCount / $total) * 100) : 0;
+        $percentage = $total > 0 ? (int) round(($filledCount / $total) * 100) : 0;
 
         return [
             'percentage' => $percentage,

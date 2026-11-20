@@ -17,12 +17,14 @@ class Setting extends Model
             return static::$cache[$key];
         }
         $setting = self::where('key', $key)->first();
+
         return static::$cache[$key] = $setting ? $setting->value : $default;
     }
 
     public static function set(string $key, $value)
     {
         static::$cache[$key] = $value;
+
         return self::updateOrCreate(['key' => $key], ['value' => $value]);
     }
 

@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Letter;
-use App\Models\Rombel;
 use App\Models\Staff;
 use App\Models\Student;
 use Illuminate\Http\JsonResponse;
@@ -27,57 +26,54 @@ class SearchController extends Controller
 
         // ── Siswa ──────────────────────────────────────────────────────
         Student::where('status', 'active')
-            ->where(fn ($query) =>
-                $query->where('name', 'like', "%{$q}%")
-                      ->orWhere('nisn', 'like', "%{$q}%")
-                      ->orWhere('nik', 'like', "%{$q}%")
-                      ->orWhere('nis_local', 'like', "%{$q}%")
+            ->where(fn ($query) => $query->where('name', 'like', "%{$q}%")
+                ->orWhere('nisn', 'like', "%{$q}%")
+                ->orWhere('nik', 'like', "%{$q}%")
+                ->orWhere('nis_local', 'like', "%{$q}%")
             )
             ->select('id', 'name', 'nisn', 'status')
             ->limit(6)
             ->get()
             ->each(fn ($s) => $results[] = [
-                'type'     => 'siswa',
-                'label'    => $s->name,
-                'subtitle' => 'NISN: ' . ($s->nisn ?? '—'),
-                'href'     => "/students/{$s->id}",
-                'icon'     => 'student',
+                'type' => 'siswa',
+                'label' => $s->name,
+                'subtitle' => 'NISN: '.($s->nisn ?? '—'),
+                'href' => "/students/{$s->id}",
+                'icon' => 'student',
             ]);
 
         // ── GTK ────────────────────────────────────────────────────────
         Staff::where('is_active', true)
-            ->where(fn ($query) =>
-                $query->where('full_name_with_titles', 'like', "%{$q}%")
-                      ->orWhere('nip', 'like', "%{$q}%")
-                      ->orWhere('nuptk', 'like', "%{$q}%")
-                      ->orWhere('nik', 'like', "%{$q}%")
+            ->where(fn ($query) => $query->where('full_name_with_titles', 'like', "%{$q}%")
+                ->orWhere('nip', 'like', "%{$q}%")
+                ->orWhere('nuptk', 'like', "%{$q}%")
+                ->orWhere('nik', 'like', "%{$q}%")
             )
             ->select('id', 'full_name_with_titles', 'nip', 'employment_status')
             ->limit(4)
             ->get()
             ->each(fn ($g) => $results[] = [
-                'type'     => 'gtk',
-                'label'    => $g->full_name_with_titles,
-                'subtitle' => strtoupper($g->employment_status ?? 'GTK') . ($g->nip ? ' | NIP: ' . $g->nip : ''),
-                'href'     => "/gtk/{$g->id}",
-                'icon'     => 'gtk',
+                'type' => 'gtk',
+                'label' => $g->full_name_with_titles,
+                'subtitle' => strtoupper($g->employment_status ?? 'GTK').($g->nip ? ' | NIP: '.$g->nip : ''),
+                'href' => "/gtk/{$g->id}",
+                'icon' => 'gtk',
             ]);
 
         // ── Surat ──────────────────────────────────────────────────────
-        Letter::where(fn ($query) =>
-                $query->where('subject', 'like', "%{$q}%")
-                      ->orWhere('number', 'like', "%{$q}%")
-                      ->orWhere('from_to', 'like', "%{$q}%")
-            )
+        Letter::where(fn ($query) => $query->where('subject', 'like', "%{$q}%")
+            ->orWhere('number', 'like', "%{$q}%")
+            ->orWhere('from_to', 'like', "%{$q}%")
+        )
             ->select('id', 'type', 'number', 'subject', 'letter_date')
             ->limit(3)
             ->get()
             ->each(fn ($l) => $results[] = [
-                'type'     => 'surat',
-                'label'    => $l->subject,
-                'subtitle' => 'Surat ' . ucfirst($l->type) . ' | ' . $l->number,
-                'href'     => "/persuratan/{$l->id}",
-                'icon'     => 'letter',
+                'type' => 'surat',
+                'label' => $l->subject,
+                'subtitle' => 'Surat '.ucfirst($l->type).' | '.$l->number,
+                'href' => "/persuratan/{$l->id}",
+                'icon' => 'letter',
             ]);
 
         // ── Menu / Halaman (Static) ─────────────────────────────────────
@@ -109,11 +105,11 @@ class SearchController extends Controller
         foreach ($menuItems as $item) {
             if (str_contains(strtolower($item['label']), $qLower) || str_contains($item['keywords'], $qLower)) {
                 $results[] = [
-                    'type'     => 'menu',
-                    'label'    => $item['label'],
+                    'type' => 'menu',
+                    'label' => $item['label'],
                     'subtitle' => $item['href'],
-                    'href'     => $item['href'],
-                    'icon'     => 'menu',
+                    'href' => $item['href'],
+                    'icon' => 'menu',
                 ];
             }
         }

@@ -16,10 +16,10 @@ class AuditLogController extends Controller
             $search = $request->input('search');
             $query->where(function ($q) use ($search) {
                 $q->where('action', 'like', "%{$search}%")
-                  ->orWhere('model_type', 'like', "%{$search}%")
-                  ->orWhereHas('user', function ($uq) use ($search) {
-                      $uq->where('name', 'like', "%{$search}%");
-                  });
+                    ->orWhere('model_type', 'like', "%{$search}%")
+                    ->orWhereHas('user', function ($uq) use ($search) {
+                        $uq->where('name', 'like', "%{$search}%");
+                    });
             });
         }
 
@@ -27,7 +27,7 @@ class AuditLogController extends Controller
 
         return Inertia::render('AuditLogs/Index', [
             'logs' => $logs,
-            'filters' => $request->only('search')
+            'filters' => $request->only('search'),
         ]);
     }
 }

@@ -35,7 +35,7 @@ return new class extends Migration
             $table->string('university_name')->nullable();
             $table->string('study_program')->nullable();
             $table->integer('graduation_year')->nullable();
-            
+
             $table->json('raw_data')->nullable(); // Data mentah dari JSON EMIS
             $table->enum('status', ['pending', 'committed', 'failed'])->default('pending');
             $table->text('error_message')->nullable();

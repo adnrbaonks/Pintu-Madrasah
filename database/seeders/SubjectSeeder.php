@@ -66,6 +66,6 @@ class SubjectSeeder extends Seeder
             Subject::firstOrCreate(['code' => $subj['code']], $subj);
         }
 
-        $this->command->info('✅ ' . count($subjects) . ' mata pelajaran berhasil di-seed.');
+        $this->command->info('✅ '.count($subjects).' mata pelajaran berhasil di-seed.');
     }
 }

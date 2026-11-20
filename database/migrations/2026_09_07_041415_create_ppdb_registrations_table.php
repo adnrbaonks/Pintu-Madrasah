@@ -26,7 +26,7 @@ return new class extends Migration
             $table->string('phone_number')->nullable();
             $table->enum('status', ['pending', 'accepted', 'rejected'])->default('pending');
             $table->timestamps();
-            
+
             $table->foreign('academic_year_id')->references('id')->on('academic_years')->nullOnDelete();
         });
     }

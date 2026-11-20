@@ -8,12 +8,13 @@ use Illuminate\Support\Str;
 class ApiClient extends Model
 {
     protected $keyType = 'string';
+
     public $incrementing = false;
 
     public const SCOPES = [
-        'students:read'       => 'Baca data siswa',
-        'staff:read'          => 'Baca data guru & staf',
-        'classes:read'        => 'Baca data rombel & kelas',
+        'students:read' => 'Baca data siswa',
+        'staff:read' => 'Baca data guru & staf',
+        'classes:read' => 'Baca data rombel & kelas',
         'academic-years:read' => 'Baca tahun ajaran aktif',
     ];
 
@@ -36,7 +37,7 @@ class ApiClient extends Model
         parent::boot();
         static::creating(function ($m) {
             $m->id ??= (string) Str::uuid();
-            $m->api_key ??= 'pm_live_' . Str::random(48);
+            $m->api_key ??= 'pm_live_'.Str::random(48);
         });
     }
 
@@ -52,6 +53,7 @@ class ApiClient extends Model
         if (strlen($key) <= 15) {
             return '***';
         }
-        return substr($key, 0, 11) . '...' . substr($key, -4);
+
+        return substr($key, 0, 11).'...'.substr($key, -4);
     }
 }

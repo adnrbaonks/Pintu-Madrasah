@@ -15,14 +15,14 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class CommitEmisStagingJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public int $tries   = 1;
+    public int $tries = 1;
+
     public int $timeout = 600;
 
     public function handle(EmisService $emis): void
@@ -32,6 +32,7 @@ class CommitEmisStagingJob implements ShouldQueue
         $activeYear = AcademicYear::active();
         if (! $activeYear) {
             Log::error('[JOB] Tahun Ajaran Aktif belum diatur');
+
             return;
         }
 
@@ -49,6 +50,7 @@ class CommitEmisStagingJob implements ShouldQueue
                 'status' => 'Tidak ada data untuk diproses',
                 'progress' => 100,
             ], now()->addMinutes(15));
+
             return;
         }
 
@@ -76,12 +78,12 @@ class CommitEmisStagingJob implements ShouldQueue
                     $smartUpdate = [];
                     foreach ($parsed as $field => $newValue) {
                         $oldValue = $student->$field;
-                        if (empty(trim((string)$oldValue)) || $oldValue === '-') {
+                        if (empty(trim((string) $oldValue)) || $oldValue === '-') {
                             $smartUpdate[$field] = $newValue;
                         }
                     }
 
-                    if (!empty($smartUpdate)) {
+                    if (! empty($smartUpdate)) {
                         $student->update($smartUpdate);
                         $stats['updated']++;
                     }
@@ -103,7 +105,7 @@ class CommitEmisStagingJob implements ShouldQueue
                     // Validasi nama rombel: harus mengandung 1 grade level yang valid, bukan kombinasi seperti "7/8"
                     if (self::isValidRombelName($staging->rombel_name)) {
                         $gradeLevel = $emis->parseGradeLevel($staging->rombel_name);
-                        
+
                         if ($gradeLevel) {
                             $schoolClass = SchoolClass::firstOrCreate(['grade_level' => $gradeLevel]);
 
@@ -177,6 +179,7 @@ class CommitEmisStagingJob implements ShouldQueue
                 'name' => 'nama', 'nisn' => 'NISN', 'nik' => 'NIK',
                 'gender' => 'jenis kelamin', 'status' => 'status',
             ][$field] ?? $field;
+
             return "Data {$label} kosong dari EMIS dan wajib diisi — lengkapi manual di EMIS/baris ini.";
         }
         if (str_contains($msg, 'UNIQUE constraint failed') || str_contains($msg, 'Duplicate entry')) {
@@ -186,7 +189,7 @@ class CommitEmisStagingJob implements ShouldQueue
             return 'Relasi data (rombel/tahun ajaran) tidak ditemukan — pastikan rombel & tahun aktif benar.';
         }
 
-        return 'Kesalahan sistem: ' . mb_substr($msg, 0, 160);
+        return 'Kesalahan sistem: '.mb_substr($msg, 0, 160);
     }
 
     /**
@@ -201,7 +204,7 @@ class CommitEmisStagingJob implements ShouldQueue
         // Pattern: harus mengandung tepat satu grade level yang berdiri sendiri
         // Valid: "VII A", "Kelas 7", "VII-A", "Kelas VIII B", "7A"
         // Invalid: "7/8", "VII/VIII", "KELAS 7 & 8", "7/8A"
-        
+
         // Hitung jumlah grade level yang ditemukan
         preg_match_all('/\b(VII|VIII|IX|X|XI|XII)\b|(?<!\d)(7|8|9|10|11|12)(?!\d)/i', $normalized, $matches);
         $gradeCount = count($matches[0]);

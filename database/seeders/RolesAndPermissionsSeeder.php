@@ -2,17 +2,20 @@
 
 namespace Database\Seeders;
 
-use Illuminate\Database\Seeder;
-use Spatie\Permission\Models\Role;
-use Spatie\Permission\Models\Permission;
 use App\Models\User;
+use Illuminate\Database\Seeder;
+use Spatie\Permission\Models\Permission;
+use Spatie\Permission\Models\Role;
+use Spatie\Permission\PermissionRegistrar;
 
 class RolesAndPermissionsSeeder extends Seeder
 {
     public function run(): void
     {
+        $registrar = app()[PermissionRegistrar::class];
+
         // Reset cached roles and permissions
-        app()[\Spatie\Permission\PermissionRegistrar::class]->forgetCachedPermissions();
+        $registrar->forgetCachedPermissions();
 
         // create permissions
         $permissions = [
@@ -27,6 +30,10 @@ class RolesAndPermissionsSeeder extends Seeder
         foreach ($permissions as $permission) {
             Permission::findOrCreate($permission);
         }
+
+        // findOrCreate() may run against a cached collection; reload before
+        // assigning so a repeated seed is idempotent.
+        $registrar->forgetCachedPermissions();
 
         // create roles and assign created permissions
 
@@ -50,7 +57,7 @@ class RolesAndPermissionsSeeder extends Seeder
         // Assign 'admin' role to existing admin users
         $adminUsers = User::where('role', 'admin')->get();
         foreach ($adminUsers as $user) {
-            if (!$user->hasRole('admin')) {
+            if (! $user->hasRole('admin')) {
                 $user->assignRole('admin');
             }
         }

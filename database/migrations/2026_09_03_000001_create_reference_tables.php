@@ -15,7 +15,7 @@ return new class extends Migration
             $table->string('semester')->comment('Ganjil | Genap');
             $table->boolean('is_active')->default(false);
             $table->boolean('is_locked')->default(false)
-                  ->comment('Kunci data nilai & rombel semester lampau menjadi Read-Only');
+                ->comment('Kunci data nilai & rombel semester lampau menjadi Read-Only');
             $table->timestamps();
 
             $table->unique(['year', 'semester']);

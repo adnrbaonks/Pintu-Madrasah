@@ -10,12 +10,13 @@ class Qr
 {
     public static function png(string $text, int $size = 200): string
     {
-        $writer = new PngWriter();
+        $writer = new PngWriter;
+
         return $writer->write(new QrCode($text))->getString();
     }
 
     public static function dataUri(string $text, int $size = 200): string
     {
-        return 'data:image/png;base64,' . base64_encode(static::png($text, $size));
+        return 'data:image/png;base64,'.base64_encode(static::png($text, $size));
     }
 }

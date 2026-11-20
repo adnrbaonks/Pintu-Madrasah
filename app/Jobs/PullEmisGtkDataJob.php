@@ -37,7 +37,7 @@ class PullEmisGtkDataJob implements ShouldQueue
 
                 foreach ($results as $gtkData) {
                     $parsed = $emisService->parseEmisGtkRaw($gtkData);
-                    
+
                     EmisGtkStaging::updateOrCreate(
                         ['emis_gtk_id' => $parsed['emis_gtk_id']],
                         $parsed
@@ -62,10 +62,10 @@ class PullEmisGtkDataJob implements ShouldQueue
             Log::info("[EMIS GTK] Penarikan selesai. Total: $totalFetched");
 
         } catch (\Exception $e) {
-            Log::error('[EMIS GTK] Error PullEmisGtkDataJob: ' . $e->getMessage());
+            Log::error('[EMIS GTK] Error PullEmisGtkDataJob: '.$e->getMessage());
             Cache::put('emis_gtk:pull:progress', [
                 'progress' => 100,
-                'status' => 'Gagal: ' . $e->getMessage(),
+                'status' => 'Gagal: '.$e->getMessage(),
                 'error' => true,
             ], now()->addHours(2));
         }

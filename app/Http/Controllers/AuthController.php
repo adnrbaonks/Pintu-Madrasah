@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Setting;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -16,9 +17,9 @@ class AuthController extends Controller
     public function showLogin(): Response
     {
         return Inertia::render('Auth/Login', [
-            'appName'      => config('app.app_name', 'PINTU MADRASAH'),
-            'madrasahName' => \App\Models\Setting::get('madrasah_name', env('MADRASAH_NAME', 'MTs Negeri')),
-            'madrasahPhoto' => \App\Models\Setting::get('madrasah_photo'),
+            'appName' => config('app.app_name', 'PINTU MADRASAH'),
+            'madrasahName' => Setting::get('madrasah_name', env('MADRASAH_NAME', 'MTs Negeri')),
+            'madrasahPhoto' => Setting::get('madrasah_photo'),
         ]);
     }
 

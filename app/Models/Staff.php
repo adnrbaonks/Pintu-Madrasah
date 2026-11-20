@@ -2,16 +2,18 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Str;
 
 class Staff extends Model
 {
-    use SoftDeletes;
+    use HasFactory, SoftDeletes;
 
-    protected $keyType    = 'string';
-    public    $incrementing = false;
+    protected $keyType = 'string';
+
+    public $incrementing = false;
 
     protected $fillable = [
         'nip', 'nik', 'npk', 'nuptk',
@@ -26,18 +28,18 @@ class Staff extends Model
     protected function casts(): array
     {
         return [
-            'id'             => 'string',
-            'birth_date'     => 'date',
+            'id' => 'string',
+            'birth_date' => 'date',
             'civil_rank_tmt' => 'date',
-            'tpg_status'     => 'boolean',
-            'is_active'      => 'boolean',
+            'tpg_status' => 'boolean',
+            'is_active' => 'boolean',
         ];
     }
 
     protected static function boot(): void
     {
         parent::boot();
-        static::creating(fn($m) => $m->id ??= (string) Str::uuid());
+        static::creating(fn ($m) => $m->id ??= (string) Str::uuid());
     }
 
     // ── Relationships ─────────────────────────────────────────────────
@@ -60,18 +62,19 @@ class Staff extends Model
             $this->first_title,
             $this->full_name_with_titles,
         ]);
+
         return implode(' ', $parts);
     }
 
     public function getEmploymentStatusLabelAttribute(): string
     {
-        return match($this->employment_status) {
-            'pns'     => 'PNS',
-            'pppk'    => 'PPPK',
+        return match ($this->employment_status) {
+            'pns' => 'PNS',
+            'pppk' => 'PPPK',
             'honorer' => 'Honorer',
-            'gtt'     => 'GTT',
-            'ptt'     => 'PTT',
-            default   => $this->employment_status,
+            'gtt' => 'GTT',
+            'ptt' => 'PTT',
+            default => $this->employment_status,
         };
     }
 }

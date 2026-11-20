@@ -21,9 +21,11 @@ class UploadToGoogleDriveJob implements ShouldQueue
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     public $tries = 3;
+
     public $backoff = [30, 60, 120]; // Wait time before retrying
 
     protected $type;
+
     protected $modelId;
 
     /**
@@ -41,8 +43,9 @@ class UploadToGoogleDriveJob implements ShouldQueue
     public function handle(GoogleDriveService $driveService): void
     {
         $model = $this->getModel();
-        if (!$model) {
+        if (! $model) {
             Log::warning("UploadToGoogleDriveJob: Model not found. Type: {$this->type}, ID: {$this->modelId}");
+
             return;
         }
 
@@ -50,10 +53,11 @@ class UploadToGoogleDriveJob implements ShouldQueue
         $this->incrementRetries($model);
 
         $localPath = $this->getLocalPath($model);
-        
-        if (!$localPath || !Storage::disk('local')->exists($localPath)) {
+
+        if (! $localPath || ! Storage::disk('local')->exists($localPath)) {
             Log::error("UploadToGoogleDriveJob: Local file not found. Path: {$localPath}");
             $this->updateStatus($model, 'failed');
+
             return;
         }
 
@@ -70,10 +74,10 @@ class UploadToGoogleDriveJob implements ShouldQueue
             if ($driveFile && isset($driveFile['gdrive_file_id'])) {
                 $this->updateSuccess($model, $driveFile['gdrive_file_id'], $driveFile['gdrive_view_url']);
             } else {
-                throw new \Exception("Google Drive upload failed, invalid response.");
+                throw new \Exception('Google Drive upload failed, invalid response.');
             }
         } catch (Throwable $e) {
-            Log::error("UploadToGoogleDriveJob: Upload failed - " . $e->getMessage());
+            Log::error('UploadToGoogleDriveJob: Upload failed - '.$e->getMessage());
             throw $e; // This will trigger the retry mechanism
         }
     }
@@ -83,7 +87,7 @@ class UploadToGoogleDriveJob implements ShouldQueue
         $model = $this->getModel();
         if ($model) {
             $this->updateStatus($model, 'failed');
-            Log::error("UploadToGoogleDriveJob: Job failed completely after retries. Type: {$this->type}, ID: {$this->modelId}. Error: " . $exception->getMessage());
+            Log::error("UploadToGoogleDriveJob: Job failed completely after retries. Type: {$this->type}, ID: {$this->modelId}. Error: ".$exception->getMessage());
         }
     }
 
@@ -103,7 +107,7 @@ class UploadToGoogleDriveJob implements ShouldQueue
         return match ($this->type) {
             'ppdb' => $model->file_path,
             'mutation' => $model->document_path,
-            'student_document' => 'archives/student_document/' . $model->id . '.pdf', // Need to check how StudentDocumentController saves it
+            'student_document' => 'archives/student_document/'.$model->id.'.pdf', // Need to check how StudentDocumentController saves it
             'photo' => $model->profile_photo,
             default => null,
         };
@@ -132,17 +136,17 @@ class UploadToGoogleDriveJob implements ShouldQueue
             'ppdb', 'student_document' => $model->update([
                 'gdrive_file_id' => $fileId,
                 'gdrive_view_url' => $viewUrl,
-                'status' => 'uploaded'
+                'status' => 'uploaded',
             ]),
             'mutation' => $model->update([
                 'gdrive_file_id' => $fileId,
                 'gdrive_view_url' => $viewUrl,
-                'document_status' => 'uploaded'
+                'document_status' => 'uploaded',
             ]),
             'photo' => $model->update([
                 'gdrive_photo_id' => $fileId,
                 'gdrive_photo_url' => $viewUrl,
-                'photo_upload_status' => 'uploaded'
+                'photo_upload_status' => 'uploaded',
             ]),
         };
     }

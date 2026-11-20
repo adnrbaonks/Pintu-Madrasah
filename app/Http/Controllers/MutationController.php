@@ -3,13 +3,15 @@
 namespace App\Http\Controllers;
 
 use App\Jobs\PullEmisMutationDataJob;
-use App\Models\StudentMutation;
+use App\Jobs\UploadToGoogleDriveJob;
 use App\Models\Student;
+use App\Models\StudentMutation;
+use App\Services\FileCompressionService;
 use Illuminate\Http\Request;
-use Inertia\Inertia;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use Inertia\Inertia;
 
 class MutationController extends Controller
 {
@@ -22,14 +24,14 @@ class MutationController extends Controller
         }
 
         if ($request->has('search') && $request->search !== '') {
-            $query->where(function($q) use ($request) {
-                $q->where('name', 'like', '%' . $request->search . '%')
-                  ->orWhere('nisn', 'like', '%' . $request->search . '%');
+            $query->where(function ($q) use ($request) {
+                $q->where('name', 'like', '%'.$request->search.'%')
+                    ->orWhere('nisn', 'like', '%'.$request->search.'%');
             });
         }
 
         $mutations = $query->with('student:id,name,nisn')->orderBy('mutation_date', 'desc')->paginate(10)->withQueryString();
-        
+
         $activeStudents = Student::where('status', 'active')->select('id', 'name', 'nisn')->orderBy('name')->get();
 
         return Inertia::render('Students/Mutations/Index', [
@@ -42,14 +44,15 @@ class MutationController extends Controller
     public function sync()
     {
         PullEmisMutationDataJob::dispatch()->onQueue('emis');
+
         return back()->with('success', 'Penarikan data mutasi dari EMIS sedang berjalan di latar belakang.');
     }
 
     public function progress()
     {
         $progress = Cache::get('emis:mutations:progress');
-        
-        if (!$progress) {
+
+        if (! $progress) {
             return response()->json(['status' => 'Belum ada proses sinkronisasi mutasi yang berjalan.', 'progress' => 0]);
         }
 
@@ -73,7 +76,7 @@ class MutationController extends Controller
                     'gender' => 'required|in:L,P',
                     'origin_school' => 'required|string|max:255',
                 ]);
-                
+
                 // Create a pending student profile
                 $student = Student::create([
                     'name' => $req['name'],
@@ -114,14 +117,16 @@ class MutationController extends Controller
                 ]);
             }
             DB::commit();
+
             return back()->with('success', 'Mutasi berhasil diregister dan menunggu dokumen.');
         } catch (\Exception $e) {
             DB::rollBack();
-            return back()->withErrors(['error' => 'Gagal membuat registrasi mutasi: ' . $e->getMessage()]);
+
+            return back()->withErrors(['error' => 'Gagal membuat registrasi mutasi: '.$e->getMessage()]);
         }
     }
 
-    public function uploadDocument(Request $request, StudentMutation $mutation, \App\Services\FileCompressionService $compressionService)
+    public function uploadDocument(Request $request, StudentMutation $mutation, FileCompressionService $compressionService)
     {
         $request->validate([
             'document' => 'required|file|mimes:pdf,jpg,jpeg,png|max:5120', // max 5MB, will compress
@@ -138,11 +143,11 @@ class MutationController extends Controller
 
         // 1. Kompres file (jika ukuran melebihi 1MB)
         $compressedPath = $compressionService->compressIfNeeded($filePath, $mimeType, $extension);
-        
+
         // 2. Simpan di folder privat lokal
-        $newFilename = $mutation->id . '_' . time() . '.' . $extension;
-        $archivePath = 'archives/mutation/' . $newFilename;
-        \Illuminate\Support\Facades\Storage::disk('local')->put($archivePath, file_get_contents($compressedPath));
+        $newFilename = $mutation->id.'_'.time().'.'.$extension;
+        $archivePath = 'archives/mutation/'.$newFilename;
+        Storage::disk('local')->put($archivePath, file_get_contents($compressedPath));
 
         DB::beginTransaction();
         try {
@@ -156,12 +161,12 @@ class MutationController extends Controller
             ]);
 
             $student = $mutation->student;
-            
+
             if ($student) {
                 if ($mutation->type === 'in') {
                     $student->update(['status' => 'active']);
                     // Penempatan rombel dilakukan manual via Penempatan Siswa
-                } else if ($mutation->type === 'out') {
+                } elseif ($mutation->type === 'out') {
                     $student->update(['status' => 'mutated_out']);
                     // Nonaktifkan semua cohort aktif (kolom status, bukan is_active)
                     $student->cohorts()->where('status', 'active')->update(['status' => 'inactive']);
@@ -171,12 +176,13 @@ class MutationController extends Controller
             DB::commit();
 
             // 3. Dispatch background job untuk upload ke GDrive
-            \App\Jobs\UploadToGoogleDriveJob::dispatch('mutation', $mutation->id);
+            UploadToGoogleDriveJob::dispatch('mutation', $mutation->id);
 
             return back()->with('success', 'Dokumen berhasil diunggah, mutasi selesai, dan file sedang diproses ke Google Drive.');
         } catch (\Exception $e) {
             DB::rollBack();
-            return back()->withErrors(['error' => 'Gagal menyelesaikan mutasi: ' . $e->getMessage()]);
+
+            return back()->withErrors(['error' => 'Gagal menyelesaikan mutasi: '.$e->getMessage()]);
         }
     }
 
@@ -216,7 +222,8 @@ class MutationController extends Controller
             return back()->with('success', 'Data mutasi berhasil dihapus.');
         } catch (\Exception $e) {
             DB::rollBack();
-            return back()->withErrors(['error' => 'Gagal menghapus data mutasi: ' . $e->getMessage()]);
+
+            return back()->withErrors(['error' => 'Gagal menghapus data mutasi: '.$e->getMessage()]);
         }
     }
 }

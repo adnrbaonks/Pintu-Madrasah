@@ -6,7 +6,6 @@ use App\Models\Staff;
 use App\Models\User;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -24,14 +23,14 @@ class UserController extends Controller
             ->paginate(20)
             ->withQueryString()
             ->through(fn ($u) => [
-                'id'         => $u->id,
-                'name'       => $u->name,
-                'username'   => $u->username,
-                'role'       => $u->role,
-                'is_active'  => $u->is_active,
-                'staff_id'   => $u->staff_id,
+                'id' => $u->id,
+                'name' => $u->name,
+                'username' => $u->username,
+                'role' => $u->role,
+                'is_active' => $u->is_active,
+                'staff_id' => $u->staff_id,
                 'staff_name' => $u->staff?->name,
-                'staff_nip'  => $u->staff?->nip,
+                'staff_nip' => $u->staff?->nip,
                 'created_at' => $u->created_at?->format('d/m/Y'),
             ]);
 
@@ -40,9 +39,9 @@ class UserController extends Controller
             ->map(fn ($s) => ['value' => $s->id, 'label' => "{$s->name} ({$s->nip})"]);
 
         return Inertia::render('Users/Index', [
-            'users'        => $users,
+            'users' => $users,
             'staffOptions' => $staffOptions,
-            'filters'      => $request->only(['search']),
+            'filters' => $request->only(['search']),
         ]);
     }
 
@@ -52,10 +51,10 @@ class UserController extends Controller
     public function store(Request $request): RedirectResponse
     {
         $data = $request->validate([
-            'name'     => ['required', 'string', 'max:255'],
+            'name' => ['required', 'string', 'max:255'],
             'username' => ['required', 'string', 'max:255', 'unique:users,username'],
             'password' => ['required', 'string', 'min:8'],
-            'role'     => ['required', Rule::in(['admin', 'staf', 'guru'])],
+            'role' => ['required', Rule::in(['admin', 'staf', 'guru'])],
             'staff_id' => ['nullable', 'exists:staff,id'],
         ]);
 
@@ -70,10 +69,10 @@ class UserController extends Controller
     public function update(Request $request, User $user): RedirectResponse
     {
         $data = $request->validate([
-            'name'      => ['required', 'string', 'max:255'],
-            'username'  => ['required', 'string', 'max:255', Rule::unique('users')->ignore($user->id)],
-            'role'      => ['required', Rule::in(['admin', 'staf', 'guru'])],
-            'staff_id'  => ['nullable', 'exists:staff,id'],
+            'name' => ['required', 'string', 'max:255'],
+            'username' => ['required', 'string', 'max:255', Rule::unique('users')->ignore($user->id)],
+            'role' => ['required', Rule::in(['admin', 'staf', 'guru'])],
+            'staff_id' => ['nullable', 'exists:staff,id'],
             'is_active' => ['boolean'],
         ]);
 

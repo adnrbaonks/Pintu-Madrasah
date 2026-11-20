@@ -8,6 +8,7 @@ use Illuminate\Support\Str;
 class PpdbDocument extends Model
 {
     protected $keyType = 'string';
+
     public $incrementing = false;
 
     protected $fillable = [
@@ -36,7 +37,7 @@ class PpdbDocument extends Model
     protected static function boot(): void
     {
         parent::boot();
-        static::creating(fn($model) => $model->id ??= (string) Str::uuid());
+        static::creating(fn ($model) => $model->id ??= (string) Str::uuid());
     }
 
     public function registration()

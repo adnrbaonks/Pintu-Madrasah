@@ -8,13 +8,14 @@ use Illuminate\Support\Str;
 class WebhookSubscription extends Model
 {
     public const EVENTS = [
-        'student.created'  => 'Siswa baru ditambahkan (antrean RFID SIPSMAD)',
-        'student.updated'  => 'Biodata siswa diperbarui',
-        'student.mutated'  => 'Siswa mutasi keluar / lulus / dikeluarkan (nonaktifkan presensi)',
+        'student.created' => 'Siswa baru ditambahkan (antrean RFID SIPSMAD)',
+        'student.updated' => 'Biodata siswa diperbarui',
+        'student.mutated' => 'Siswa mutasi keluar / lulus / dikeluarkan (nonaktifkan presensi)',
         'student.promoted' => 'Kenaikan kelas massal (update pemetaan rombel)',
     ];
 
     protected $keyType = 'string';
+
     public $incrementing = false;
 
     protected $fillable = [
@@ -35,7 +36,7 @@ class WebhookSubscription extends Model
         parent::boot();
         static::creating(function ($m) {
             $m->id ??= (string) Str::uuid();
-            $m->secret ??= 'whsec_' . Str::random(48);
+            $m->secret ??= 'whsec_'.Str::random(48);
         });
     }
 

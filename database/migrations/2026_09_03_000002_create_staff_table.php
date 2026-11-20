@@ -31,16 +31,16 @@ return new class extends Migration
 
             // ── Kepegawaian ───────────────────────────────────────────
             $table->string('employment_status')
-                  ->comment('pns | pppk | honorer | gtt | ptt');
+                ->comment('pns | pppk | honorer | gtt | ptt');
             $table->string('civil_rank')->nullable()
-                  ->comment('Golongan Ruang: III/a, III/b, IV/a, dll.');
+                ->comment('Golongan Ruang: III/a, III/b, IV/a, dll.');
             $table->date('civil_rank_tmt')->nullable()->comment('TMT golongan terakhir');
             $table->boolean('tpg_status')->default(false)
-                  ->comment('Kelayakan pencairan Tunjangan Profesi Guru');
+                ->comment('Kelayakan pencairan Tunjangan Profesi Guru');
 
             // ── Jabatan & Fungsi ──────────────────────────────────────
             $table->string('functional_position')->nullable()
-                  ->comment('Guru Mapel | Wali Kelas | Kepala TU | Staf Administrasi');
+                ->comment('Guru Mapel | Wali Kelas | Kepala TU | Staf Administrasi');
 
             // ── Pendidikan ────────────────────────────────────────────
             $table->string('highest_education')->nullable()->comment('S1 | S2 | S3 | D3 | D4');

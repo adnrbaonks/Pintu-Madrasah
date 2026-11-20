@@ -26,13 +26,13 @@ class ApiClientController extends Controller
         $data = $request->validate([
             'name' => 'required|string|max:100|unique:api_clients,name',
             'scopes' => 'required|array|min:1',
-            'scopes.*' => 'in:' . implode(',', array_keys(ApiClient::SCOPES)),
+            'scopes.*' => 'in:'.implode(',', array_keys(ApiClient::SCOPES)),
             'notes' => 'nullable|string|max:255',
         ]);
 
         $client = ApiClient::create([
             ...$data,
-            'api_key' => 'pm_live_' . Str::random(48),
+            'api_key' => 'pm_live_'.Str::random(48),
         ]);
 
         return redirect()->back()->with(
@@ -46,12 +46,13 @@ class ApiClientController extends Controller
         $apiClient->update(['is_active' => ! $apiClient->is_active]);
 
         $status = $apiClient->is_active ? 'diaktifkan' : 'dinonaktifkan';
+
         return redirect()->back()->with('success', "API Key {$apiClient->name} {$status}.");
     }
 
     public function regenerate(ApiClient $apiClient): RedirectResponse
     {
-        $apiClient->update(['api_key' => 'pm_live_' . Str::random(48)]);
+        $apiClient->update(['api_key' => 'pm_live_'.Str::random(48)]);
 
         return redirect()->back()->with(
             'success',

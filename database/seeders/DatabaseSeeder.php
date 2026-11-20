@@ -3,13 +3,10 @@
 namespace Database\Seeders;
 
 use App\Models\User;
-use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 
 class DatabaseSeeder extends Seeder
 {
-    use WithoutModelEvents;
-
     /**
      * Seed the application's database.
      */
@@ -20,11 +17,27 @@ class DatabaseSeeder extends Seeder
             SubjectSeeder::class,
         ]);
 
-        // User::factory(10)->create();
+        // Akun admin awal hanya dibuat di local/testing, atau bila password
+        // disediakan eksplisit lewat SEED_ADMIN_PASSWORD. Jangan pernah
+        // menanam password default di staging/production.
+        $password = config('seeding.admin_password');
 
-        User::factory()->create([
-            'name' => 'Test User',
-            'email' => 'test@example.com',
-        ]);
+        if (! app()->environment(['local', 'testing']) && ! $password) {
+            return;
+        }
+
+        $admin = User::firstOrCreate(
+            ['username' => config('seeding.admin_username', 'admin')],
+            [
+                'name' => 'Administrator',
+                'password' => $password ?: 'password',
+                'role' => 'admin',
+                'is_active' => true,
+            ],
+        );
+
+        if (! $admin->hasRole('admin')) {
+            $admin->assignRole('admin');
+        }
     }
 }

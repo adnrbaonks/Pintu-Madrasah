@@ -11,11 +11,11 @@ class BkRecord extends Model
     use SoftDeletes;
 
     public const TYPES = [
-        'violation'   => 'Pelanggaran Tata Tertib',
-        'habit'       => 'Pembiasaan Karakter (P5-PPRA)',
+        'violation' => 'Pelanggaran Tata Tertib',
+        'habit' => 'Pembiasaan Karakter (P5-PPRA)',
         'achievement' => 'Prestasi / Apresiasi',
-        'home_visit'  => 'Home Visit',
-        'summon'      => 'Pemanggilan Orang Tua',
+        'home_visit' => 'Home Visit',
+        'summon' => 'Pemanggilan Orang Tua',
     ];
 
     public const VIOLATION_CATEGORIES = [
@@ -29,6 +29,7 @@ class BkRecord extends Model
     ];
 
     protected $keyType = 'string';
+
     public $incrementing = false;
 
     protected $fillable = [

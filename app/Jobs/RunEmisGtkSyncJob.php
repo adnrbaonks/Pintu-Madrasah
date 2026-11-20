@@ -16,9 +16,11 @@ class RunEmisGtkSyncJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public int $timeout     = 300; // 5 menit
-    public int $tries       = 1;
-    public int $backoff     = 30;
+    public int $timeout = 300; // 5 menit
+
+    public int $tries = 1;
+
+    public int $backoff = 30;
 
     public function handle(EmisGtkScraperService $scraper): void
     {
@@ -43,7 +45,7 @@ class RunEmisGtkSyncJob implements ShouldQueue
                 'message' => $e->getMessage(),
             ], 600);
 
-            Log::error('EMIS GTK Sync gagal: ' . $e->getMessage());
+            Log::error('EMIS GTK Sync gagal: '.$e->getMessage());
         } finally {
             Cache::forget("{$key}.running");
         }

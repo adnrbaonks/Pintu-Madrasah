@@ -8,6 +8,7 @@ use Illuminate\Support\Str;
 class WebhookDelivery extends Model
 {
     protected $keyType = 'string';
+
     public $incrementing = false;
 
     protected $fillable = [

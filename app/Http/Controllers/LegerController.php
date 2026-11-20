@@ -36,7 +36,7 @@ class LegerController extends Controller
 
             // Ambil mapel sesuai tingkat kelas
             $gradeLevel = $rombel->schoolClass?->grade_level;
-            $subjects   = Subject::where('is_active', true)
+            $subjects = Subject::where('is_active', true)
                 ->when($gradeLevel, fn ($q) => $q->where('grade_level', $gradeLevel))
                 ->orderBy('order')
                 ->orderBy('name')
@@ -67,39 +67,39 @@ class LegerController extends Controller
                     $grade = $grades->get($key);
 
                     $nilaiRow[$subj->id] = [
-                        'id'          => $grade?->id,
-                        'nilai_p1'    => $grade?->nilai_p1,
-                        'nilai_p2'    => $grade?->nilai_p2,
-                        'nilai_sts'   => $grade?->nilai_sts,
-                        'nilai_sas'   => $grade?->nilai_sas,
+                        'id' => $grade?->id,
+                        'nilai_p1' => $grade?->nilai_p1,
+                        'nilai_p2' => $grade?->nilai_p2,
+                        'nilai_sts' => $grade?->nilai_sts,
+                        'nilai_sas' => $grade?->nilai_sas,
                         'nilai_akhir' => $grade?->nilai_akhir,
-                        'predikat'    => $grade?->predikat,
+                        'predikat' => $grade?->predikat,
                     ];
                 }
 
                 return [
-                    'student_id'        => $student->id,
-                    'name'              => $student->name,
-                    'nisn'              => $student->nisn,
+                    'student_id' => $student->id,
+                    'name' => $student->name,
+                    'nisn' => $student->nisn,
                     'attendance_number' => $cohort->attendance_number,
-                    'nilai'             => $nilaiRow,
+                    'nilai' => $nilaiRow,
                 ];
             });
 
             $leger = [
-                'rombel'   => $rombel->name,
+                'rombel' => $rombel->name,
                 'subjects' => $subjects,
-                'siswa'    => $siswaData,
+                'siswa' => $siswaData,
                 'semester' => $selectedSemester,
             ];
         }
 
         return Inertia::render('Leger/Index', [
-            'rombels'          => $rombels,
+            'rombels' => $rombels,
             'selectedRombelId' => $selectedRombelId,
             'selectedSemester' => $selectedSemester,
-            'tahunAjaran'      => $activeYear?->full_label ?? '—',
-            'leger'            => $leger,
+            'tahunAjaran' => $activeYear?->full_label ?? '—',
+            'leger' => $leger,
         ]);
     }
 
@@ -129,11 +129,11 @@ class LegerController extends Controller
             ->orderBy('attendance_number')
             ->get();
 
-        $fileName = 'RDM_' . preg_replace('/\W+/', '_', $rombel->name) . '_' . $request->semester . '.csv';
+        $fileName = 'RDM_'.preg_replace('/\W+/', '_', $rombel->name).'_'.$request->semester.'.csv';
 
         $callback = function () use ($cohorts, $request, $activeYear, $rombel) {
             $file = fopen('php://output', 'w');
-            fputs($file, "\xEF\xBB\xBF"); // BOM agar Excel baca UTF-8
+            fwrite($file, "\xEF\xBB\xBF"); // BOM agar Excel baca UTF-8
 
             if ($request->subject_id) {
                 $subject = Subject::findOrFail($request->subject_id);
@@ -159,7 +159,7 @@ class LegerController extends Controller
                     ->orderBy('order')->orderBy('name')->get();
                 $header = ['No', 'NISN', 'NIS', 'Nama'];
                 foreach ($subjects as $s) {
-                    $header[] = $s->code . ' (P1|P2|STS|SAS|Akhir)';
+                    $header[] = $s->code.' (P1|P2|STS|SAS|Akhir)';
                 }
                 fputcsv($file, $header);
                 $grades = StudentGrade::where('rombel_id', $rombel->id)
@@ -188,37 +188,37 @@ class LegerController extends Controller
     public function upsertGrade(Request $request)
     {
         $data = $request->validate([
-            'student_id'      => 'required|exists:students,id',
-            'subject_id'      => 'required|exists:subjects,id',
-            'rombel_id'       => 'required|exists:rombels,id',
-            'academic_year_id'=> 'required|exists:academic_years,id',
-            'semester'        => 'required|in:Ganjil,Genap',
-            'nilai_p1'        => 'nullable|numeric|between:0,100',
-            'nilai_p2'        => 'nullable|numeric|between:0,100',
-            'nilai_sts'       => 'nullable|numeric|between:0,100',
-            'nilai_sas'       => 'nullable|numeric|between:0,100',
+            'student_id' => 'required|exists:students,id',
+            'subject_id' => 'required|exists:subjects,id',
+            'rombel_id' => 'required|exists:rombels,id',
+            'academic_year_id' => 'required|exists:academic_years,id',
+            'semester' => 'required|in:Ganjil,Genap',
+            'nilai_p1' => 'nullable|numeric|between:0,100',
+            'nilai_p2' => 'nullable|numeric|between:0,100',
+            'nilai_sts' => 'nullable|numeric|between:0,100',
+            'nilai_sas' => 'nullable|numeric|between:0,100',
         ]);
 
         $grade = StudentGrade::updateOrCreate(
             [
-                'student_id'       => $data['student_id'],
-                'subject_id'       => $data['subject_id'],
+                'student_id' => $data['student_id'],
+                'subject_id' => $data['subject_id'],
                 'academic_year_id' => $data['academic_year_id'],
-                'semester'         => $data['semester'],
+                'semester' => $data['semester'],
             ],
             [
                 'rombel_id' => $data['rombel_id'],
-                'nilai_p1'  => $data['nilai_p1'],
-                'nilai_p2'  => $data['nilai_p2'],
+                'nilai_p1' => $data['nilai_p1'],
+                'nilai_p2' => $data['nilai_p2'],
                 'nilai_sts' => $data['nilai_sts'],
                 'nilai_sas' => $data['nilai_sas'],
             ]
         );
 
         return response()->json([
-            'id'          => $grade->id,
+            'id' => $grade->id,
             'nilai_akhir' => $grade->fresh()->nilai_akhir,
-            'predikat'    => $grade->hitungPredikat(),
+            'predikat' => $grade->hitungPredikat(),
         ]);
     }
 }

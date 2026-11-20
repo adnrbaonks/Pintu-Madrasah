@@ -16,7 +16,8 @@ class PullEmisStudentDataJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public int $tries   = 1;
+    public int $tries = 1;
+
     public int $timeout = 1200;
 
     public function handle(EmisService $emis): void
@@ -61,11 +62,12 @@ class PullEmisStudentDataJob implements ShouldQueue
                         break;
                     }
                     sleep(3);
+
                     continue;
                 }
                 $emptyStreak = 0;
 
-                Log::info("[JOB] Halaman {$page}/" . ($lastPage ?? '?') . ": {$count} siswa ditarik");
+                Log::info("[JOB] Halaman {$page}/".($lastPage ?? '?').": {$count} siswa ditarik");
                 $stats['pages']++;
 
                 foreach ($students as $emisStudent) {
@@ -76,20 +78,20 @@ class PullEmisStudentDataJob implements ShouldQueue
                         // (WHERE nisn IS NULL akan menimpa baris yang sama berulang-ulang)
                         $nisn = $parsed['nisn'] ?: null;
                         if (empty($nisn)) {
-                            $nisn = 'NONISN-' . ($parsed['emis_student_id'] ?? $parsed['nik'] ?? uniqid());
+                            $nisn = 'NONISN-'.($parsed['emis_student_id'] ?? $parsed['nik'] ?? uniqid());
                             $stats['skipped_no_nisn']++;
                         }
 
                         EmisStaging::updateOrCreate(
                             ['nisn' => $nisn],
                             [
-                                'source'      => 'emis_siswa',
-                                'nik'         => $parsed['nik'],
-                                'name'        => $parsed['full_name'],
-                                'gender'      => $parsed['gender'],
+                                'source' => 'emis_siswa',
+                                'nik' => $parsed['nik'],
+                                'name' => $parsed['full_name'],
+                                'gender' => $parsed['gender'],
                                 'rombel_name' => $parsed['rombel_name'],
-                                'raw_data'    => $emisStudent,
-                                'status'      => 'pending',
+                                'raw_data' => $emisStudent,
+                                'status' => 'pending',
                             ]
                         );
                         $stats['total_pulled']++;
@@ -103,7 +105,7 @@ class PullEmisStudentDataJob implements ShouldQueue
                     ? min(98, (int) round($page / $lastPage * 100))
                     : min(98, 5 + $stats['pages'] * 5);
                 $progress([
-                    'status' => "Menarik halaman {$page}" . ($lastPage && $lastPage > 1 ? " dari {$lastPage}" : '') . " ...",
+                    'status' => "Menarik halaman {$page}".($lastPage && $lastPage > 1 ? " dari {$lastPage}" : '').' ...',
                     'progress' => $pct,
                     'stats' => $stats + ['expected_total' => $expectedTotal],
                 ]);
@@ -144,7 +146,7 @@ class PullEmisStudentDataJob implements ShouldQueue
         } catch (\Throwable $e) {
             Log::error('[JOB] Pull gagal', ['error' => $e->getMessage()]);
             $progress([
-                'status' => 'ERROR: ' . $e->getMessage(),
+                'status' => 'ERROR: '.$e->getMessage(),
                 'progress' => 100,
             ]);
             throw $e;

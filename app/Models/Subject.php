@@ -2,20 +2,23 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Subject extends Model
 {
+    use HasFactory;
+
     protected $fillable = ['code', 'name', 'type', 'grade_level', 'kkm', 'is_active', 'order'];
 
     protected function casts(): array
     {
         return [
             'grade_level' => 'integer',
-            'kkm'         => 'integer',
-            'is_active'   => 'boolean',
-            'order'       => 'integer',
+            'kkm' => 'integer',
+            'is_active' => 'boolean',
+            'order' => 'integer',
         ];
     }
 

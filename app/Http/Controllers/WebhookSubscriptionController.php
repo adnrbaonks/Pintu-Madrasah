@@ -38,13 +38,13 @@ class WebhookSubscriptionController extends Controller
     {
         $data = $request->validate([
             'api_client_id' => 'nullable|uuid|exists:api_clients,id',
-            'event' => 'required|in:' . implode(',', array_keys(WebhookSubscription::EVENTS)),
+            'event' => 'required|in:'.implode(',', array_keys(WebhookSubscription::EVENTS)),
             'target_url' => 'required|url|max:500',
         ]);
 
         $sub = WebhookSubscription::create([
             ...$data,
-            'secret' => 'whsec_' . Str::random(48),
+            'secret' => 'whsec_'.Str::random(48),
         ]);
 
         return redirect()->back()->with(
@@ -62,7 +62,7 @@ class WebhookSubscriptionController extends Controller
 
     public function regenerateSecret(WebhookSubscription $webhook): RedirectResponse
     {
-        $webhook->update(['secret' => 'whsec_' . Str::random(48)]);
+        $webhook->update(['secret' => 'whsec_'.Str::random(48)]);
 
         return redirect()->back()->with(
             'success',

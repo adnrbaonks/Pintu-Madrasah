@@ -13,9 +13,9 @@ return new class extends Migration
 
             // ── Nomor Identitas ───────────────────────────────────────
             $table->char('nisn', 10)->unique()->nullable()
-                  ->comment('10 digit numerik — wajib untuk Verval PD');
+                ->comment('10 digit numerik — wajib untuk Verval PD');
             $table->char('nik', 16)->unique()->nullable()
-                  ->comment('16 digit NIK sesuai KTP/KK');
+                ->comment('16 digit NIK sesuai KTP/KK');
             $table->string('nis_local')->nullable()->comment('NIS lokal madrasah');
             $table->char('kk_number', 16)->nullable()->comment('Nomor Kartu Keluarga');
 
@@ -62,7 +62,7 @@ return new class extends Migration
 
             // ── Data Ibu (kunci Verval PD) ────────────────────────────
             $table->string('mother_name')->nullable()
-                  ->comment('Nama ibu kandung MURNI tanpa gelar — KUNCI Verval PD');
+                ->comment('Nama ibu kandung MURNI tanpa gelar — KUNCI Verval PD');
             $table->char('mother_nik', 16)->nullable();
             $table->string('mother_job')->nullable();
             $table->unsignedInteger('mother_income')->nullable();
@@ -82,11 +82,11 @@ return new class extends Migration
 
             // ── Status & Verifikasi ───────────────────────────────────
             $table->string('status')->default('active')
-                  ->comment('active | graduated | mutated_out | dropped');
+                ->comment('active | graduated | mutated_out | dropped');
             $table->boolean('is_verified_by_ai')->default(false)
-                  ->comment('Dokumen telah diverifikasi Gemini AI');
+                ->comment('Dokumen telah diverifikasi Gemini AI');
             $table->boolean('is_locked')->default(false)
-                  ->comment('Field identitas terkunci — tidak bisa di-overwrite data EMIS');
+                ->comment('Field identitas terkunci — tidak bisa di-overwrite data EMIS');
 
             $table->timestamps();
             $table->softDeletes();
@@ -109,7 +109,7 @@ return new class extends Migration
             $table->foreignUuid('rombel_id')->constrained('rombels');
             $table->unsignedSmallInteger('attendance_number')->nullable()->comment('Nomor absen');
             $table->string('status')->default('active')
-                  ->comment('active | graduated | mutated_out | dropped');
+                ->comment('active | graduated | mutated_out | dropped');
             $table->timestamps();
 
             $table->unique(['student_id', 'academic_year_id', 'semester'], 'cohort_unique');

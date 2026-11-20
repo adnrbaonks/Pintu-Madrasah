@@ -10,6 +10,7 @@ class EmisStaging extends Model
     protected $table = 'emis_staging';
 
     protected $keyType = 'string';
+
     public $incrementing = false;
 
     protected $fillable = [

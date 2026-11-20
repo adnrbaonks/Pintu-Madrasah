@@ -3,6 +3,8 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Str;
@@ -10,10 +12,11 @@ use Spatie\Permission\Traits\HasRoles;
 
 class User extends Authenticatable
 {
-    use HasFactory, Notifiable, HasRoles;
+    use HasFactory, HasRoles, Notifiable;
 
-    protected $keyType    = 'string';
-    public    $incrementing = false;
+    protected $keyType = 'string';
+
+    public $incrementing = false;
 
     protected $fillable = [
         'name',
@@ -32,10 +35,10 @@ class User extends Authenticatable
     protected function casts(): array
     {
         return [
-            'id'        => 'string',
-            'staff_id'  => 'string',
+            'id' => 'string',
+            'staff_id' => 'string',
             'is_active' => 'boolean',
-            'password'  => 'hashed',
+            'password' => 'hashed',
         ];
     }
 
@@ -47,19 +50,30 @@ class User extends Authenticatable
 
     // ── Relationships ─────────────────────────────────────────────────
 
-    public function staff(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    public function staff(): BelongsTo
     {
         return $this->belongsTo(Staff::class);
     }
 
-    public function activityLogs(): \Illuminate\Database\Eloquent\Relations\HasMany
+    public function activityLogs(): HasMany
     {
         return $this->hasMany(ActivityLog::class);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────
 
-    public function isAdmin(): bool   { return $this->role === 'admin'; }
-    public function isStaf(): bool    { return $this->role === 'staf'; }
-    public function isGuru(): bool    { return $this->role === 'guru'; }
+    public function isAdmin(): bool
+    {
+        return $this->role === 'admin';
+    }
+
+    public function isStaf(): bool
+    {
+        return $this->role === 'staf';
+    }
+
+    public function isGuru(): bool
+    {
+        return $this->role === 'guru';
+    }
 }

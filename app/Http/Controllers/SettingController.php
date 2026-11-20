@@ -2,8 +2,8 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Setting;
 use App\Models\AcademicYear;
+use App\Models\Setting;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
@@ -27,7 +27,7 @@ class SettingController extends Controller
 
         return Inertia::render('Settings/Index', [
             'settings' => $settings,
-            'academicYears' => $academicYears
+            'academicYears' => $academicYears,
         ]);
     }
 
@@ -47,7 +47,7 @@ class SettingController extends Controller
 
         if ($request->hasFile('madrasah_photo')) {
             $path = $request->file('madrasah_photo')->store('settings', 'public');
-            Setting::set('madrasah_photo', '/storage/' . $path);
+            Setting::set('madrasah_photo', '/storage/'.$path);
             unset($validated['madrasah_photo']);
         }
 
@@ -85,9 +85,10 @@ class SettingController extends Controller
 
     public function toggleLockAcademicYear(Request $request, AcademicYear $academicYear)
     {
-        $academicYear->update(['is_locked' => !$academicYear->is_locked]);
-        
+        $academicYear->update(['is_locked' => ! $academicYear->is_locked]);
+
         $status = $academicYear->is_locked ? 'dikunci' : 'dibuka kuncinya';
+
         return redirect()->back()->with('success', "Tahun Ajaran berhasil $status.");
     }
 

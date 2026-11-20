@@ -2,16 +2,26 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Student;
-use App\Models\Rombel;
+use App\Jobs\UploadToGoogleDriveJob;
 use App\Models\AcademicYear;
+use App\Models\ActivityLog;
+use App\Models\DocumentVerification;
 use App\Models\PpdbRegistration;
+use App\Models\Rombel;
 use App\Models\Setting;
+use App\Models\Student;
 use App\Models\StudentAcademicCohort;
+use App\Models\StudentMutation;
+use App\Services\EmisService;
+use App\Services\FileCompressionService;
+use App\Support\Qr;
+use Barryvdh\DomPDF\Facade\Pdf;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
-use Barryvdh\DomPDF\Facade\Pdf;
 
 class StudentController extends Controller
 {
@@ -26,8 +36,8 @@ class StudentController extends Controller
         if ($search = $request->input('search')) {
             $query->where(function ($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('nisn', 'like', "%{$search}%")
-                  ->orWhere('nik', 'like', "%{$search}%");
+                    ->orWhere('nisn', 'like', "%{$search}%")
+                    ->orWhere('nik', 'like', "%{$search}%");
             });
         }
 
@@ -42,20 +52,30 @@ class StudentController extends Controller
         }
 
         if ($assistance = $request->input('assistance')) {
-            if ($assistance === 'pip') $query->where('pip_eligible', true);
-            if ($assistance === 'pkh') $query->where('pkh_eligible', true);
-            if ($assistance === 'kks') $query->where('kks_eligible', true);
+            if ($assistance === 'pip') {
+                $query->where('pip_eligible', true);
+            }
+            if ($assistance === 'pkh') {
+                $query->where('pkh_eligible', true);
+            }
+            if ($assistance === 'kks') {
+                $query->where('kks_eligible', true);
+            }
         }
 
         if ($verification = $request->input('verification')) {
-            if ($verification === 'verified') $query->where('is_verified_by_ai', true);
-            if ($verification === 'unverified') $query->where('is_verified_by_ai', false);
+            if ($verification === 'verified') {
+                $query->where('is_verified_by_ai', true);
+            }
+            if ($verification === 'unverified') {
+                $query->where('is_verified_by_ai', false);
+            }
         }
 
         $students = $query->orderBy('name')->paginate(10)->withQueryString();
 
-        $activeYearId = \App\Models\AcademicYear::active()?->id;
-        $rombels = $activeYearId ? \App\Models\Rombel::where('academic_year_id', $activeYearId)->orderBy('name')->get(['id', 'name']) : collect();
+        $activeYearId = AcademicYear::active()?->id;
+        $rombels = $activeYearId ? Rombel::where('academic_year_id', $activeYearId)->orderBy('name')->get(['id', 'name']) : collect();
 
         return Inertia::render('Students/Index', [
             'students' => $students,
@@ -83,11 +103,11 @@ class StudentController extends Controller
             // Sinkron balik ke register mutasi agar tidak timpang:
             // status non-aktif manual wajib punya jejak record mutasi.
             if (in_array($validated['status'], ['mutated_out', 'dropped'], true)) {
-                $exists = \App\Models\StudentMutation::where('student_id', $student->id)
+                $exists = StudentMutation::where('student_id', $student->id)
                     ->where('status', 'completed')
                     ->exists();
                 if (! $exists) {
-                    \App\Models\StudentMutation::create([
+                    StudentMutation::create([
                         'student_id' => $student->id,
                         'name' => $student->name,
                         'nisn' => $student->nisn,
@@ -100,7 +120,7 @@ class StudentController extends Controller
             }
         } else {
             // Jika dikembalikan ke aktif
-             if ($cohort = $student->cohorts()->latest()->first()) {
+            if ($cohort = $student->cohorts()->latest()->first()) {
                 $cohort->update(['status' => 'active']);
             }
         }
@@ -114,13 +134,13 @@ class StudentController extends Controller
     public function show(Student $student)
     {
         $student->load([
-            'cohorts.rombel', 
-            'cohorts.academicYear', 
+            'cohorts.rombel',
+            'cohorts.academicYear',
             'documents',
         ]);
 
         // Riwayat perubahan data (20 terbaru)
-        $activityLogs = \App\Models\ActivityLog::where('model_type', Student::class)
+        $activityLogs = ActivityLog::where('model_type', Student::class)
             ->where('model_id', $student->id)
             ->with('user')
             ->latest('created_at')
@@ -130,7 +150,7 @@ class StudentController extends Controller
         $student->current_rombel_name = $student->currentRombel()?->name;
 
         return Inertia::render('Students/Show', [
-            'student'      => $student,
+            'student' => $student,
             'activityLogs' => $activityLogs,
         ]);
     }
@@ -138,15 +158,15 @@ class StudentController extends Controller
     /**
      * Upload foto profil siswa.
      */
-    public function uploadPhoto(Request $request, Student $student, \App\Services\FileCompressionService $compressionService)
+    public function uploadPhoto(Request $request, Student $student, FileCompressionService $compressionService)
     {
         $request->validate([
             'photo' => 'required|image|mimes:jpg,jpeg,png|max:5120', // max 5MB, will compress
         ]);
 
         // Hapus foto lama jika ada
-        if ($student->profile_photo && \Illuminate\Support\Facades\Storage::disk('local')->exists($student->profile_photo)) {
-            \Illuminate\Support\Facades\Storage::disk('local')->delete($student->profile_photo);
+        if ($student->profile_photo && Storage::disk('local')->exists($student->profile_photo)) {
+            Storage::disk('local')->delete($student->profile_photo);
         }
 
         $file = $request->file('photo');
@@ -156,11 +176,11 @@ class StudentController extends Controller
 
         // 1. Kompres file
         $compressedPath = $compressionService->compressIfNeeded($filePath, $mimeType, $extension);
-        
+
         // 2. Simpan di folder privat lokal
-        $newFilename = $student->id . '_' . time() . '.' . $extension;
-        $archivePath = 'archives/photo/' . $newFilename;
-        \Illuminate\Support\Facades\Storage::disk('local')->put($archivePath, file_get_contents($compressedPath));
+        $newFilename = $student->id.'_'.time().'.'.$extension;
+        $archivePath = 'archives/photo/'.$newFilename;
+        Storage::disk('local')->put($archivePath, file_get_contents($compressedPath));
 
         $student->update([
             'profile_photo' => $archivePath,
@@ -171,7 +191,7 @@ class StudentController extends Controller
         ]);
 
         // 3. Dispatch background job untuk upload ke GDrive
-        \App\Jobs\UploadToGoogleDriveJob::dispatch('photo', $student->id);
+        UploadToGoogleDriveJob::dispatch('photo', $student->id);
 
         return back()->with('success', 'Foto profil berhasil diperbarui dan sedang diunggah ke Google Drive.');
     }
@@ -182,7 +202,7 @@ class StudentController extends Controller
     public function deletePhoto(Student $student)
     {
         if ($student->profile_photo) {
-            \Illuminate\Support\Facades\Storage::disk('local')->delete($student->profile_photo);
+            Storage::disk('local')->delete($student->profile_photo);
             $student->update([
                 'profile_photo' => null,
                 'gdrive_photo_id' => null,
@@ -201,11 +221,11 @@ class StudentController extends Controller
     {
         $student->load(['currentCohort.rombel', 'currentCohort.academicYear']);
 
-        $verification = \App\Models\DocumentVerification::issue(
-            \App\Models\DocumentVerification::TYPE_BIODATA,
+        $verification = DocumentVerification::issue(
+            DocumentVerification::TYPE_BIODATA,
             $student,
             [
-                'madrasah' => \App\Models\Setting::get('madrasah_name', env('MADRASAH_NAME', 'MTs')),
+                'madrasah' => Setting::get('madrasah_name', env('MADRASAH_NAME', 'MTs')),
                 'nama' => $student->name,
                 'nisn' => $student->nisn,
                 'nik' => $student->nik,
@@ -219,7 +239,7 @@ class StudentController extends Controller
             'student' => $student,
             'madrasahName' => Setting::get('madrasah_name', env('MADRASAH_NAME', 'MTs Negeri Contoh')),
             'madrasahAddress' => Setting::get('school_address', env('MADRASAH_ADDRESS', 'Jl. Contoh No. 1')),
-            'qrDataUri' => \App\Support\Qr::dataUri($verification->verifyUrl()),
+            'qrDataUri' => Qr::dataUri($verification->verifyUrl()),
             'verifyUrl' => $verification->verifyUrl(),
         ]);
 
@@ -232,12 +252,12 @@ class StudentController extends Controller
     public function printExamCards(Request $request)
     {
         $rombelId = $request->input('rombel_id');
-        
-        if (!$rombelId) {
+
+        if (! $rombelId) {
             return redirect()->back()->with('error', 'Rombel ID is required.');
         }
 
-        $rombel = Rombel::with(['cohorts' => function($q) {
+        $rombel = Rombel::with(['cohorts' => function ($q) {
             $q->where('status', 'active')->with('student');
         }, 'academicYear'])->findOrFail($rombelId);
 
@@ -273,49 +293,49 @@ class StudentController extends Controller
             })->orderBy('name')->get();
         }
 
-
         return Inertia::render('Students/SeatLayout', [
             'rombels' => $rombels,
             'students' => $students,
             'activeRombel' => $activeRombel,
         ]);
     }
+
     public function exportData(Request $request)
     {
-        $fileName = 'Data_Siswa_Madrasah_' . date('Y-m-d') . '.csv';
+        $fileName = 'Data_Siswa_Madrasah_'.date('Y-m-d').'.csv';
 
         // Headers untuk memandu Browser mengunduh file sebagai CSV
         $headers = [
-            "Content-type"        => "text/csv",
-            "Content-Disposition" => "attachment; filename=$fileName",
-            "Pragma"              => "no-cache",
-            "Cache-Control"       => "must-revalidate, post-check=0, pre-check=0",
-            "Expires"             => "0"
+            'Content-type' => 'text/csv',
+            'Content-Disposition' => "attachment; filename=$fileName",
+            'Pragma' => 'no-cache',
+            'Cache-Control' => 'must-revalidate, post-check=0, pre-check=0',
+            'Expires' => '0',
         ];
 
         // Buat stream callback yang akan menulis baris-baris CSV langsung ke Output
-        $callback = function() use ($request) {
+        $callback = function () use ($request) {
             $file = fopen('php://output', 'w');
-            
+
             // Tulis UTF-8 BOM untuk kompatibilitas Microsoft Excel
-            fputs($file, "\xEF\xBB\xBF");
+            fwrite($file, "\xEF\xBB\xBF");
 
             // Header kolom sesuai format Excel
             fputcsv($file, [
-                'No', 'KELAS', 'NO ABSEN', 'NISM', 'NISN', 'NAMA', 'L/P', 
-                'Nomor Induk Kependudukan (NIK) Siswa', 'Tempat', 'Tanggal Lahir', 'Asal Sekolah Dasar', 'Status'
+                'No', 'KELAS', 'NO ABSEN', 'NISM', 'NISN', 'NAMA', 'L/P',
+                'Nomor Induk Kependudukan (NIK) Siswa', 'Tempat', 'Tanggal Lahir', 'Asal Sekolah Dasar', 'Status',
             ], ';');
 
             $query = Student::query()->with(['currentCohort.rombel']);
-            
+
             if ($status = $request->input('status')) {
                 $query->where('status', $status);
             }
             if ($search = $request->input('search')) {
                 $query->where(function ($q) use ($search) {
                     $q->where('name', 'like', "%{$search}%")
-                      ->orWhere('nisn', 'like', "%{$search}%")
-                      ->orWhere('nik', 'like', "%{$search}%");
+                        ->orWhere('nisn', 'like', "%{$search}%")
+                        ->orWhere('nik', 'like', "%{$search}%");
                 });
             }
 
@@ -335,7 +355,7 @@ class StudentController extends Controller
                     $student->birth_place,
                     $student->birth_date ? $student->birth_date->format('d/m/Y') : '',
                     $student->prev_school_name,
-                    $student->status_label
+                    $student->status_label,
                 ], ';');
             }
 
@@ -351,17 +371,17 @@ class StudentController extends Controller
     public function exportPdf(Request $request)
     {
         $type = $request->input('type', 'daftar_siswa'); // daftar_siswa, daftar_hadir, form_nilai
-        
+
         $query = Student::query()->with(['currentCohort.rombel']);
-        
+
         if ($status = $request->input('status')) {
             $query->where('status', $status);
         }
         if ($search = $request->input('search')) {
             $query->where(function ($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('nisn', 'like', "%{$search}%")
-                  ->orWhere('nik', 'like', "%{$search}%");
+                    ->orWhere('nisn', 'like', "%{$search}%")
+                    ->orWhere('nik', 'like', "%{$search}%");
             });
         }
 
@@ -375,7 +395,7 @@ class StudentController extends Controller
 
         $pdf->setPaper('a4', 'landscape'); // Format laporan tabel lebih cocok landscape
 
-        return $pdf->stream("Laporan_{$type}_" . date('Ymd') . ".pdf");
+        return $pdf->stream("Laporan_{$type}_".date('Ymd').'.pdf');
     }
 
     /**
@@ -384,57 +404,58 @@ class StudentController extends Controller
     public function edit(Student $student)
     {
         $student->current_rombel_name = $student->currentRombel()?->name;
+
         return Inertia::render('Students/Edit', [
-            'student' => $student
+            'student' => $student,
         ]);
     }
 
     public function update(Request $request, Student $student)
     {
         $validated = $request->validate([
-            'name'        => 'required|string|max:255',
-            'nis_local'   => 'nullable|string|max:20',
-            'nisn'        => 'nullable|string|max:20',
-            'nik'         => 'nullable|string|max:20',
-            'gender'      => 'required|in:L,P',
+            'name' => 'required|string|max:255',
+            'nis_local' => 'nullable|string|max:20',
+            'nisn' => 'nullable|string|max:20',
+            'nik' => 'nullable|string|max:20',
+            'gender' => 'required|in:L,P',
             'birth_place' => 'required|string|max:100',
-            'birth_date'  => 'required|date',
-            'religion'    => 'required|string|max:50',
+            'birth_date' => 'required|date',
+            'religion' => 'required|string|max:50',
 
             // Alamat
-            'address'     => 'nullable|string|max:500',
-            'rt'          => 'nullable|string|max:10',
-            'rw'          => 'nullable|string|max:10',
-            'village'     => 'nullable|string|max:100',
-            'district'    => 'nullable|string|max:100',
-            'regency'     => 'nullable|string|max:100',
+            'address' => 'nullable|string|max:500',
+            'rt' => 'nullable|string|max:10',
+            'rw' => 'nullable|string|max:10',
+            'village' => 'nullable|string|max:100',
+            'district' => 'nullable|string|max:100',
+            'regency' => 'nullable|string|max:100',
             'postal_code' => 'nullable|string|max:10',
 
             // Ayah
-            'father_name'   => 'nullable|string|max:255',
-            'father_nik'    => 'nullable|string|max:20',
-            'father_job'    => 'nullable|string|max:100',
+            'father_name' => 'nullable|string|max:255',
+            'father_nik' => 'nullable|string|max:20',
+            'father_job' => 'nullable|string|max:100',
             'father_income' => 'nullable|integer',
-            'father_phone'  => 'nullable|string|max:30',
+            'father_phone' => 'nullable|string|max:30',
 
             // Ibu
-            'mother_name'   => 'nullable|string|max:255',
-            'mother_nik'    => 'nullable|string|max:20',
-            'mother_job'    => 'nullable|string|max:100',
+            'mother_name' => 'nullable|string|max:255',
+            'mother_nik' => 'nullable|string|max:20',
+            'mother_job' => 'nullable|string|max:100',
             'mother_income' => 'nullable|integer',
-            'mother_phone'  => 'nullable|string|max:30',
+            'mother_phone' => 'nullable|string|max:30',
 
             // Wali
-            'guardian_name'  => 'nullable|string|max:255',
-            'guardian_nik'   => 'nullable|string|max:20',
-            'guardian_job'   => 'nullable|string|max:100',
+            'guardian_name' => 'nullable|string|max:255',
+            'guardian_nik' => 'nullable|string|max:20',
+            'guardian_job' => 'nullable|string|max:100',
             'guardian_phone' => 'nullable|string|max:30',
 
             // Bantuan Sosial & Ekstra
             'kip_number' => 'nullable|string|max:50',
-            'kk_number'  => 'nullable|string|max:20',
+            'kk_number' => 'nullable|string|max:20',
             'prev_school_name' => 'nullable|string|max:255',
-            'graduation_year'  => 'nullable|integer',
+            'graduation_year' => 'nullable|integer',
             'distance_to_school' => 'nullable|string|max:50',
             'transportation' => 'nullable|string|max:50',
             'enrollment_type' => 'nullable|string|max:50',
@@ -446,7 +467,7 @@ class StudentController extends Controller
         // Auto-uppercase nama siswa dan orang tua/wali
         $nameFields = ['name', 'father_name', 'mother_name', 'guardian_name'];
         foreach ($nameFields as $field) {
-            if (!empty($validated[$field])) {
+            if (! empty($validated[$field])) {
                 $validated[$field] = strtoupper($validated[$field]);
             }
         }
@@ -456,19 +477,19 @@ class StudentController extends Controller
         return back()->with('success', 'Data siswa berhasil diperbarui.');
     }
 
-    public function previewEmisDetail(Student $student, \App\Services\EmisService $emis)
+    public function previewEmisDetail(Student $student, EmisService $emis)
     {
-        if (!$student->emis_student_id) {
+        if (! $student->emis_student_id) {
             return response()->json(['message' => 'Siswa ini tidak memiliki ID EMIS. Lakukan Tarik Data EMIS bulk terlebih dahulu atau sinkron ulang.'], 400);
         }
 
-        if (!$emis->hasActiveEmisToken()) {
+        if (! $emis->hasActiveEmisToken()) {
             return response()->json(['message' => 'Sesi EMIS kedaluwarsa. Silakan login EMIS terlebih dahulu di Pengaturan.'], 400);
         }
 
         $detail = $emis->fetchStudentDetail($student->emis_student_id);
 
-        if (!$detail) {
+        if (! $detail) {
             return response()->json(['message' => 'Gagal menarik data dari server EMIS. Pastikan koneksi lancar.'], 400);
         }
 
@@ -478,20 +499,21 @@ class StudentController extends Controller
             $encId = $emis->encryptEmisId($student->emis_student_id);
             $token = cache('emis:token:siswa');
             $caFile = '/etc/ssl/certs/ca-certificates.crt';
-            $laRes = \Illuminate\Support\Facades\Http::withOptions(['verify' => file_exists($caFile) ? $caFile : true])
+            $laRes = Http::withOptions(['verify' => file_exists($caFile) ? $caFile : true])
                 ->withToken($token)
                 ->timeout(30)
                 ->get("https://api-emis.kemenag.go.id/v1/students/students/{$encId}/learning-activities/list");
             if ($laRes->ok()) {
                 $results = $laRes->json('results') ?? [];
-                
+
                 // Cari sekolah pertama di riwayat yang BUKAN MTsN 5 Sumedang
                 // (Berlaku untuk jenjang SD/MI sebelumnya, atau sekolah asal jika pindahan)
                 $prevSchool = collect($results)->first(function ($item) {
                     $name = strtoupper($item['institution_name'] ?? '');
-                    return !str_contains($name, 'MTSN 5 SUMEDANG');
+
+                    return ! str_contains($name, 'MTSN 5 SUMEDANG');
                 });
-                
+
                 $prevSchoolName = $prevSchool['institution_name'] ?? null;
             }
         } catch (\Throwable $e) {
@@ -503,68 +525,73 @@ class StudentController extends Controller
         $parents = $detail['parents'] ?? [];
 
         // Helper: kembalikan null jika nilai EMIS adalah '-' atau kosong
-        $emv = fn($val) => (isset($val) && $val !== '-' && $val !== '') ? $val : null;
+        $emv = fn ($val) => (isset($val) && $val !== '-' && $val !== '') ? $val : null;
 
         // Helper: ubah range penghasilan EMIS ("800.001 - 1.200.000") ke nilai tengah integer
-        $parseEmisIncome = function(?array $incomeObj) use ($student): ?int {
+        $parseEmisIncome = function (?array $incomeObj): ?int {
             $name = $incomeObj['name'] ?? null;
-            if (!$name || $name === '-') return null;
+            if (! $name || $name === '-') {
+                return null;
+            }
             // Hapus titik ribuan, ambil angka-angka dari string
             $clean = preg_replace('/[^0-9,\-]/', '', str_replace('.', '', $name));
             $parts = array_map('intval', preg_split('/\s*[,\-]\s*/', $clean));
-            $parts = array_filter($parts, fn($v) => $v > 0);
-            if (empty($parts)) return null;
+            $parts = array_filter($parts, fn ($v) => $v > 0);
+            if (empty($parts)) {
+                return null;
+            }
+
             return (int) round(array_sum($parts) / count($parts));
         };
 
         $proposedData = [
             'nisn' => $emv($detail['nisn']) ?? $student->nisn,
-            'nik'  => $emv($detail['nik'])  ?? $student->nik,
+            'nik' => $emv($detail['nik']) ?? $student->nik,
             // 'name' => Jangan timpa nama; data Dukcapil lokal lebih akurat.
-            'gender'      => $emis->parseGender($detail['m_gender'] ?? $detail['gender'] ?? $detail['jenis_kelamin'] ?? $detail['jk'] ?? null) ?? $student->gender,
+            'gender' => $emis->parseGender($detail['m_gender'] ?? $detail['gender'] ?? $detail['jenis_kelamin'] ?? $detail['jk'] ?? null) ?? $student->gender,
             'birth_place' => $emv($detail['birth_place']) ?? $student->birth_place,
-            'birth_date'  => $emv($detail['birth_date'])  ?? $student->birth_date,
+            'birth_date' => $emv($detail['birth_date']) ?? $student->birth_date,
 
-            'child_order'    => $emv($detail['child_of_num']) ?? $student->child_order,
+            'child_order' => $emv($detail['child_of_num']) ?? $student->child_order,
             'siblings_count' => $emv($detail['siblings_num']) ?? $student->siblings_count,
 
             // Alamat
-            'address'     => $emv($detail['address'])         ?? $student->address,
-            'rt'          => $emv($detail['rt'])              ?? $student->rt,
-            'rw'          => $emv($detail['rw'])              ?? $student->rw,
-            'postal_code' => $emv((string)($detail['postal_code_num'] ?? null)) ?? $student->postal_code,
-            'village'     => $emv($detail['m_sub_district']['name'] ?? null) ?? $student->village,
-            'district'    => $emv($detail['m_district']['name']     ?? null) ?? $student->district,
-            'regency'     => $emv($detail['m_city']['name']         ?? null) ?? $student->regency,
+            'address' => $emv($detail['address']) ?? $student->address,
+            'rt' => $emv($detail['rt']) ?? $student->rt,
+            'rw' => $emv($detail['rw']) ?? $student->rw,
+            'postal_code' => $emv((string) ($detail['postal_code_num'] ?? null)) ?? $student->postal_code,
+            'village' => $emv($detail['m_sub_district']['name'] ?? null) ?? $student->village,
+            'district' => $emv($detail['m_district']['name'] ?? null) ?? $student->district,
+            'regency' => $emv($detail['m_city']['name'] ?? null) ?? $student->regency,
             'distance_to_school' => $emv($detail['m_residence_distance']['name'] ?? null) ?? $student->distance_to_school,
-            'transportation'     => $emv($detail['m_transportation']['name'] ?? null) ?? $student->transportation,
+            'transportation' => $emv($detail['m_transportation']['name'] ?? null) ?? $student->transportation,
 
             // Ayah
-            'father_name'   => $emv($parents['father_full_name']    ?? null) ?? $student->father_name,
-            'father_nik'    => $emv($parents['father_nik']          ?? null) ?? $student->father_nik,
-            'father_job'    => $emv($parents['father_job']['name']  ?? $parents['father_m_job'] ?? null) ?? $student->father_job,
-            'father_phone'  => $emv($parents['father_phone_number'] ?? null) ?? $student->father_phone,
+            'father_name' => $emv($parents['father_full_name'] ?? null) ?? $student->father_name,
+            'father_nik' => $emv($parents['father_nik'] ?? null) ?? $student->father_nik,
+            'father_job' => $emv($parents['father_job']['name'] ?? $parents['father_m_job'] ?? null) ?? $student->father_job,
+            'father_phone' => $emv($parents['father_phone_number'] ?? null) ?? $student->father_phone,
             'father_income' => $parseEmisIncome($parents['father_average_income_per_month'] ?? null) ?? $student->father_income,
 
             // Ibu
-            'mother_name'   => $emv($parents['mother_full_name']    ?? null) ?? $student->mother_name,
-            'mother_nik'    => $emv($parents['mother_nik']          ?? null) ?? $student->mother_nik,
-            'mother_job'    => $emv($parents['mother_job']['name']  ?? $parents['mother_m_job'] ?? null) ?? $student->mother_job,
-            'mother_phone'  => $emv($parents['mother_phone_number'] ?? null) ?? $student->mother_phone,
+            'mother_name' => $emv($parents['mother_full_name'] ?? null) ?? $student->mother_name,
+            'mother_nik' => $emv($parents['mother_nik'] ?? null) ?? $student->mother_nik,
+            'mother_job' => $emv($parents['mother_job']['name'] ?? $parents['mother_m_job'] ?? null) ?? $student->mother_job,
+            'mother_phone' => $emv($parents['mother_phone_number'] ?? null) ?? $student->mother_phone,
             'mother_income' => $parseEmisIncome($parents['mother_average_income_per_month'] ?? null) ?? $student->mother_income,
 
             // Wali
-            'guardian_name'  => $emv($parents['wali_full_name']    ?? null) ?? $student->guardian_name,
-            'guardian_nik'   => $emv($parents['wali_nik']          ?? null) ?? $student->guardian_nik,
-            'guardian_job'   => $emv($parents['wali_job']['name']  ?? null) ?? $student->guardian_job,
+            'guardian_name' => $emv($parents['wali_full_name'] ?? null) ?? $student->guardian_name,
+            'guardian_nik' => $emv($parents['wali_nik'] ?? null) ?? $student->guardian_nik,
+            'guardian_job' => $emv($parents['wali_job']['name'] ?? null) ?? $student->guardian_job,
             'guardian_phone' => $emv($parents['wali_phone_number'] ?? null) ?? $student->guardian_phone,
 
             // KK & Bansos
-            'kk_number'    => $emv($detail['kk_num'] ?? $detail['no_kk'] ?? $detail['nomor_kk'] ?? $parents['no_kk'] ?? $parents['nomor_kk'] ?? $detail['family_card_num'] ?? $detail['kk_number'] ?? null) ?? $student->kk_number,
-            'kip_number'   => $emv($detail['nomor_kip'] ?? $detail['kip_num'] ?? null) ?? $student->kip_number,
-            'pip_eligible' => filter_var($detail['is_pip'] ?? (!empty($detail['nomor_kip']) || !empty($detail['kip_num'])), FILTER_VALIDATE_BOOLEAN) ?: $student->pip_eligible,
-            'pkh_eligible' => filter_var(!empty($parents['father_pkh_number']) || !empty($parents['mother_pkh_number']) || !empty($parents['wali_pkh_number']) || !empty($detail['pkh_family']) || !empty($detail['is_pkh']), FILTER_VALIDATE_BOOLEAN) ?: $student->pkh_eligible,
-            'kks_eligible' => filter_var(!empty($parents['father_kks_number']) || !empty($parents['mother_kks_number']) || !empty($parents['wali_kks_number']) || !empty($detail['is_kks']), FILTER_VALIDATE_BOOLEAN) ?: $student->kks_eligible,
+            'kk_number' => $emv($detail['kk_num'] ?? $detail['no_kk'] ?? $detail['nomor_kk'] ?? $parents['no_kk'] ?? $parents['nomor_kk'] ?? $detail['family_card_num'] ?? $detail['kk_number'] ?? null) ?? $student->kk_number,
+            'kip_number' => $emv($detail['nomor_kip'] ?? $detail['kip_num'] ?? null) ?? $student->kip_number,
+            'pip_eligible' => filter_var($detail['is_pip'] ?? (! empty($detail['nomor_kip']) || ! empty($detail['kip_num'])), FILTER_VALIDATE_BOOLEAN) ?: $student->pip_eligible,
+            'pkh_eligible' => filter_var(! empty($parents['father_pkh_number']) || ! empty($parents['mother_pkh_number']) || ! empty($parents['wali_pkh_number']) || ! empty($detail['pkh_family']) || ! empty($detail['is_pkh']), FILTER_VALIDATE_BOOLEAN) ?: $student->pkh_eligible,
+            'kks_eligible' => filter_var(! empty($parents['father_kks_number']) || ! empty($parents['mother_kks_number']) || ! empty($parents['wali_kks_number']) || ! empty($detail['is_kks']), FILTER_VALIDATE_BOOLEAN) ?: $student->kks_eligible,
 
             // Asal Sekolah
             'prev_school_name' => $emv($prevSchoolName) ?? $student->prev_school_name,
@@ -576,7 +603,7 @@ class StudentController extends Controller
         $enrollmentType = $student->enrollment_type;
 
         if ($prevSchoolName) {
-            if (!$isSameSchool) {
+            if (! $isSameSchool) {
                 // Dari luar jenjang/sekolah
                 if ($currentLevel == 7) {
                     $enrollmentType = 'Siswa Baru';
@@ -595,15 +622,21 @@ class StudentController extends Controller
                 $enrollmentType = 'Pindahan'; // Kemungkinan pindahan jika tidak ada riwayat historis sebelumnya
             }
         }
-        
+
         // Ambil dari deskripsi status EMIS jika tersedia (misal: "Siswa Baru")
-        if (isset($results) && count($results) > 0 && !empty($results[0]['status_description'])) {
+        if (isset($results) && count($results) > 0 && ! empty($results[0]['status_description'])) {
             $desc = $results[0]['status_description'];
-            if (str_contains(strtolower($desc), 'baru')) $enrollmentType = 'Siswa Baru';
-            if (str_contains(strtolower($desc), 'pindah')) $enrollmentType = 'Pindahan';
-            if (str_contains(strtolower($desc), 'naik')) $enrollmentType = 'Naik Kelas';
+            if (str_contains(strtolower($desc), 'baru')) {
+                $enrollmentType = 'Siswa Baru';
+            }
+            if (str_contains(strtolower($desc), 'pindah')) {
+                $enrollmentType = 'Pindahan';
+            }
+            if (str_contains(strtolower($desc), 'naik')) {
+                $enrollmentType = 'Naik Kelas';
+            }
         }
-        
+
         // Khusus jika status kelulusan sudah diatur EMIS atau aktif di tingkat akhir
         if (($detail['status_siswa'] ?? '') === 'Lulus' || $student->status === 'graduated') {
             $enrollmentType = 'Lulus';
@@ -636,25 +669,25 @@ class StudentController extends Controller
 
         foreach ($proposedData as $key => $newValue) {
             $oldValue = $student->$key;
-            if ($oldValue instanceof \Carbon\Carbon) {
+            if ($oldValue instanceof Carbon) {
                 $oldValue = $oldValue->format('Y-m-d');
             }
 
             // Format nilai boolean menjadi label yang ramah pengguna
             if (in_array($key, $booleanFields)) {
-                $oldStr = (bool)$oldValue ? 'Ya (Penerima)' : 'Tidak';
-                $newStr = (bool)$newValue ? 'Ya (Penerima)' : 'Tidak';
+                $oldStr = (bool) $oldValue ? 'Ya (Penerima)' : 'Tidak';
+                $newStr = (bool) $newValue ? 'Ya (Penerima)' : 'Tidak';
             } else {
-                $oldStr = trim((string)$oldValue);
-                $newStr = trim((string)$newValue);
+                $oldStr = trim((string) $oldValue);
+                $newStr = trim((string) $newValue);
             }
 
             if ($oldStr !== $newStr) {
                 $changes[] = [
                     'field' => $key,
                     'label' => $labels[$key] ?? $key,
-                    'old'   => $oldStr ?: '(Kosong)',
-                    'new'   => $newStr ?: '(Kosong)',
+                    'old' => $oldStr ?: '(Kosong)',
+                    'new' => $newStr ?: '(Kosong)',
                 ];
             }
         }
@@ -669,16 +702,17 @@ class StudentController extends Controller
     public function commitEmisDetail(Request $request, Student $student)
     {
         $updateData = $request->input('update_data', []);
-        if (!empty($updateData)) {
+        if (! empty($updateData)) {
             $student->update($updateData);
         }
+
         return back()->with('success', 'Detail siswa berhasil diperbarui dari EMIS!');
     }
 
     public function generateNismView()
     {
         $studentsWithoutNismCount = Student::where('status', 'active')
-            ->where(function($q) {
+            ->where(function ($q) {
                 $q->whereNull('nis_local')->orWhere('nis_local', '');
             })
             ->count();
@@ -690,8 +724,8 @@ class StudentController extends Controller
 
     public function generateNism()
     {
-        $nsm = \App\Models\Setting::where('key', 'nsm')->value('value');
-        if (!$nsm) {
+        $nsm = Setting::where('key', 'nsm')->value('value');
+        if (! $nsm) {
             return back()->with('error', 'NSM belum diatur di pengaturan aplikasi.');
         }
 
@@ -700,16 +734,20 @@ class StudentController extends Controller
 
         foreach ($students as $student) {
             $firstCohort = $student->cohorts()->with('academicYear')->orderBy('created_at', 'asc')->first();
-            if (!$firstCohort || !$firstCohort->academicYear) continue;
+            if (! $firstCohort || ! $firstCohort->academicYear) {
+                continue;
+            }
 
             $yearString = $firstCohort->academicYear->year; // e.g. "2026/2027"
             $yearParts = explode('/', $yearString);
-            if (count($yearParts) < 1) continue;
-            
+            if (count($yearParts) < 1) {
+                continue;
+            }
+
             $entryYear = substr($yearParts[0], -2); // "26"
-            $prefix = $nsm . $entryYear;
-            
-            $lastStudent = Student::where('nis_local', 'like', $prefix . '%')
+            $prefix = $nsm.$entryYear;
+
+            $lastStudent = Student::where('nis_local', 'like', $prefix.'%')
                 ->orderBy('nis_local', 'desc')
                 ->first();
 
@@ -719,7 +757,7 @@ class StudentController extends Controller
                 $urut = $lastUrut + 1;
             }
 
-            $nism = $prefix . str_pad($urut, 4, '0', STR_PAD_LEFT);
+            $nism = $prefix.str_pad($urut, 4, '0', STR_PAD_LEFT);
             $student->update(['nis_local' => $nism]);
             $generated++;
         }
@@ -783,8 +821,9 @@ class StudentController extends Controller
                 ->map(function ($rombel) {
                     $maxCapacity = 32;
                     $current = $rombel->cohorts_count;
-                    $maleCount = $rombel->cohorts->filter(fn($c) => $c->student?->gender === 'L')->count();
+                    $maleCount = $rombel->cohorts->filter(fn ($c) => $c->student?->gender === 'L')->count();
                     $femaleCount = $current - $maleCount;
+
                     return [
                         'id' => $rombel->id,
                         'name' => $rombel->name,
@@ -825,7 +864,7 @@ class StudentController extends Controller
         $rombel = Rombel::with('academicYear')->findOrFail($request->rombel_id);
         $academicYear = $rombel->academicYear ?? AcademicYear::active();
 
-        if (!$academicYear) {
+        if (! $academicYear) {
             return back()->with('error', 'Tahun ajaran aktif tidak ditemukan.');
         }
 
@@ -849,21 +888,21 @@ class StudentController extends Controller
 
         DB::transaction(function () use ($registrationIds, $studentIds, $rombel, $academicYear, &$successCount) {
             // Proses pendaftar PPDB
-            if (!empty($registrationIds)) {
+            if (! empty($registrationIds)) {
                 $registrations = PpdbRegistration::whereIn('id', $registrationIds)
                     ->whereIn('status', [PpdbRegistration::STATUS_VERIFIED, PpdbRegistration::STATUS_RE_ENROLLED])
                     ->get();
 
                 foreach ($registrations as $reg) {
                     $student = null;
-                    if (!empty($reg->nisn)) {
+                    if (! empty($reg->nisn)) {
                         $student = Student::where('nisn', $reg->nisn)->first();
                     }
-                    if (!$student && !empty($reg->nik)) {
+                    if (! $student && ! empty($reg->nik)) {
                         $student = Student::where('nik', $reg->nik)->first();
                     }
 
-                    if (!$student) {
+                    if (! $student) {
                         $student = Student::create([
                             'name' => mb_strtoupper($reg->name, 'UTF-8'),
                             'nisn' => $reg->nisn,
@@ -912,7 +951,7 @@ class StudentController extends Controller
             }
 
             // Proses siswa EMIS tanpa rombel
-            if (!empty($studentIds)) {
+            if (! empty($studentIds)) {
                 $students = Student::whereIn('id', $studentIds)
                     ->where('status', 'active')
                     ->get();
@@ -936,7 +975,7 @@ class StudentController extends Controller
             ->where('academic_year_id', $academicYear->id)
             ->first();
 
-        if (!$existingCohort) {
+        if (! $existingCohort) {
             $nextAttendanceNumber = StudentAcademicCohort::where('rombel_id', $rombel->id)
                 ->where('academic_year_id', $academicYear->id)
                 ->max('attendance_number') ?? 0;

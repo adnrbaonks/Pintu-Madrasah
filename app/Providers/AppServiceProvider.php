@@ -2,6 +2,10 @@
 
 namespace App\Providers;
 
+use App\Models\Student;
+use App\Models\StudentMutation;
+use App\Observers\StudentMutationObserver;
+use App\Observers\StudentObserver;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -19,7 +23,7 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        \App\Models\Student::observe(\App\Observers\StudentObserver::class);
-        \App\Models\StudentMutation::observe(\App\Observers\StudentMutationObserver::class);
+        Student::observe(StudentObserver::class);
+        StudentMutation::observe(StudentMutationObserver::class);
     }
 }

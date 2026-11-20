@@ -2,17 +2,24 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
 
 class PpdbRegistration extends Model
 {
+    use HasFactory;
+
     const STATUS_REGISTERED = 'registered';
+
     const STATUS_RE_ENROLLED = 're_enrolled';
+
     const STATUS_VERIFIED = 'verified';
+
     const STATUS_PLACED = 'placed';
 
     protected $keyType = 'string';
+
     public $incrementing = false;
 
     protected $fillable = [
@@ -89,7 +96,7 @@ class PpdbRegistration extends Model
                 // Loop hingga unik (count()+1 tabrakan bila ada data terhapus)
                 $seq = static::whereYear('created_at', $year)->count() + 1;
                 do {
-                    $model->registration_number = 'PPDB-' . $year . '-' . str_pad($seq, 4, '0', STR_PAD_LEFT);
+                    $model->registration_number = 'PPDB-'.$year.'-'.str_pad($seq, 4, '0', STR_PAD_LEFT);
                     $seq++;
                 } while (static::where('registration_number', $model->registration_number)->exists());
             }

@@ -4,8 +4,8 @@ namespace App\Jobs;
 
 use App\Models\Student;
 use App\Models\StudentDocument;
+use App\Services\FileCompressionService;
 use App\Services\GeminiVerificationService;
-use App\Services\GoogleDriveService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -19,6 +19,7 @@ class ProcessStudentDocumentJob implements ShouldQueue
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     public int $tries = 3;
+
     public int $timeout = 120; // 2 menit
 
     public function __construct(
@@ -35,28 +36,29 @@ class ProcessStudentDocumentJob implements ShouldQueue
     {
         Log::info('[JOB] Memulai pemrosesan dokumen siswa', ['document_id' => $this->documentId]);
 
-        $document = \App\Models\StudentDocument::findOrFail($this->documentId);
-        $student = \App\Models\Student::findOrFail($document->student_id);
-        $fullPath = storage_path('app/private/' . $this->filePath);
+        $document = StudentDocument::findOrFail($this->documentId);
+        $student = Student::findOrFail($document->student_id);
+        $fullPath = storage_path('app/private/'.$this->filePath);
 
-        if (!file_exists($fullPath)) {
+        if (! file_exists($fullPath)) {
             Log::error('[JOB] File tidak ditemukan', ['path' => $fullPath]);
             $document->update(['status' => 'failed', 'ai_verification_result' => ['error' => 'File tidak ditemukan']]);
+
             return;
         }
 
         // 1. Kompres file (jika ukuran melebihi 1MB)
-        $compressionService = app(\App\Services\FileCompressionService::class);
+        $compressionService = app(FileCompressionService::class);
         $fullPath = $compressionService->compressIfNeeded($fullPath, $this->mimeType, pathinfo($this->originalName, PATHINFO_EXTENSION));
-        
+
         // Perbarui file size setelah kompresi
         $this->fileSize = filesize($fullPath);
 
         // 2. Pindahkan file dari private/temp_docs ke private/archives
         $extension = pathinfo($this->originalName, PATHINFO_EXTENSION);
-        $archivePath = 'archives/student_document/' . $document->id . '.' . $extension;
+        $archivePath = 'archives/student_document/'.$document->id.'.'.$extension;
         Storage::disk('local')->put($archivePath, file_get_contents($fullPath));
-        
+
         // 3. Verifikasi dengan Gemini AI
         $currentData = $student->only(['nik', 'nisn', 'name', 'birth_place', 'birth_date', 'mother_name', 'father_name', 'prev_school_name']);
         $aiResult = $gemini->verifyDocument($fullPath, $this->mimeType, $currentData);
@@ -65,33 +67,33 @@ class ProcessStudentDocumentJob implements ShouldQueue
         @unlink($fullPath);
 
         $isVerified = false;
-        if (!$aiResult) {
+        if (! $aiResult) {
             throw new \Exception('Gagal memproses dokumen dengan AI Gemini. Hasil kosong atau terjadi error API.');
         }
 
         $updates = [];
-            
-            // 4.1. Auto-fill data kosong dari hasil ekstraksi AI
-            $fillableFields = ['nik', 'nisn', 'birth_place', 'birth_date', 'mother_name', 'father_name', 'prev_school_name'];
-            foreach ($fillableFields as $field) {
-                // Jika data di database kosong/null, dan AI berhasil menemukannya, maka ambil
-                if (empty($student->$field) && !empty($aiResult[$field]) && $aiResult[$field] !== 'unknown' && $aiResult[$field] !== '-') {
-                    $updates[$field] = $aiResult[$field];
-                }
-            }
 
-            // 4.2. Kunci otomatis jika match_score tinggi
-            if (isset($aiResult['match_score']) && $aiResult['match_score'] >= 80) {
-                $isVerified = true;
-                $updates['is_verified_by_ai'] = true;
-                $updates['is_locked'] = true;
-                Log::info('[JOB] Identitas siswa dikunci karena verifikasi AI tinggi', ['student_id' => $student->id]);
+        // 4.1. Auto-fill data kosong dari hasil ekstraksi AI
+        $fillableFields = ['nik', 'nisn', 'birth_place', 'birth_date', 'mother_name', 'father_name', 'prev_school_name'];
+        foreach ($fillableFields as $field) {
+            // Jika data di database kosong/null, dan AI berhasil menemukannya, maka ambil
+            if (empty($student->$field) && ! empty($aiResult[$field]) && $aiResult[$field] !== 'unknown' && $aiResult[$field] !== '-') {
+                $updates[$field] = $aiResult[$field];
             }
+        }
 
-            if (!empty($updates)) {
-                $student->update($updates);
-                Log::info('[JOB] Data siswa berhasil dilengkapi oleh AI', ['student_id' => $student->id, 'fields_updated' => array_keys($updates)]);
-            }
+        // 4.2. Kunci otomatis jika match_score tinggi
+        if (isset($aiResult['match_score']) && $aiResult['match_score'] >= 80) {
+            $isVerified = true;
+            $updates['is_verified_by_ai'] = true;
+            $updates['is_locked'] = true;
+            Log::info('[JOB] Identitas siswa dikunci karena verifikasi AI tinggi', ['student_id' => $student->id]);
+        }
+
+        if (! empty($updates)) {
+            $student->update($updates);
+            Log::info('[JOB] Data siswa berhasil dilengkapi oleh AI', ['student_id' => $student->id, 'fields_updated' => array_keys($updates)]);
+        }
 
         $document->update([
             'gdrive_file_id' => null, // Akan diisi oleh GDrive job
@@ -103,11 +105,11 @@ class ProcessStudentDocumentJob implements ShouldQueue
         ]);
 
         // 5. Dispatch background job untuk upload ke GDrive
-        \App\Jobs\UploadToGoogleDriveJob::dispatch('student_document', $document->id);
+        UploadToGoogleDriveJob::dispatch('student_document', $document->id);
 
         Log::info('[JOB] Dokumen siswa berhasil diverifikasi AI secara lokal dan diteruskan ke GDrive job', [
-            'student_id' => $student->id, 
-            'verified' => $isVerified
+            'student_id' => $student->id,
+            'verified' => $isVerified,
         ]);
     }
 
@@ -118,14 +120,14 @@ class ProcessStudentDocumentJob implements ShouldQueue
     {
         Log::error('[JOB] Proses dokumen siswa gagal', [
             'document_id' => $this->documentId,
-            'exception' => $exception->getMessage()
+            'exception' => $exception->getMessage(),
         ]);
 
-        $document = \App\Models\StudentDocument::find($this->documentId);
+        $document = StudentDocument::find($this->documentId);
         if ($document) {
             $document->update([
                 'status' => 'failed',
-                'ai_verification_result' => ['error' => $exception->getMessage()]
+                'ai_verification_result' => ['error' => $exception->getMessage()],
             ]);
         }
     }

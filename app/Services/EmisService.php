@@ -3,44 +3,52 @@
 namespace App\Services;
 
 use App\Models\Student;
-use App\Models\AcademicYear;
-use App\Models\EmisStaging;
+use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 class EmisService
 {
-    const EMIS_BASE_URL     = 'https://api-emis.kemenag.go.id';
-    const CACHE_KEY_SISWA   = 'emis:token:siswa';
-    const CACHE_KEY_GTK     = 'emis:token:gtk';
-    
+    const EMIS_BASE_URL = 'https://api-emis.kemenag.go.id';
+
+    const CACHE_KEY_SISWA = 'emis:token:siswa';
+
+    const CACHE_KEY_GTK = 'emis:token:gtk';
+
     // Kunci rahasia dari frontend Kemenag EMIS JS
     const CRYPTO_KEY = 'a2c36eb2w1em50d6665dc5d61a68b400';
+
     const CRYPTO_IV = 'emisBase64IVkeys';
 
     /**
      * HTTP client dengan CA cert yang benar untuk menghindari TLS error.
      * PHP default menggunakan /etc/ssl/cert.pem yang tidak ada di sistem ini.
      */
-    private function emisHttp(?string $token = null): \Illuminate\Http\Client\PendingRequest
+    private function emisHttp(?string $token = null): PendingRequest
     {
         $t = $token ?? $this->getEmisToken();
         $caFile = '/etc/ssl/certs/ca-certificates.crt';
         $client = Http::withOptions(['verify' => file_exists($caFile) ? $caFile : true])
             ->timeout(60);
+
         return $t ? $client->withToken($t) : $client;
     }
 
     public function getInstitutionId(): ?int
     {
         $token = $this->getEmisToken();
-        if (! $token) return null;
+        if (! $token) {
+            return null;
+        }
 
         $parts = explode('.', $token);
-        if (count($parts) !== 3) return null;
+        if (count($parts) !== 3) {
+            return null;
+        }
 
         $payload = json_decode(base64_decode($parts[1]), true);
+
         return $payload['identifiable_id'] ?? null;
     }
 
@@ -48,6 +56,7 @@ class EmisService
     {
         $ttl = (int) env('EMIS_TOKEN_TTL', 7200);
         Cache::put(self::CACHE_KEY_SISWA, $token, now()->addSeconds($ttl));
+
         return true;
     }
 
@@ -59,6 +68,7 @@ class EmisService
     {
         $ttl = (int) env('EMIS_GTK_TOKEN_TTL', 28800); // 8 jam default
         Cache::put(self::CACHE_KEY_GTK, $cookies, now()->addSeconds($ttl));
+
         return true;
     }
 
@@ -68,13 +78,31 @@ class EmisService
         return $this->storeGtkCookies(['raw_token' => $token]);
     }
 
-    public function getEmisToken(): ?string { return Cache::get(self::CACHE_KEY_SISWA); }
-    
+    public function getEmisToken(): ?string
+    {
+        return Cache::get(self::CACHE_KEY_SISWA);
+    }
+
     /** Kembalikan array cookie GTK ['csrftoken'=>..., 'sessionid'=>...] */
-    public function getGtkCookies(): ?array { return Cache::get(self::CACHE_KEY_GTK); }
-    public function getGtkToken(): ?string { return Cache::get(self::CACHE_KEY_SISWA); } // alias
-    public function hasActiveEmisToken(): bool { return Cache::has(self::CACHE_KEY_SISWA); }
-    public function hasActiveGtkToken(): bool { return Cache::has(self::CACHE_KEY_GTK); }
+    public function getGtkCookies(): ?array
+    {
+        return Cache::get(self::CACHE_KEY_GTK);
+    }
+
+    public function getGtkToken(): ?string
+    {
+        return Cache::get(self::CACHE_KEY_SISWA);
+    } // alias
+
+    public function hasActiveEmisToken(): bool
+    {
+        return Cache::has(self::CACHE_KEY_SISWA);
+    }
+
+    public function hasActiveGtkToken(): bool
+    {
+        return Cache::has(self::CACHE_KEY_GTK);
+    }
 
     public function fetchAllStudents(int $page = 1, int $perPage = 100): array
     {
@@ -86,23 +114,24 @@ class EmisService
         }
 
         $response = $this->emisHttp($token)
-            ->get(self::EMIS_BASE_URL . "/v1/students/institution/{$institutionId}/student/list", [
+            ->get(self::EMIS_BASE_URL."/v1/students/institution/{$institutionId}/student/list", [
                 'per_page' => $perPage,
-                'page'     => $page,
+                'page' => $page,
             ]);
 
         if (! $response->successful()) {
             Log::error('[EMIS] Gagal menarik siswa', [
                 'status' => $response->status(),
-                'body' => $response->body()
+                'body' => $response->body(),
             ]);
+
             return ['results' => [], 'total' => 0, 'last_page' => 1];
         }
 
         $data = $response->json('results', []);
         $total = $response->json('metadata.total', 0) ?: $response->json('meta.total', 0);
         $lastPage = $response->json('metadata.last_page') ?? $response->json('meta.last_page');
-        
+
         if (! $lastPage && $total > 0) {
             $lastPage = (int) ceil($total / $perPage);
         }
@@ -110,14 +139,14 @@ class EmisService
         return [
             'results' => $data,
             'total' => $total,
-            'last_page' => $lastPage ?: 1
+            'last_page' => $lastPage ?: 1,
         ];
     }
 
     /**
      * Parse data EMIS MURNI — hanya ambil field yang ada di EMIS, tanpa tebakan
      */
-     /**
+    /**
      * Tarik data mutasi (keluar/masuk)
      * endpoint: /v1/students/mutations?per_page=100&page=1&destination=true&type=out
      */
@@ -130,46 +159,47 @@ class EmisService
         }
 
         $response = $this->emisHttp($token)
-            ->get(self::EMIS_BASE_URL . "/v1/students/mutations", [
-                'per_page'    => $perPage,
-                'page'        => $page,
+            ->get(self::EMIS_BASE_URL.'/v1/students/mutations', [
+                'per_page' => $perPage,
+                'page' => $page,
                 'destination' => 'true',
-                'type'        => $type,
+                'type' => $type,
             ]);
 
         if (! $response->successful()) {
-            \Illuminate\Support\Facades\Log::error("[EMIS] Gagal menarik mutasi {$type}", [
+            Log::error("[EMIS] Gagal menarik mutasi {$type}", [
                 'status' => $response->status(),
-                'body'   => $response->body()
+                'body' => $response->body(),
             ]);
+
             return ['results' => [], 'total' => 0, 'last_page' => 1];
         }
 
         $data = $response->json('results', []);
         $total = $response->json('metadata.total', 0) ?: $response->json('meta.total', 0);
         $lastPage = $response->json('metadata.last_page') ?? $response->json('meta.last_page');
-        
-        if (!$lastPage && $total > 0) {
+
+        if (! $lastPage && $total > 0) {
             $lastPage = (int) ceil($total / $perPage);
         }
-        
+
         return [
             'results' => $data,
-            'total'   => $total,
-            'last_page' => $lastPage ?: 1
+            'total' => $total,
+            'last_page' => $lastPage ?: 1,
         ];
     }
 
     public function parseEmisStudentRaw(array $emisData): array
     {
-        $rombelName = $emisData['learning_activity']['study_group']['name'] 
-            ?? $emisData['study_group_name'] 
-            ?? $emisData['tingkat'] 
+        $rombelName = $emisData['learning_activity']['study_group']['name']
+            ?? $emisData['study_group_name']
+            ?? $emisData['tingkat']
             ?? 'Belum Masuk Rombel';
-        
+
         $genderRaw = $emisData['m_gender'] ?? $emisData['gender'] ?? $emisData['jenis_kelamin'] ?? $emisData['jk'] ?? null;
         $gender = $this->parseGender($genderRaw);
-        
+
         if ($gender === null) {
             $fullName = mb_strtoupper($emisData['full_name'] ?? '');
             $isFemale = preg_match('/\b(SITI|AI|SRI|PUTRI|NI|DEWI|NUR|AYU|MARIA|ANISA|ELIS|NUNUNG|IIS|NURUL|WINDA|YUNITA|INDAH|CANTIK|RINA|SINTA|TINA|LINA|ADINDA|SALSA|NABILA|RELITTA|ZAHRA|ANDINI|ASTI|AULIA|CHANTIKA|DERA|NISA|NAJWA|SYIFA|AURA|AZZAHRA)\b/', $fullName);
@@ -177,14 +207,14 @@ class EmisService
         }
 
         return [
-            'emis_student_id'=> $emisData['id'] ?? null,
-            'nisn'           => $emisData['nisn'] ?? null,
-            'nik'            => $emisData['nik'] ?? null,
-            'full_name'      => $emisData['full_name'] ?? 'Tanpa Nama',
-            'gender'         => $gender,
-            'birth_date'     => $emisData['birth_date'] ?? null,
-            'birth_place'    => $emisData['birth_place'] ?? null,
-            'rombel_name'    => $rombelName,
+            'emis_student_id' => $emisData['id'] ?? null,
+            'nisn' => $emisData['nisn'] ?? null,
+            'nik' => $emisData['nik'] ?? null,
+            'full_name' => $emisData['full_name'] ?? 'Tanpa Nama',
+            'gender' => $gender,
+            'birth_date' => $emisData['birth_date'] ?? null,
+            'birth_place' => $emisData['birth_place'] ?? null,
+            'rombel_name' => $rombelName,
             'study_group_id' => $emisData['learning_activity']['study_group']['id'] ?? null,
         ];
     }
@@ -195,13 +225,14 @@ class EmisService
 
         // Tangkap romawi (VII-XII) atau angka arab (7-12) yang berdiri sendiri atau menempel huruf
         if (preg_match('/\b(VII|VIII|IX|X|XI|XII)\b|(?<!\d)(7|8|9|10|11|12)(?!\d)/i', $name, $m)) {
-            $val = !empty($m[1]) ? $m[1] : $m[2];
+            $val = ! empty($m[1]) ? $m[1] : $m[2];
             $map = [
-                '7' => 'VII', '8' => 'VIII', '9' => 'IX', 
+                '7' => 'VII', '8' => 'VIII', '9' => 'IX',
                 '10' => 'X', '11' => 'XI', '12' => 'XII',
                 'VII' => 'VII', 'VIII' => 'VIII', 'IX' => 'IX',
-                'X' => 'X', 'XI' => 'XI', 'XII' => 'XII'
+                'X' => 'X', 'XI' => 'XI', 'XII' => 'XII',
             ];
+
             return $map[strtoupper($val)] ?? null;
         }
 
@@ -214,16 +245,16 @@ class EmisService
             $raw = $raw['name'] ?? $raw['label'] ?? $raw['id'] ?? (is_string($raw[0] ?? null) ? $raw[0] : null);
         }
 
-        if ($raw === null || trim((string)$raw) === '') {
+        if ($raw === null || trim((string) $raw) === '') {
             return null;
         }
 
-        $normalized = mb_strtolower(trim((string)$raw));
-        
+        $normalized = mb_strtolower(trim((string) $raw));
+
         if (in_array($normalized, ['l', '1', 'laki-laki', 'laki', 'male', 'pria'])) {
             return 'L';
         }
-        
+
         if (in_array($normalized, ['p', '2', 'perempuan', 'wanita', 'female', '0'])) {
             return 'P';
         }
@@ -236,12 +267,15 @@ class EmisService
      */
     public function encryptEmisId($id): string
     {
-        if (empty($id)) return '';
-        if (!is_numeric($id) && strlen($id) > 20) {
-            return (string)$id; // Already encrypted
+        if (empty($id)) {
+            return '';
+        }
+        if (! is_numeric($id) && strlen($id) > 20) {
+            return (string) $id; // Already encrypted
         }
 
-        $encrypted = openssl_encrypt((string)$id, 'AES-256-CBC', self::CRYPTO_KEY, 0, self::CRYPTO_IV);
+        $encrypted = openssl_encrypt((string) $id, 'AES-256-CBC', self::CRYPTO_KEY, 0, self::CRYPTO_IV);
+
         return base64_encode($encrypted);
     }
 
@@ -258,13 +292,14 @@ class EmisService
         $encryptedId = $this->encryptEmisId($emisStudentId);
 
         $response = $this->emisHttp($token)
-            ->get(self::EMIS_BASE_URL . "/v1/students/students/{$encryptedId}");
+            ->get(self::EMIS_BASE_URL."/v1/students/students/{$encryptedId}");
 
         if (! $response->successful()) {
             Log::error("[EMIS] Gagal menarik detail siswa (ID: {$emisStudentId})", [
                 'status' => $response->status(),
-                'body' => $response->body()
+                'body' => $response->body(),
             ]);
+
             return null;
         }
 
@@ -273,12 +308,12 @@ class EmisService
         // Tarik data parents secara spesifik untuk mendapatkan No. KK
         try {
             $parentsRes = $this->emisHttp($token)
-                ->get(self::EMIS_BASE_URL . "/v1/students/students/{$encryptedId}/parents");
-            
+                ->get(self::EMIS_BASE_URL."/v1/students/students/{$encryptedId}/parents");
+
             if ($parentsRes->successful()) {
                 $parentsData = $parentsRes->json('results');
                 if (is_array($parentsData)) {
-                    if (!isset($results['parents']) || !is_array($results['parents'])) {
+                    if (! isset($results['parents']) || ! is_array($results['parents'])) {
                         $results['parents'] = [];
                     }
                     $results['parents'] = array_merge($results['parents'], $parentsData);
@@ -297,7 +332,7 @@ class EmisService
      * GTK: Membuat HTTP client yang menggunakan cookie Django session
      * untuk mengakses halaman EMIS GTK yang di-render server-side (SSR).
      */
-    private function gtkHttp(): \Illuminate\Http\Client\PendingRequest
+    private function gtkHttp(): PendingRequest
     {
         $cookies = $this->getGtkCookies();
         if (! $cookies) {
@@ -306,19 +341,20 @@ class EmisService
 
         // Bangun cookie string dari array
         $cookieString = collect($cookies)
-            ->map(fn($v, $k) => "$k=$v")
+            ->map(fn ($v, $k) => "$k=$v")
             ->implode('; ');
 
         $caFile = '/etc/ssl/certs/ca-certificates.crt';
+
         return Http::withOptions(['verify' => file_exists($caFile) ? $caFile : true])
             ->timeout(60)
             ->withHeaders([
-                'Cookie'           => $cookieString,
-                'Accept'           => 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language'  => 'id-ID,id;q=0.9,en;q=0.8',
-                'User-Agent'       => 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
-                'X-CSRFToken'      => $cookies['csrftoken'] ?? '',
-                'Referer'          => 'https://emisgtk.kemenag.go.id/akun/manajemen/sekolah/',
+                'Cookie' => $cookieString,
+                'Accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language' => 'id-ID,id;q=0.9,en;q=0.8',
+                'User-Agent' => 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+                'X-CSRFToken' => $cookies['csrftoken'] ?? '',
+                'Referer' => 'https://emisgtk.kemenag.go.id/akun/manajemen/sekolah/',
             ]);
     }
 
@@ -331,7 +367,7 @@ class EmisService
         $baseUrl = 'https://emisgtk.kemenag.go.id/akun/manajemen/sekolah/';
 
         $response = $this->gtkHttp()->get($baseUrl, [
-            'page'     => $page,
+            'page' => $page,
             'per_page' => $perPage,
         ]);
 
@@ -342,8 +378,9 @@ class EmisService
         if (! $response->successful()) {
             Log::error('[EMIS GTK] Gagal fetch halaman', [
                 'status' => $response->status(),
-                'url'    => $baseUrl,
+                'url' => $baseUrl,
             ]);
+
             return ['results' => [], 'total' => 0, 'last_page' => 1];
         }
 
@@ -355,8 +392,8 @@ class EmisService
         $lastPage = $total > 0 ? (int) ceil($total / $perPage) : 1;
 
         return [
-            'results'   => $results,
-            'total'     => $total,
+            'results' => $results,
+            'total' => $total,
             'last_page' => $lastPage,
         ];
     }
@@ -379,18 +416,20 @@ class EmisService
                 }
                 // Fallback: parse dari HTML
                 preg_match('/Total Akun.*?(\d+)/s', $response->body(), $m);
+
                 return (int) ($m[1] ?? 0);
             }
         } catch (\Exception $e) {
-            Log::warning('[EMIS GTK] Gagal fetch stats: ' . $e->getMessage());
+            Log::warning('[EMIS GTK] Gagal fetch stats: '.$e->getMessage());
         }
+
         return 0;
     }
 
     /**
      * GTK: Parse tabel HTML dari halaman /akun/manajemen/sekolah/
      * Kolom tabel: No | Nama | Email/Phone | Status | Aksi
-     * 
+     *
      * Dari page source:
      * - Nama ada di <div class="font-medium">NAMA</div>
      * - UUID ada di <div class="text-base-content/50 text-xs">UUID</div>
@@ -404,7 +443,7 @@ class EmisService
         // Suppress HTML parse errors
         $prevErrors = libxml_use_internal_errors(true);
         $dom = new \DOMDocument('1.0', 'UTF-8');
-        $dom->loadHTML('<?xml encoding="UTF-8">' . $html, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+        $dom->loadHTML('<?xml encoding="UTF-8">'.$html, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
         libxml_use_internal_errors($prevErrors);
 
         $xpath = new \DOMXPath($dom);
@@ -419,7 +458,9 @@ class EmisService
 
         foreach ($rows as $row) {
             $cells = $xpath->query('td', $row);
-            if ($cells->length < 3) continue;
+            if ($cells->length < 3) {
+                continue;
+            }
 
             // Sel ke-2 berisi nama dan UUID
             $cell2 = $cells->item(1);
@@ -449,14 +490,16 @@ class EmisService
                 $isActive = ($checked !== '' && $checked !== null && $checked !== false);
             }
 
-            if (empty($name)) continue;
+            if (empty($name)) {
+                continue;
+            }
 
             $results[] = [
-                'id'     => $uuid ?: uniqid(),
-                'name'   => $name,
-                'phone'  => $phone,
+                'id' => $uuid ?: uniqid(),
+                'name' => $name,
+                'phone' => $phone,
                 'active' => $isActive,
-                'uuid'   => $uuid,
+                'uuid' => $uuid,
             ];
         }
 
@@ -472,23 +515,23 @@ class EmisService
         $uuid = $emisData['uuid'] ?? $emisData['id'] ?? null;
 
         return [
-            'emis_gtk_id'           => $uuid,
-            'nip'                   => null, // Tidak tersedia di halaman list
-            'nik'                   => null, // Perlu kunjungi halaman detail
-            'npk'                   => null,
-            'nuptk'                 => null,
+            'emis_gtk_id' => $uuid,
+            'nip' => null, // Tidak tersedia di halaman list
+            'nik' => null, // Perlu kunjungi halaman detail
+            'npk' => null,
+            'nuptk' => null,
             'full_name_with_titles' => mb_strtoupper(trim($name)),
-            'first_title'           => null,
-            'last_title'            => null,
-            'gender'                => null, // Tidak tersedia di halaman list
-            'birth_place'           => null,
-            'birth_date'            => null,
-            'phone'                 => $emisData['phone'] ?? null,
-            'email'                 => null,
-            'employment_status'     => null, // Tidak tersedia di halaman list
-            'functional_position'   => null,
-            'highest_education'     => null,
-            'raw_data'              => json_encode($emisData),
+            'first_title' => null,
+            'last_title' => null,
+            'gender' => null, // Tidak tersedia di halaman list
+            'birth_place' => null,
+            'birth_date' => null,
+            'phone' => $emisData['phone'] ?? null,
+            'email' => null,
+            'employment_status' => null, // Tidak tersedia di halaman list
+            'functional_position' => null,
+            'highest_education' => null,
+            'raw_data' => json_encode($emisData),
         ];
     }
 }

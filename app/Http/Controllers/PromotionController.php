@@ -6,10 +6,10 @@ use App\Models\AcademicYear;
 use App\Models\Rombel;
 use App\Models\Student;
 use App\Models\StudentAcademicCohort;
+use App\Support\Webhook;
 use Illuminate\Http\Request;
-use Inertia\Inertia;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
+use Inertia\Inertia;
 
 class PromotionController extends Controller
 {
@@ -19,16 +19,16 @@ class PromotionController extends Controller
         $rombels = Rombel::with('schoolClass:id,grade_level,major_name')
             ->orderBy('name')
             ->get()
-            ->map(fn($r) => [
-                'id'             => $r->id,
-                'name'           => $r->name,
+            ->map(fn ($r) => [
+                'id' => $r->id,
+                'name' => $r->name,
                 'academic_year_id' => $r->academic_year_id,
-                'grade_level'    => $r->schoolClass?->grade_level,
+                'grade_level' => $r->schoolClass?->grade_level,
             ]);
 
         return Inertia::render('Students/Promotion/Index', [
             'academicYears' => $academicYears,
-            'rombels'       => $rombels,
+            'rombels' => $rombels,
         ]);
     }
 
@@ -55,12 +55,12 @@ class PromotionController extends Controller
         $students = StudentAcademicCohort::with('student:id,name,nisn,gender')
             ->where('rombel_id', $request->rombel_id)
             ->whereNotIn('student_id', $alreadyPromotedIds)
-            ->whereHas('student', fn($q) => $q->where('status', 'active'))
+            ->whereHas('student', fn ($q) => $q->where('status', 'active'))
             ->paginate($request->per_page ?? 5)
-            ->through(fn($cohort) => [
-                'id'     => $cohort->student->id,
-                'name'   => $cohort->student->name,
-                'nisn'   => $cohort->student->nisn,
+            ->through(fn ($cohort) => [
+                'id' => $cohort->student->id,
+                'name' => $cohort->student->name,
+                'nisn' => $cohort->student->nisn,
                 'gender' => $cohort->student->gender,
             ]);
 
@@ -96,7 +96,7 @@ class PromotionController extends Controller
                     ->where('academic_year_id', $request->target_academic_year_id)
                     ->exists();
 
-                if (!$exists) {
+                if (! $exists) {
                     StudentAcademicCohort::create([
                         'student_id' => $studentId,
                         'academic_year_id' => $request->target_academic_year_id,
@@ -110,14 +110,14 @@ class PromotionController extends Controller
 
         $targetRombel = Rombel::find($request->target_rombel_id);
 
-        \App\Support\Webhook::fire('student.promoted', [
+        Webhook::fire('student.promoted', [
             'student_ids' => $request->student_ids,
             'target_academic_year_id' => $request->target_academic_year_id,
             'target_rombel_id' => $request->target_rombel_id,
             'target_rombel' => $targetRombel?->name,
         ]);
 
-        return back()->with('success', count($request->student_ids) . ' siswa berhasil dinaikkan kelasnya.');
+        return back()->with('success', count($request->student_ids).' siswa berhasil dinaikkan kelasnya.');
     }
 
     /**
@@ -136,11 +136,11 @@ class PromotionController extends Controller
         });
 
         // Mass-update bypass model events → fire manual (batch)
-        \App\Support\Webhook::fire('student.mutated', [
+        Webhook::fire('student.mutated', [
             'student_ids' => $request->student_ids,
             'reason' => 'graduated',
         ]);
 
-        return back()->with('success', count($request->student_ids) . ' siswa berhasil diluluskan.');
+        return back()->with('success', count($request->student_ids).' siswa berhasil diluluskan.');
     }
 }

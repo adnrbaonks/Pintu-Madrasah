@@ -1,12 +1,16 @@
 <?php
 
+use App\Http\Controllers\ApiClientController;
 use App\Http\Controllers\ArchiveController;
 use App\Http\Controllers\AuditLogController;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\BkController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\EmisGtkController;
 use App\Http\Controllers\FormCetakController;
 use App\Http\Controllers\GtkController;
 use App\Http\Controllers\LegerController;
+use App\Http\Controllers\LetterController;
 use App\Http\Controllers\MutationController;
 use App\Http\Controllers\PpdbController;
 use App\Http\Controllers\PrintController;
@@ -14,9 +18,12 @@ use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\PromotionController;
 use App\Http\Controllers\RombelController;
 use App\Http\Controllers\SettingController;
+use App\Http\Controllers\StatistikController;
 use App\Http\Controllers\StudentController;
 use App\Http\Controllers\StudentDocumentController;
 use App\Http\Controllers\UserController;
+use App\Http\Controllers\VerifyController;
+use App\Http\Controllers\WebhookSubscriptionController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
@@ -27,17 +34,17 @@ use Inertia\Inertia;
 */
 
 // ── Verifikasi Dokumen Publik via QR (tanpa login) ────────────────────
-Route::get('/v/{token}', [\App\Http\Controllers\VerifyController::class, 'show'])
+Route::get('/v/{token}', [VerifyController::class, 'show'])
     ->where('token', '[A-Za-z0-9]+')
     ->name('verify.show');
-Route::get('/v/{token}/qr', [\App\Http\Controllers\VerifyController::class, 'qr'])
+Route::get('/v/{token}/qr', [VerifyController::class, 'qr'])
     ->where('token', '[A-Za-z0-9]+')
     ->name('verify.qr');
 
 // ── PPDB Publik (Guest Only) ───────────────────────────────────────────
 Route::middleware(['guest', 'throttle:10,1'])->group(function () {
-    Route::get('/ppdb/daftar', [\App\Http\Controllers\PpdbController::class, 'publicForm'])->name('ppdb.public.form');
-    Route::post('/ppdb/daftar', [\App\Http\Controllers\PpdbController::class, 'publicStore'])->name('ppdb.public.store');
+    Route::get('/ppdb/daftar', [PpdbController::class, 'publicForm'])->name('ppdb.public.form');
+    Route::post('/ppdb/daftar', [PpdbController::class, 'publicStore'])->name('ppdb.public.store');
 });
 
 // ── Autentikasi (Guest Only) ───────────────────────────────────────────
@@ -81,28 +88,28 @@ Route::middleware('auth')->group(function () {
 
     // ── API Clients (Gateway Keys) — admin only ───────────────────
     Route::middleware('checkrole:admin')->prefix('api-clients')->name('api-clients.')->group(function () {
-        Route::get('/', [\App\Http\Controllers\ApiClientController::class, 'index'])->name('index');
-        Route::post('/', [\App\Http\Controllers\ApiClientController::class, 'store'])->name('store');
-        Route::post('/{apiClient}/toggle-active', [\App\Http\Controllers\ApiClientController::class, 'toggleActive'])->name('toggle-active');
-        Route::post('/{apiClient}/regenerate', [\App\Http\Controllers\ApiClientController::class, 'regenerate'])->name('regenerate');
-        Route::delete('/{apiClient}', [\App\Http\Controllers\ApiClientController::class, 'destroy'])->name('destroy');
+        Route::get('/', [ApiClientController::class, 'index'])->name('index');
+        Route::post('/', [ApiClientController::class, 'store'])->name('store');
+        Route::post('/{apiClient}/toggle-active', [ApiClientController::class, 'toggleActive'])->name('toggle-active');
+        Route::post('/{apiClient}/regenerate', [ApiClientController::class, 'regenerate'])->name('regenerate');
+        Route::delete('/{apiClient}', [ApiClientController::class, 'destroy'])->name('destroy');
     });
     // ── Webhooks (Event Subscription) — admin only ───────────────
     Route::middleware('checkrole:admin')->prefix('webhooks')->name('webhooks.')->group(function () {
-        Route::get('/', [\App\Http\Controllers\WebhookSubscriptionController::class, 'index'])->name('index');
-        Route::post('/', [\App\Http\Controllers\WebhookSubscriptionController::class, 'store'])->name('store');
-        Route::post('/{webhook}/toggle-active', [\App\Http\Controllers\WebhookSubscriptionController::class, 'toggleActive'])->name('toggle-active');
-        Route::post('/{webhook}/regenerate-secret', [\App\Http\Controllers\WebhookSubscriptionController::class, 'regenerateSecret'])->name('regenerate-secret');
-        Route::post('/{webhook}/test', [\App\Http\Controllers\WebhookSubscriptionController::class, 'test'])->name('test');
-        Route::delete('/{webhook}', [\App\Http\Controllers\WebhookSubscriptionController::class, 'destroy'])->name('destroy');
+        Route::get('/', [WebhookSubscriptionController::class, 'index'])->name('index');
+        Route::post('/', [WebhookSubscriptionController::class, 'store'])->name('store');
+        Route::post('/{webhook}/toggle-active', [WebhookSubscriptionController::class, 'toggleActive'])->name('toggle-active');
+        Route::post('/{webhook}/regenerate-secret', [WebhookSubscriptionController::class, 'regenerateSecret'])->name('regenerate-secret');
+        Route::post('/{webhook}/test', [WebhookSubscriptionController::class, 'test'])->name('test');
+        Route::delete('/{webhook}', [WebhookSubscriptionController::class, 'destroy'])->name('destroy');
     });
     // ── BK (Pembinaan Karakter & Kedisiplinan) ────────────────────
     Route::middleware('checkrole:admin,staf,guru')->prefix('bk')->name('bk.')->group(function () {
-        Route::get('/', [\App\Http\Controllers\BkController::class, 'index'])->name('index');
-        Route::post('/', [\App\Http\Controllers\BkController::class, 'store'])->name('store');
-        Route::put('/{bk}', [\App\Http\Controllers\BkController::class, 'update'])->name('update');
-        Route::delete('/{bk}', [\App\Http\Controllers\BkController::class, 'destroy'])->name('destroy');
-        Route::get('/{bk}/summon', [\App\Http\Controllers\BkController::class, 'printSummon'])->name('summon');
+        Route::get('/', [BkController::class, 'index'])->name('index');
+        Route::post('/', [BkController::class, 'store'])->name('store');
+        Route::put('/{bk}', [BkController::class, 'update'])->name('update');
+        Route::delete('/{bk}', [BkController::class, 'destroy'])->name('destroy');
+        Route::get('/{bk}/summon', [BkController::class, 'printSummon'])->name('summon');
     });
     // ── Audit Logs — admin only ────────────────────────────────────
     Route::middleware('checkrole:admin')->prefix('audit-logs')->name('audit-logs.')->group(function () {
@@ -180,29 +187,29 @@ Route::middleware('auth')->group(function () {
         // GTK
         Route::prefix('gtk')->name('gtk.')->group(function () {
             Route::get('/', [GtkController::class, 'index'])->name('index');
-            Route::get('/tpg', [\App\Http\Controllers\StatistikController::class, 'tpg'])->name('tpg');
-            Route::put('/{staff}/tpg-status', [\App\Http\Controllers\StatistikController::class, 'updateTpgStatus'])->name('tpg.update');
+            Route::get('/tpg', [StatistikController::class, 'tpg'])->name('tpg');
+            Route::put('/{staff}/tpg-status', [StatistikController::class, 'updateTpgStatus'])->name('tpg.update');
         });
 
         // Statistik
-        Route::get('/statistik/demografi', [\App\Http\Controllers\StatistikController::class, 'demografi'])->name('statistik.demografi');
+        Route::get('/statistik/demografi', [StatistikController::class, 'demografi'])->name('statistik.demografi');
 
         // Persuratan
         Route::prefix('persuratan')->name('persuratan.')->group(function () {
-            Route::get('/', [\App\Http\Controllers\LetterController::class, 'index'])->name('index');
-            Route::get('/create', [\App\Http\Controllers\LetterController::class, 'create'])->name('create');
-            Route::post('/', [\App\Http\Controllers\LetterController::class, 'store'])->name('store');
-            Route::get('/{letter}', [\App\Http\Controllers\LetterController::class, 'show'])->name('show');
-            Route::get('/{letter}/edit', [\App\Http\Controllers\LetterController::class, 'edit'])->name('edit');
-            Route::put('/{letter}', [\App\Http\Controllers\LetterController::class, 'update'])->name('update');
-            Route::delete('/{letter}', [\App\Http\Controllers\LetterController::class, 'destroy'])->name('destroy');
+            Route::get('/', [LetterController::class, 'index'])->name('index');
+            Route::get('/create', [LetterController::class, 'create'])->name('create');
+            Route::post('/', [LetterController::class, 'store'])->name('store');
+            Route::get('/{letter}', [LetterController::class, 'show'])->name('show');
+            Route::get('/{letter}/edit', [LetterController::class, 'edit'])->name('edit');
+            Route::put('/{letter}', [LetterController::class, 'update'])->name('update');
+            Route::delete('/{letter}', [LetterController::class, 'destroy'])->name('destroy');
         });
 
         // Integrasi EMIS
         Route::get('/emis/siswa', fn () => Inertia::render('Emis/Siswa'))->name('emis.siswa');
-        Route::get('/emis/gtk', [\App\Http\Controllers\EmisGtkController::class, 'index'])->name('emis.gtk');
-        Route::post('/emis/gtk/sync', [\App\Http\Controllers\EmisGtkController::class, 'sync'])->name('emis.gtk.sync');
-        Route::get('/emis/gtk/sync-status', [\App\Http\Controllers\EmisGtkController::class, 'syncStatus'])->name('emis.gtk.sync-status');
+        Route::get('/emis/gtk', [EmisGtkController::class, 'index'])->name('emis.gtk');
+        Route::post('/emis/gtk/sync', [EmisGtkController::class, 'sync'])->name('emis.gtk.sync');
+        Route::get('/emis/gtk/sync-status', [EmisGtkController::class, 'syncStatus'])->name('emis.gtk.sync-status');
 
         // Leger Nilai
         Route::get('/kelas/leger', [LegerController::class, 'index'])->name('leger.index');

@@ -29,6 +29,7 @@ class StudentObserver
             Webhook::fire('student.mutated', Webhook::studentPayload($student, [
                 'reason' => $changes['status'],
             ]));
+
             return;
         }
 

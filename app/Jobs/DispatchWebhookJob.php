@@ -17,6 +17,7 @@ class DispatchWebhookJob implements ShouldQueue
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     public int $tries = 1;
+
     public int $timeout = 300;
 
     public function __construct(
@@ -53,7 +54,7 @@ class DispatchWebhookJob implements ShouldQueue
 
     private function deliver(WebhookSubscription $sub, string $body): void
     {
-        $signature = 'sha256=' . hash_hmac('sha256', $body, $sub->secret);
+        $signature = 'sha256='.hash_hmac('sha256', $body, $sub->secret);
 
         try {
             $response = Http::timeout(15)
@@ -75,7 +76,7 @@ class DispatchWebhookJob implements ShouldQueue
                 'status_code' => $response->status(),
                 'response_body' => mb_substr($response->body(), 0, 2000),
                 'delivered' => $ok,
-                'error' => $ok ? null : 'HTTP ' . $response->status(),
+                'error' => $ok ? null : 'HTTP '.$response->status(),
             ]);
 
             $sub->update([

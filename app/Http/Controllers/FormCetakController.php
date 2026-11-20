@@ -4,7 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\AcademicYear;
 use App\Models\Rombel;
-use App\Models\Staff;
+use App\Models\Setting;
+use App\Models\StudentAcademicCohort;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
@@ -20,7 +21,7 @@ class FormCetakController extends Controller
                 ->with(['schoolClass', 'homeroomTeacher'])
                 ->orderBy('name')
                 ->get()
-                ->map(fn($r) => [
+                ->map(fn ($r) => [
                     'id' => $r->id,
                     'name' => $r->name,
                     'grade_level' => $r->schoolClass?->grade_level ?? '-',
@@ -31,8 +32,8 @@ class FormCetakController extends Controller
         return Inertia::render('Students/FormCetak', [
             'activeYear' => $activeYear,
             'rombels' => $rombels,
-            'madrasahName' => \App\Models\Setting::get('madrasah_name', env('MADRASAH_NAME', 'MTs Negeri Contoh')),
-            'madrasahAddress' => \App\Models\Setting::get('school_address', env('MADRASAH_ADDRESS', '')),
+            'madrasahName' => Setting::get('madrasah_name', env('MADRASAH_NAME', 'MTs Negeri Contoh')),
+            'madrasahAddress' => Setting::get('school_address', env('MADRASAH_ADDRESS', '')),
         ]);
     }
 
@@ -45,12 +46,12 @@ class FormCetakController extends Controller
         $rombel = Rombel::with(['schoolClass', 'homeroomTeacher', 'academicYear'])
             ->findOrFail($request->rombel_id);
 
-        $students = \App\Models\StudentAcademicCohort::where('rombel_id', $rombel->id)
+        $students = StudentAcademicCohort::where('rombel_id', $rombel->id)
             ->where('academic_year_id', $rombel->academic_year_id)
             ->with('student')
             ->orderBy('attendance_number')
             ->get()
-            ->map(fn($c) => [
+            ->map(fn ($c) => [
                 'attendance_number' => $c->attendance_number,
                 'name' => $c->student?->name ?? '-',
                 'gender' => $c->student?->gender ?? '-',

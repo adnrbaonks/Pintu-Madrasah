@@ -3,6 +3,11 @@
 return [
 
     /*
+    | Queue yang dipakai aplikasi: default, emis, webhooks.
+    | Jalankan satu worker untuk setiap queue (lihat docs/DEPLOYMENT.md).
+    */
+
+    /*
     |--------------------------------------------------------------------------
     | Default Queue Connection Name
     |--------------------------------------------------------------------------

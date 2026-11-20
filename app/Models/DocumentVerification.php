@@ -8,9 +8,11 @@ use Illuminate\Support\Str;
 class DocumentVerification extends Model
 {
     public const TYPE_BIODATA = 'biodata';
+
     public const TYPE_SURAT_KELUAR = 'surat_keluar';
 
     protected $keyType = 'string';
+
     public $incrementing = false;
 
     protected $fillable = [
@@ -39,7 +41,7 @@ class DocumentVerification extends Model
 
     public function verifyUrl(): string
     {
-        return rtrim(config('app.url'), '/') . '/v/' . $this->token;
+        return rtrim(config('app.url'), '/').'/v/'.$this->token;
     }
 
     /**
@@ -60,6 +62,7 @@ class DocumentVerification extends Model
                 'snapshot' => $snapshot,
                 'issued_by' => auth()->id(),
             ]);
+
             return $existing->fresh();
         }
 

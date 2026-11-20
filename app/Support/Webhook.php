@@ -3,6 +3,8 @@
 namespace App\Support;
 
 use App\Jobs\DispatchWebhookJob;
+use App\Models\Student;
+use App\Models\WebhookSubscription;
 
 /**
  * Webhook — pengirim event ke aplikasi satelit (SIPSMAD, PTSP, WA Gateway).
@@ -16,7 +18,7 @@ class Webhook
     {
         // Jangan banjiri antrean bila tak ada pelanggan event ini
         // (commit massal 700 siswa = 700 job sia-sia tanpa guard ini).
-        $hasSub = \App\Models\WebhookSubscription::where('is_active', true)
+        $hasSub = WebhookSubscription::where('is_active', true)
             ->where('event', $event)
             ->exists();
 
@@ -27,7 +29,7 @@ class Webhook
         DispatchWebhookJob::dispatch($event, $data)->onQueue('webhooks');
     }
 
-    public static function studentPayload(\App\Models\Student $student, array $extra = []): array
+    public static function studentPayload(Student $student, array $extra = []): array
     {
         return array_merge([
             'id' => $student->id,

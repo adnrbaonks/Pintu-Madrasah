@@ -15,18 +15,33 @@ class StudentGrade extends Model
     protected function casts(): array
     {
         return [
-            'nilai_p1'    => 'float',
-            'nilai_p2'    => 'float',
-            'nilai_sts'   => 'float',
-            'nilai_sas'   => 'float',
+            'nilai_p1' => 'float',
+            'nilai_p2' => 'float',
+            'nilai_sts' => 'float',
+            'nilai_sas' => 'float',
             'nilai_akhir' => 'float',
         ];
     }
 
-    public function student(): BelongsTo   { return $this->belongsTo(Student::class); }
-    public function subject(): BelongsTo   { return $this->belongsTo(Subject::class); }
-    public function rombel(): BelongsTo    { return $this->belongsTo(Rombel::class); }
-    public function academicYear(): BelongsTo { return $this->belongsTo(AcademicYear::class); }
+    public function student(): BelongsTo
+    {
+        return $this->belongsTo(Student::class);
+    }
+
+    public function subject(): BelongsTo
+    {
+        return $this->belongsTo(Subject::class);
+    }
+
+    public function rombel(): BelongsTo
+    {
+        return $this->belongsTo(Rombel::class);
+    }
+
+    public function academicYear(): BelongsTo
+    {
+        return $this->belongsTo(AcademicYear::class);
+    }
 
     /** Hitung predikat otomatis berdasarkan nilai akhir */
     public function hitungPredikat(): string
@@ -35,7 +50,7 @@ class StudentGrade extends Model
             $this->nilai_akhir >= 90 => 'A',
             $this->nilai_akhir >= 80 => 'B',
             $this->nilai_akhir >= 70 => 'C',
-            default                  => 'D',
+            default => 'D',
         };
     }
 }
