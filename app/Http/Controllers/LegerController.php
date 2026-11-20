@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\AcademicYear;
+use App\Models\GradingFormula;
 use App\Models\Rombel;
 use App\Models\StudentAcademicCohort;
 use App\Models\StudentGrade;
@@ -94,11 +95,18 @@ class LegerController extends Controller
             ];
         }
 
+        $formula = $activeYear ? GradingFormula::where('academic_year_id', $activeYear->id)->first() : null;
+        if (! $formula && $activeYear) {
+            $formula = GradingFormula::defaultFormula($activeYear->id);
+        }
+
         return Inertia::render('Leger/Index', [
             'rombels' => $rombels,
             'selectedRombelId' => $selectedRombelId,
             'selectedSemester' => $selectedSemester,
             'tahunAjaran' => $activeYear?->full_label ?? '—',
+            'academicYearId' => $activeYear?->id,
+            'formula' => $formula,
             'leger' => $leger,
         ]);
     }
@@ -218,7 +226,41 @@ class LegerController extends Controller
         return response()->json([
             'id' => $grade->id,
             'nilai_akhir' => $grade->fresh()->nilai_akhir,
-            'predikat' => $grade->hitungPredikat(),
+            'predikat' => $grade->fresh()->predikat,
         ]);
+    }
+
+    /**
+     * Simpan/update formula penilaian per tahun ajaran.
+     */
+    public function updateFormula(Request $request)
+    {
+        $data = $request->validate([
+            'academic_year_id' => 'required|exists:academic_years,id',
+            'weight_p1' => 'required|numeric|min:0|max:100',
+            'weight_p2' => 'required|numeric|min:0|max:100',
+            'weight_sts' => 'required|numeric|min:0|max:100',
+            'weight_sas' => 'required|numeric|min:0|max:100',
+            'threshold_a' => 'required|numeric|min:0|max:100',
+            'threshold_b' => 'required|numeric|min:0|max:100',
+            'threshold_c' => 'required|numeric|min:0|max:100',
+            'notes' => 'nullable|string',
+        ]);
+
+        $totalWeight = $data['weight_p1'] + $data['weight_p2'] + $data['weight_sts'] + $data['weight_sas'];
+        if (abs($totalWeight - 100.0) > 0.01) {
+            return back()->with('error', 'Total bobot nilai harus sama dengan 100%. (Saat ini: '.$totalWeight.'%)');
+        }
+
+        if ($data['threshold_a'] <= $data['threshold_b'] || $data['threshold_b'] <= $data['threshold_c']) {
+            return back()->with('error', 'Ambang batas predikat harus berurutan (A > B > C).');
+        }
+
+        GradingFormula::updateOrCreate(
+            ['academic_year_id' => $data['academic_year_id']],
+            $data
+        );
+
+        return back()->with('success', 'Formula penilaian berhasil disimpan.');
     }
 }

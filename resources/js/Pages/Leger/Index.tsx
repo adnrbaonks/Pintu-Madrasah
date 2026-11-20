@@ -1,7 +1,7 @@
 import { Head, router } from '@inertiajs/react';
 import AppLayout from '@/Layouts/AppLayout';
 import { useState, useRef, useCallback } from 'react';
-import { FileText, ChevronDown, Save, Check, X as XIcon } from 'lucide-react';
+import { FileText, ChevronDown, Save, Check, X as XIcon, Settings as SettingsIcon } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -45,11 +45,26 @@ interface LegerData {
     semester: string;
 }
 
+interface GradingFormulaData {
+    id?: string;
+    academic_year_id?: string;
+    weight_p1: number;
+    weight_p2: number;
+    weight_sts: number;
+    weight_sas: number;
+    threshold_a: number;
+    threshold_b: number;
+    threshold_c: number;
+    notes?: string | null;
+}
+
 interface Props {
     rombels: { value: string; label: string }[];
     selectedRombelId?: string;
     selectedSemester: string;
     tahunAjaran: string;
+    academicYearId?: string;
+    formula?: GradingFormulaData | null;
     leger: LegerData | null;
     flash: { success?: string; error?: string };
 }
@@ -113,8 +128,41 @@ function PredikatBadge({ predikat }: { predikat?: string | null }) {
     return <Badge variant="outline" className={cn('text-xs px-1.5', colors[predikat] ?? '')}>{predikat}</Badge>;
 }
 
-export default function LegerIndex({ rombels, selectedRombelId, selectedSemester, tahunAjaran, leger, flash }: Props) {
+export default function LegerIndex({ rombels, selectedRombelId, selectedSemester, tahunAjaran, academicYearId, formula, leger, flash }: Props) {
     const [saving, setSaving] = useState<string | null>(null); // "studentId_subjectId"
+    const [formulaOpen, setFormulaOpen] = useState(false);
+    const [formulaData, setFormulaData] = useState({
+        weight_p1: formula?.weight_p1 ?? 20,
+        weight_p2: formula?.weight_p2 ?? 20,
+        weight_sts: formula?.weight_sts ?? 30,
+        weight_sas: formula?.weight_sas ?? 30,
+        threshold_a: formula?.threshold_a ?? 90,
+        threshold_b: formula?.threshold_b ?? 80,
+        threshold_c: formula?.threshold_c ?? 70,
+    });
+    const [savingFormula, setSavingFormula] = useState(false);
+
+    function submitFormula(e: React.FormEvent) {
+        e.preventDefault();
+        const total = Number(formulaData.weight_p1) + Number(formulaData.weight_p2) + Number(formulaData.weight_sts) + Number(formulaData.weight_sas);
+        if (Math.abs(total - 100) > 0.01) {
+            toast.error(`Total bobot harus 100%. Saat ini: ${total}%`);
+            return;
+        }
+        setSavingFormula(true);
+        router.post('/kelas/leger/formula', {
+            academic_year_id: academicYearId,
+            ...formulaData,
+        }, {
+            preserveScroll: true,
+            onSuccess: () => {
+                toast.success('Formula penilaian berhasil disimpan.');
+                setFormulaOpen(false);
+            },
+            onError: () => toast.error('Gagal menyimpan formula.'),
+            onFinish: () => setSavingFormula(false),
+        });
+    }
 
     if (flash?.success) toast.success(flash.success);
     if (flash?.error)   toast.error(flash.error);
@@ -177,14 +225,132 @@ export default function LegerIndex({ rombels, selectedRombelId, selectedSemester
             <Head title="Leger Nilai" />
 
             {/* Header */}
-            <div className="mb-6">
-                <div className="flex items-center gap-2 text-muted-foreground text-sm mb-1">
-                    <FileText className="w-4 h-4" />
-                    <span>Administrasi Kelas</span>
+            <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+                <div>
+                    <div className="flex items-center gap-2 text-muted-foreground text-sm mb-1">
+                        <FileText className="w-4 h-4" />
+                        <span>Administrasi Kelas</span>
+                    </div>
+                    <h1 className="text-2xl font-bold">Leger Nilai</h1>
+                    <p className="text-sm text-muted-foreground mt-0.5">Rekap nilai siswa per kelas — Tahun Ajaran {tahunAjaran}</p>
                 </div>
-                <h1 className="text-2xl font-bold">Leger Nilai</h1>
-                <p className="text-sm text-muted-foreground mt-0.5">Rekap nilai siswa per kelas — Tahun Ajaran {tahunAjaran}</p>
+                {academicYearId && (
+                    <Button variant="outline" size="sm" onClick={() => setFormulaOpen(!formulaOpen)} className="gap-2">
+                        <SettingsIcon className="w-4 h-4" />
+                        Formula Penilaian ({formula?.weight_p1 ?? 20}:{formula?.weight_p2 ?? 20}:{formula?.weight_sts ?? 30}:{formula?.weight_sas ?? 30})
+                    </Button>
+                )}
             </div>
+
+            {/* Formula Setting Panel */}
+            {formulaOpen && (
+                <Card className="mb-5 border-primary/30 bg-primary/5">
+                    <CardHeader className="pb-3">
+                        <CardTitle className="text-base flex items-center justify-between">
+                            <span>Atur Formula Penilaian (Tahun Ajaran {tahunAjaran})</span>
+                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => setFormulaOpen(false)}>
+                                <XIcon className="w-4 h-4" />
+                            </Button>
+                        </CardTitle>
+                        <CardDescription className="text-xs">
+                            Bobot komponen formatif dan sumatif serta ambang batas predikat untuk perhitungan nilai akhir.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        <form onSubmit={submitFormula} className="space-y-4">
+                            <div>
+                                <h4 className="text-xs font-semibold mb-2">Bobot Nilai (Total Wajib 100%)</h4>
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                                    <div className="space-y-1">
+                                        <Label className="text-xs">Formatif 1 (P1) %</Label>
+                                        <input
+                                            type="number" min="0" max="100" step="1"
+                                            value={formulaData.weight_p1}
+                                            onChange={e => setFormulaData({ ...formulaData, weight_p1: Number(e.target.value) })}
+                                            className="w-full text-sm border rounded px-2.5 py-1.5 bg-background"
+                                            required
+                                        />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label className="text-xs">Formatif 2 (P2) %</Label>
+                                        <input
+                                            type="number" min="0" max="100" step="1"
+                                            value={formulaData.weight_p2}
+                                            onChange={e => setFormulaData({ ...formulaData, weight_p2: Number(e.target.value) })}
+                                            className="w-full text-sm border rounded px-2.5 py-1.5 bg-background"
+                                            required
+                                        />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label className="text-xs">STS (Tengah Sem.) %</Label>
+                                        <input
+                                            type="number" min="0" max="100" step="1"
+                                            value={formulaData.weight_sts}
+                                            onChange={e => setFormulaData({ ...formulaData, weight_sts: Number(e.target.value) })}
+                                            className="w-full text-sm border rounded px-2.5 py-1.5 bg-background"
+                                            required
+                                        />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label className="text-xs">SAS (Akhir Sem.) %</Label>
+                                        <input
+                                            type="number" min="0" max="100" step="1"
+                                            value={formulaData.weight_sas}
+                                            onChange={e => setFormulaData({ ...formulaData, weight_sas: Number(e.target.value) })}
+                                            className="w-full text-sm border rounded px-2.5 py-1.5 bg-background"
+                                            required
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <h4 className="text-xs font-semibold mb-2">Ambang Batas Predikat</h4>
+                                <div className="grid grid-cols-3 gap-3">
+                                    <div className="space-y-1">
+                                        <Label className="text-xs">Batas Nilai A (≥)</Label>
+                                        <input
+                                            type="number" min="0" max="100" step="1"
+                                            value={formulaData.threshold_a}
+                                            onChange={e => setFormulaData({ ...formulaData, threshold_a: Number(e.target.value) })}
+                                            className="w-full text-sm border rounded px-2.5 py-1.5 bg-background"
+                                            required
+                                        />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label className="text-xs">Batas Nilai B (≥)</Label>
+                                        <input
+                                            type="number" min="0" max="100" step="1"
+                                            value={formulaData.threshold_b}
+                                            onChange={e => setFormulaData({ ...formulaData, threshold_b: Number(e.target.value) })}
+                                            className="w-full text-sm border rounded px-2.5 py-1.5 bg-background"
+                                            required
+                                        />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label className="text-xs">Batas Nilai C (≥)</Label>
+                                        <input
+                                            type="number" min="0" max="100" step="1"
+                                            value={formulaData.threshold_c}
+                                            onChange={e => setFormulaData({ ...formulaData, threshold_c: Number(e.target.value) })}
+                                            className="w-full text-sm border rounded px-2.5 py-1.5 bg-background"
+                                            required
+                                        />
+                                    </div>
+                                </div>
+                                <p className="text-[11px] text-muted-foreground mt-1">Nilai di bawah batas C otomatis mendapat predikat D.</p>
+                            </div>
+
+                            <div className="flex justify-end gap-2 pt-2">
+                                <Button type="button" variant="outline" size="sm" onClick={() => setFormulaOpen(false)}>Batal</Button>
+                                <Button type="submit" size="sm" disabled={savingFormula}>
+                                    {savingFormula ? 'Menyimpan...' : 'Simpan Formula'}
+                                </Button>
+                            </div>
+                        </form>
+                    </CardContent>
+                </Card>
+            )}
 
             {/* Filter Bar */}
             <Card className="mb-5">

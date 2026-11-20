@@ -221,6 +221,7 @@ Route::middleware('auth')->group(function () {
         Route::get('/kelas/leger', [LegerController::class, 'index'])->name('leger.index');
         Route::get('/kelas/leger/export', [LegerController::class, 'export'])->name('leger.export');
         Route::post('/kelas/leger/grade', [LegerController::class, 'upsertGrade'])->name('leger.grade.upsert');
+        Route::post('/kelas/leger/formula', [LegerController::class, 'updateFormula'])->name('leger.formula.update');
 
         // Rombel
         Route::prefix('rombel')->name('rombel.')->group(function () {
