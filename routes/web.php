@@ -21,6 +21,7 @@ use App\Http\Controllers\PromotionController;
 use App\Http\Controllers\RombelController;
 use App\Http\Controllers\SchoolClassController;
 use App\Http\Controllers\SettingController;
+use App\Http\Controllers\StaffController;
 use App\Http\Controllers\StatistikController;
 use App\Http\Controllers\StudentController;
 use App\Http\Controllers\StudentDocumentController;
@@ -194,14 +195,14 @@ Route::middleware('auth')->group(function () {
             Route::put('/registrations/{registration}/status', [PpdbController::class, 'updateStatus'])->name('update-status');
         });
 
-        // GTK
+        // GTK (alias ke staff controller)
         Route::prefix('gtk')->name('gtk.')->group(function () {
             Route::get('/', [GtkController::class, 'index'])->name('index');
             Route::get('/tpg', [StatistikController::class, 'tpg'])->name('tpg');
             Route::put('/{staff}/tpg-status', [StatistikController::class, 'updateTpgStatus'])->name('tpg.update');
-            Route::get('/{staff}', [GtkController::class, 'show'])->name('show');
-            Route::get('/{staff}/edit', [GtkController::class, 'edit'])->name('edit');
-            Route::put('/{staff}', [GtkController::class, 'update'])->name('update');
+            Route::get('/{staff}', [StaffController::class, 'show'])->name('show');
+            Route::get('/{staff}/edit', [StaffController::class, 'edit'])->name('edit');
+            Route::put('/{staff}', [StaffController::class, 'update'])->name('update');
         });
 
         // Statistik

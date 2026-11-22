@@ -1,0 +1,86 @@
+<?php
+
+namespace App\Services;
+
+use App\Models\ActivityLog;
+use App\Models\Staff;
+use Illuminate\Support\Facades\DB;
+
+class StaffService
+{
+    public function __construct(
+        private DataOwnershipService $dataOwnershipService,
+    ) {}
+
+    public function update(
+        Staff $staff,
+        array $attributes,
+        ?string $actorUserId = null
+    ): bool {
+        if (empty($attributes)) {
+            return false;
+        }
+
+        return DB::transaction(function () use ($staff, $attributes, $actorUserId): bool {
+            $filtered = $this->dataOwnershipService->filterAllowedAttributes('staff', $attributes);
+
+            $oldValues = $this->captureSnapshot($staff);
+            $staff->update($filtered);
+            $this->logChange($staff, $filtered, $oldValues, $actorUserId);
+
+            return true;
+        });
+    }
+
+    /**
+     * @return array<string, mixed|null>
+     */
+    private function captureSnapshot(Staff $staff): array
+    {
+        return [
+            'full_name_with_titles' => $staff->full_name_with_titles,
+            'first_title' => $staff->first_title,
+            'last_title' => $staff->last_title,
+            'phone' => $staff->phone,
+            'email' => $staff->email,
+            'employment_status' => $staff->employment_status,
+            'functional_position' => $staff->functional_position,
+            'highest_education' => $staff->highest_education,
+            'university_name' => $staff->university_name,
+            'study_program' => $staff->study_program,
+            'graduation_year' => $staff->graduation_year,
+            'is_active' => $staff->is_active,
+        ];
+    }
+
+    private function logChange(
+        Staff $staff,
+        array $newValues,
+        array $oldValues,
+        ?string $actorUserId = null
+    ): void {
+        $before = [];
+        $after = [];
+
+        foreach ($newValues as $key => $newValue) {
+            $oldValue = $oldValues[$key] ?? null;
+            if ($oldValue !== $newValue) {
+                $before[$key] = $oldValue;
+                $after[$key] = $newValue;
+            }
+        }
+
+        if (! empty($before)) {
+            ActivityLog::create([
+                'user_id' => $actorUserId ?? auth()->id(),
+                'action' => 'updated',
+                'model_type' => Staff::class,
+                'model_id' => $staff->id,
+                'before_payload' => $before,
+                'after_payload' => $after,
+                'ip_address' => request()->ip(),
+                'user_agent' => request()->userAgent(),
+            ]);
+        }
+    }
+}

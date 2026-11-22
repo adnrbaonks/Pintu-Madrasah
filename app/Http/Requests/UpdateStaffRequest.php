@@ -1,0 +1,46 @@
+<?php
+
+namespace App\Http\Requests;
+
+use Illuminate\Contracts\Validation\ValidationRule;
+use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
+
+class UpdateStaffRequest extends FormRequest
+{
+    /**
+     * Determine if the user is authorized to make this request.
+     */
+    public function authorize(): bool
+    {
+        return true;
+    }
+
+    /**
+     * Get the validation rules that apply to the request.
+     *
+     * @return array<string, ValidationRule|array<mixed>|string>
+     */
+    public function rules(): array
+    {
+        return [
+            'full_name_with_titles' => ['required', 'string', 'max:255'],
+            'first_title' => ['nullable', 'string', 'max:50'],
+            'last_title' => ['nullable', 'string', 'max:50'],
+            'phone' => ['nullable', 'string', 'max:30'],
+            'email' => ['nullable', 'email', 'max:255'],
+            'employment_status' => [
+                'required',
+                'string',
+                'max:50',
+                Rule::in(['PNS', 'PPPK', 'GTT', 'PTT', 'GTY', 'Honorer']),
+            ],
+            'functional_position' => ['nullable', 'string', 'max:100'],
+            'highest_education' => ['nullable', 'string', 'max:50'],
+            'university_name' => ['nullable', 'string', 'max:255'],
+            'study_program' => ['nullable', 'string', 'max:150'],
+            'graduation_year' => ['nullable', 'integer', 'min:1950', 'max:2099'],
+            'is_active' => ['boolean'],
+        ];
+    }
+}

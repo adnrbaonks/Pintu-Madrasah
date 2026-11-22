@@ -90,6 +90,14 @@ class StaffMasterCrudTest extends TestCase
         // Field terproteksi EMIS tidak terpengaruh sama sekali
         $this->assertSame('3201010101010001', $staff->nik);
         $this->assertSame('197501012000031001', $staff->nip);
+
+        // Verifikasi audit log tercatat di activity_logs
+        $this->assertDatabaseHas('activity_logs', [
+            'action' => 'updated',
+            'model_type' => Staff::class,
+            'model_id' => $staff->id,
+            'user_id' => $admin->id,
+        ]);
     }
 
     public function test_data_ownership_service_identifies_editable_and_readonly_fields(): void
