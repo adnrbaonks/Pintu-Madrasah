@@ -17,6 +17,7 @@ use App\Http\Controllers\PpdbController;
 use App\Http\Controllers\PrintController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\PromotionController;
+use App\Http\Controllers\RoleController;
 use App\Http\Controllers\RombelController;
 use App\Http\Controllers\SchoolClassController;
 use App\Http\Controllers\SettingController;
@@ -93,7 +94,10 @@ Route::middleware('auth')->group(function () {
         Route::post('/academic-years', [SettingController::class, 'storeAcademicYear'])->name('academic-years.store');
         Route::post('/academic-years/{academicYear}/set-active', [SettingController::class, 'setActiveAcademicYear'])->name('academic-years.set-active');
         Route::post('/academic-years/{academicYear}/toggle-lock', [SettingController::class, 'toggleLockAcademicYear'])->name('academic-years.toggle-lock');
+        Route::get('/roles', [RoleController::class, 'index'])->name('roles.index');
+        Route::put('/roles/{role}', [RoleController::class, 'update'])->name('roles.update');
     });
+    Route::middleware('checkrole:admin,kepala_madrasah,kaur_tu,operator')->get('/pengaturan/kamus-data', [SettingController::class, 'dataDictionary'])->name('settings.data-dictionary');
 
     // ── API Clients (Gateway Keys) — admin only ───────────────────
     Route::middleware('checkrole:admin')->prefix('api-clients')->name('api-clients.')->group(function () {

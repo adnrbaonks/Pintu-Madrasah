@@ -162,10 +162,12 @@ function buildNavItems(role: string) {
         {
             label: 'Sistem',
             icon: Shield,
-            roles: ['admin', 'kepala_madrasah'],
+            roles: ['admin', 'kepala_madrasah', 'kaur_tu', 'operator'],
             children: [
                 { label: 'Pengguna & Akses', href: '/users', roles: ['admin'] },
-                { label: 'Activity Logs', href: '/audit-logs' },
+                { label: 'Matriks Role & Izin', href: '/pengaturan/roles', roles: ['admin'] },
+                { label: 'Kamus Kepemilikan Data', href: '/pengaturan/kamus-data', roles: ['admin', 'kepala_madrasah', 'kaur_tu', 'operator'] },
+                { label: 'Activity Logs', href: '/audit-logs', roles: ['admin', 'kepala_madrasah'] },
                 { label: 'Pengaturan', href: '/pengaturan', roles: ['admin'] },
             ],
         },

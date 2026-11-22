@@ -102,4 +102,11 @@ class SettingController extends Controller
 
         return response()->json(['success' => true, 'message' => 'Token emisSSO berhasil disimpan.']);
     }
+
+    public function dataDictionary()
+    {
+        return Inertia::render('Settings/DataDictionary', [
+            'dictionary' => config('data_ownership', []),
+        ]);
+    }
 }
