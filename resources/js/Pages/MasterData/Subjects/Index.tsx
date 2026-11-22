@@ -1,0 +1,27 @@
+import { Head, router, useForm } from '@inertiajs/react';
+import { useState } from 'react';
+import AppLayout from '@/Layouts/AppLayout';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
+import { Plus, Pencil, Trash2 } from 'lucide-react';
+
+interface Subject { id: number; code: string; name: string; type: string; grade_level: number; kkm: number; is_active: boolean; order: number; }
+interface FormData { code: string; name: string; type: string; grade_level: string; kkm: string; is_active: boolean; order: string; }
+const empty: FormData = { code: '', name: '', type: 'umum', grade_level: '7', kkm: '70', is_active: true, order: '0' };
+
+export default function Index({ subjects }: { subjects: Subject[] }) {
+    const [editing, setEditing] = useState<Subject | null>(null);
+    const { data, setData, post, put, processing, errors, reset } = useForm<FormData>(empty);
+    const submit = (event: React.FormEvent) => {
+        event.preventDefault();
+        const options = { preserveScroll: true, onSuccess: () => { setEditing(null); reset(); } };
+        if (editing) { put(`/master/subjects/${editing.id}`, options); } else { post('/master/subjects', options); }
+    };
+    const edit = (subject: Subject) => { setEditing(subject); setData({ code: subject.code, name: subject.name, type: subject.type, grade_level: String(subject.grade_level), kkm: String(subject.kkm), is_active: subject.is_active, order: String(subject.order) }); };
+    const cancel = () => { setEditing(null); reset(); };
+    const remove = (subject: Subject) => { if (confirm(`Hapus mata pelajaran ${subject.name}?`)) { router.delete(`/master/subjects/${subject.id}`, { preserveScroll: true }); } };
+    return <AppLayout title="Master Mata Pelajaran"><Head title="Master Mata Pelajaran" /><div className="space-y-6"><div><h1 className="text-2xl font-bold">Master Mata Pelajaran</h1><p className="text-sm text-slate-500">Kelola mata pelajaran yang dipakai pada leger nilai.</p></div><div className="grid gap-6 lg:grid-cols-3"><Card><CardHeader><CardTitle>{editing ? 'Edit Mata Pelajaran' : 'Tambah Mata Pelajaran'}</CardTitle></CardHeader><CardContent><form onSubmit={submit} className="space-y-4"><div><Label>Kode</Label><Input value={data.code} onChange={e => setData('code', e.target.value)} required />{errors.code && <p className="text-xs text-red-600">{errors.code}</p>}</div><div><Label>Nama</Label><Input value={data.name} onChange={e => setData('name', e.target.value)} required /></div><div className="grid grid-cols-2 gap-3"><div><Label>Jenis</Label><select className="h-10 w-full rounded-md border px-3" value={data.type} onChange={e => setData('type', e.target.value)}><option value="umum">Umum</option><option value="agama">Agama</option><option value="mulok">Mulok</option></select></div><div><Label>Tingkat</Label><select className="h-10 w-full rounded-md border px-3" value={data.grade_level} onChange={e => setData('grade_level', e.target.value)}><option value="7">VII</option><option value="8">VIII</option><option value="9">IX</option></select></div></div><div className="grid grid-cols-2 gap-3"><div><Label>KKM</Label><Input type="number" min="0" max="100" value={data.kkm} onChange={e => setData('kkm', e.target.value)} /></div><div><Label>Urutan</Label><Input type="number" min="0" value={data.order} onChange={e => setData('order', e.target.value)} /></div></div><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={data.is_active} onChange={e => setData('is_active', e.target.checked)} /> Aktif</label><div className="flex gap-2"><Button disabled={processing} type="submit"><Plus className="mr-1 w-4 h-4" />{editing ? 'Simpan' : 'Tambah'}</Button>{editing && <Button type="button" variant="outline" onClick={cancel}>Batal</Button>}</div></form></CardContent></Card><Card className="lg:col-span-2"><CardHeader><CardTitle>Daftar Mata Pelajaran</CardTitle></CardHeader><CardContent className="p-0"><div className="overflow-x-auto"><table className="w-full text-sm"><thead className="border-y bg-slate-50"><tr><th className="p-3 text-left">Kode</th><th className="p-3 text-left">Mapel</th><th className="p-3">Tingkat</th><th className="p-3">KKM</th><th className="p-3">Status</th><th className="p-3 text-right">Aksi</th></tr></thead><tbody>{subjects.map(subject => <tr key={subject.id} className="border-b"><td className="p-3 font-mono">{subject.code}</td><td className="p-3"><p className="font-medium">{subject.name}</p><p className="text-xs text-slate-500 capitalize">{subject.type} · Urutan {subject.order}</p></td><td className="p-3 text-center">{subject.grade_level}</td><td className="p-3 text-center">{subject.kkm}</td><td className="p-3 text-center"><Badge variant={subject.is_active ? 'default' : 'secondary'}>{subject.is_active ? 'Aktif' : 'Nonaktif'}</Badge></td><td className="p-3"><div className="flex justify-end gap-1"><Button variant="ghost" size="icon" onClick={() => edit(subject)}><Pencil className="w-4 h-4" /></Button><Button variant="ghost" size="icon" onClick={() => remove(subject)}><Trash2 className="w-4 h-4 text-red-600" /></Button></div></td></tr>)}{subjects.length === 0 && <tr><td colSpan={6} className="p-8 text-center text-slate-500">Belum ada mata pelajaran.</td></tr>}</tbody></table></div></CardContent></Card></div></div></AppLayout>;
+}

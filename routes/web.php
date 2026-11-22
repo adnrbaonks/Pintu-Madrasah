@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\AcademicYearController;
 use App\Http\Controllers\Api\SearchController;
 use App\Http\Controllers\ApiClientController;
 use App\Http\Controllers\ArchiveController;
@@ -18,10 +19,12 @@ use App\Http\Controllers\PrintController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\PromotionController;
 use App\Http\Controllers\RombelController;
+use App\Http\Controllers\SchoolClassController;
 use App\Http\Controllers\SettingController;
 use App\Http\Controllers\StatistikController;
 use App\Http\Controllers\StudentController;
 use App\Http\Controllers\StudentDocumentController;
+use App\Http\Controllers\SubjectController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\VerifyController;
 use App\Http\Controllers\WebhookSubscriptionController;
@@ -226,6 +229,26 @@ Route::middleware('auth')->group(function () {
         Route::get('/kelas/leger/export', [LegerController::class, 'export'])->name('leger.export');
         Route::post('/kelas/leger/grade', [LegerController::class, 'upsertGrade'])->name('leger.grade.upsert');
         Route::post('/kelas/leger/formula', [LegerController::class, 'updateFormula'])->name('leger.formula.update');
+
+        // Master Data Akademik
+        Route::prefix('master')->name('master.')->group(function () {
+            Route::get('/subjects', [SubjectController::class, 'index'])->name('subjects.index');
+            Route::post('/subjects', [SubjectController::class, 'store'])->name('subjects.store');
+            Route::put('/subjects/{subject}', [SubjectController::class, 'update'])->name('subjects.update');
+            Route::delete('/subjects/{subject}', [SubjectController::class, 'destroy'])->name('subjects.destroy');
+
+            Route::get('/classes', [SchoolClassController::class, 'index'])->name('classes.index');
+            Route::post('/classes', [SchoolClassController::class, 'store'])->name('classes.store');
+            Route::put('/classes/{schoolClass}', [SchoolClassController::class, 'update'])->name('classes.update');
+            Route::delete('/classes/{schoolClass}', [SchoolClassController::class, 'destroy'])->name('classes.destroy');
+
+            Route::get('/academic-years', [AcademicYearController::class, 'index'])->name('academic-years.index');
+            Route::post('/academic-years', [AcademicYearController::class, 'store'])->name('academic-years.store');
+            Route::put('/academic-years/{academicYear}', [AcademicYearController::class, 'update'])->name('academic-years.update');
+            Route::post('/academic-years/{academicYear}/set-active', [AcademicYearController::class, 'setActive'])->name('academic-years.set-active');
+            Route::post('/academic-years/{academicYear}/toggle-lock', [AcademicYearController::class, 'toggleLock'])->name('academic-years.toggle-lock');
+            Route::delete('/academic-years/{academicYear}', [AcademicYearController::class, 'destroy'])->name('academic-years.destroy');
+        });
 
         // Rombel
         Route::prefix('rombel')->name('rombel.')->group(function () {

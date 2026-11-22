@@ -31,7 +31,7 @@ interface SharedProps {
             id: string;
             name: string;
             username: string;
-            role: 'admin' | 'staf' | 'guru';
+            role: 'admin' | 'kepala_madrasah' | 'kaur_tu' | 'staf' | 'operator' | 'guru' | 'pegawai';
         } | null;
     };
     flash: {
@@ -112,6 +112,17 @@ function buildNavItems(role: string) {
             children: [
                 { label: 'Master GTK', href: '/gtk' },
                 { label: 'Validasi TPG', href: '/gtk/tpg', roles: ['admin', 'kepala_madrasah', 'operator', 'kaur_tu'] },
+            ],
+        },
+        // ── Master Data ──────────────────────────────────────────
+        {
+            label: 'Master Data',
+            icon: BookOpen,
+            roles: ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'],
+            children: [
+                { label: 'Mata Pelajaran', href: '/master/subjects' },
+                { label: 'Kelas', href: '/master/classes' },
+                { label: 'Tahun Ajaran', href: '/master/academic-years' },
             ],
         },
         // ── PPDB ─────────────────────────────────────────────────
