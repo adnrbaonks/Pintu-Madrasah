@@ -10,7 +10,6 @@ use App\Http\Controllers\BkController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\EmisGtkController;
 use App\Http\Controllers\FormCetakController;
-use App\Http\Controllers\GtkController;
 use App\Http\Controllers\LegerController;
 use App\Http\Controllers\LetterController;
 use App\Http\Controllers\MutationController;
@@ -195,14 +194,26 @@ Route::middleware('auth')->group(function () {
             Route::put('/registrations/{registration}/status', [PpdbController::class, 'updateStatus'])->name('update-status');
         });
 
-        // GTK (alias ke staff controller)
+        // GTK (StaffController kanonik)
         Route::prefix('gtk')->name('gtk.')->group(function () {
-            Route::get('/', [GtkController::class, 'index'])->name('index');
+            Route::get('/', [StaffController::class, 'index'])->name('index');
             Route::get('/tpg', [StatistikController::class, 'tpg'])->name('tpg');
-            Route::put('/{staff}/tpg-status', [StatistikController::class, 'updateTpgStatus'])->name('tpg.update');
+            Route::put('/{staff}/tpg-status', [StatistikController::class, 'updateTpgStatus'])
+                ->middleware('checkrole:admin,kepala_madrasah,kaur_tu,operator')
+                ->name('tpg.update');
             Route::get('/{staff}', [StaffController::class, 'show'])->name('show');
-            Route::get('/{staff}/edit', [StaffController::class, 'edit'])->name('edit');
-            Route::put('/{staff}', [StaffController::class, 'update'])->name('update');
+            Route::get('/{staff}/edit', [StaffController::class, 'edit'])
+                ->middleware('checkrole:admin,kaur_tu,staf,operator')
+                ->name('edit');
+            Route::put('/{staff}', [StaffController::class, 'update'])
+                ->middleware('checkrole:admin,kaur_tu,staf,operator')
+                ->name('update');
+            Route::post('/{staff}/documents', [StaffController::class, 'uploadDocument'])
+                ->middleware('checkrole:admin,kaur_tu,staf,operator')
+                ->name('documents.upload');
+            Route::delete('/{staff}/documents/{document}', [StaffController::class, 'destroyDocument'])
+                ->middleware('checkrole:admin,kaur_tu,staf,operator')
+                ->name('documents.destroy');
         });
 
         // Statistik

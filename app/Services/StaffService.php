@@ -3,7 +3,9 @@
 namespace App\Services;
 
 use App\Models\ActivityLog;
+use App\Models\OutboxEvent;
 use App\Models\Staff;
+use App\Support\Webhook;
 use Illuminate\Support\Facades\DB;
 
 class StaffService
@@ -26,7 +28,26 @@ class StaffService
 
             $oldValues = $this->captureSnapshot($staff);
             $staff->update($filtered);
-            $this->logChange($staff, $filtered, $oldValues, $actorUserId);
+            $changedFields = $this->logChange($staff, $filtered, $oldValues, $actorUserId);
+
+            if (! empty($changedFields)) {
+                $payload = Webhook::staffPayload($staff, [
+                    'changed_fields' => $changedFields,
+                ]);
+
+                OutboxEvent::create([
+                    'aggregate_type' => Staff::class,
+                    'aggregate_id' => $staff->id,
+                    'event_type' => 'staff.updated',
+                    'payload' => $payload,
+                    'status' => 'pending',
+                    'available_at' => now(),
+                ]);
+
+                DB::afterCommit(function () use ($payload): void {
+                    Webhook::fire('staff.updated', $payload);
+                });
+            }
 
             return true;
         });
@@ -53,12 +74,15 @@ class StaffService
         ];
     }
 
+    /**
+     * @return array<int, string>
+     */
     private function logChange(
         Staff $staff,
         array $newValues,
         array $oldValues,
         ?string $actorUserId = null
-    ): void {
+    ): array {
         $before = [];
         $after = [];
 
@@ -82,5 +106,7 @@ class StaffService
                 'user_agent' => request()->userAgent(),
             ]);
         }
+
+        return array_keys($before);
     }
 }

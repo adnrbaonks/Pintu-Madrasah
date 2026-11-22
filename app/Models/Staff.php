@@ -54,6 +54,11 @@ class Staff extends Model
         return $this->hasMany(Rombel::class, 'homeroom_teacher_id');
     }
 
+    public function documents()
+    {
+        return $this->hasMany(StaffDocument::class);
+    }
+
     // ── Computed Attributes ───────────────────────────────────────────
 
     public function getDisplayNameAttribute(): string

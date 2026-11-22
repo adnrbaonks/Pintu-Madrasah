@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use App\Jobs\DispatchWebhookJob;
+use App\Models\Staff;
 use App\Models\Student;
 use App\Models\WebhookSubscription;
 
@@ -40,6 +41,19 @@ class Webhook
             'status' => $student->status,
             'grade_level' => $student->grade_level,
             'rombel' => $student->currentCohort?->rombel?->name,
+        ], $extra);
+    }
+
+    public static function staffPayload(Staff $staff, array $extra = []): array
+    {
+        return array_merge([
+            'id' => $staff->id,
+            'nip' => $staff->nip,
+            'nuptk' => $staff->nuptk,
+            'name' => $staff->full_name_with_titles,
+            'employment_status' => $staff->employment_status,
+            'functional_position' => $staff->functional_position,
+            'is_active' => $staff->is_active,
         ], $extra);
     }
 }

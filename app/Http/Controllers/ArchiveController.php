@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Jobs\UploadToGoogleDriveJob;
 use App\Models\PpdbDocument;
+use App\Models\StaffDocument;
 use App\Models\Student;
 use App\Models\StudentDocument;
 use App\Models\StudentMutation;
@@ -43,6 +44,10 @@ class ArchiveController extends Controller
             $model = StudentDocument::findOrFail($id);
             $model->update(['status' => 'pending', 'upload_retries' => 0]);
             UploadToGoogleDriveJob::dispatch('student_document', $model->id);
+        } elseif ($type === 'staff_document') {
+            $model = StaffDocument::findOrFail($id);
+            $model->update(['status' => 'pending', 'upload_retries' => 0]);
+            UploadToGoogleDriveJob::dispatch('staff_document', $model->id);
         } elseif ($type === 'photo') {
             $model = Student::findOrFail($id);
             $model->update(['photo_upload_status' => 'pending', 'photo_upload_retries' => 0]);

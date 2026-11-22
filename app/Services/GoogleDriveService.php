@@ -197,6 +197,15 @@ class GoogleDriveService
                 $model->student?->currentCohort?->rombel?->name ?? 'TANPA_ROMBEL',
                 $studentName($model->student),
             ),
+            'staff_document' => sprintf(
+                'ARSIP_DIGITAL_MADRASAH/GTK/%s',
+                substr(
+                    (($model->staff?->nip ?: $model->staff?->nuptk ?: $model->staff?->nik) ?? 'NOID').'_'.
+                    preg_replace('/\s+/', '_', trim(preg_replace('/[^\w\s]/u', '', (string) ($model->staff?->full_name_with_titles ?? 'GTK')))),
+                    0,
+                    80
+                ),
+            ),
             'photo' => sprintf(
                 'ARSIP_DIGITAL_MADRASAH/SISWA/%s/FOTO/%s',
                 $year,

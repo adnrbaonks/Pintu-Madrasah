@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Models\PpdbDocument;
+use App\Models\StaffDocument;
 use App\Models\Student;
 use App\Models\StudentDocument;
 use App\Models\StudentMutation;
@@ -97,6 +98,7 @@ class UploadToGoogleDriveJob implements ShouldQueue
             'ppdb' => PpdbDocument::find($this->modelId),
             'mutation' => StudentMutation::find($this->modelId),
             'student_document' => StudentDocument::find($this->modelId),
+            'staff_document' => StaffDocument::find($this->modelId),
             'photo' => Student::find($this->modelId),
             default => null,
         };
@@ -108,6 +110,7 @@ class UploadToGoogleDriveJob implements ShouldQueue
             'ppdb' => $model->file_path,
             'mutation' => $model->document_path,
             'student_document' => $this->findStudentDocumentPath($model),
+            'staff_document' => $model->file_path,
             'photo' => $model->profile_photo,
             default => null,
         };
@@ -128,7 +131,7 @@ class UploadToGoogleDriveJob implements ShouldQueue
     protected function updateStatus($model, string $status): void
     {
         match ($this->type) {
-            'ppdb', 'student_document' => $model->update(['status' => $status]),
+            'ppdb', 'student_document', 'staff_document' => $model->update(['status' => $status]),
             'mutation' => $model->update(['document_status' => $status]),
             'photo' => $model->update(['photo_upload_status' => $status]),
         };
@@ -137,7 +140,7 @@ class UploadToGoogleDriveJob implements ShouldQueue
     protected function incrementRetries($model): void
     {
         match ($this->type) {
-            'ppdb', 'student_document', 'mutation' => $model->increment('upload_retries'),
+            'ppdb', 'student_document', 'staff_document', 'mutation' => $model->increment('upload_retries'),
             'photo' => $model->increment('photo_upload_retries'),
         };
     }
@@ -145,7 +148,7 @@ class UploadToGoogleDriveJob implements ShouldQueue
     protected function updateSuccess($model, string $fileId, string $viewUrl): void
     {
         match ($this->type) {
-            'ppdb', 'student_document' => $model->update([
+            'ppdb', 'student_document', 'staff_document' => $model->update([
                 'gdrive_file_id' => $fileId,
                 'gdrive_view_url' => $viewUrl,
                 'status' => 'uploaded',

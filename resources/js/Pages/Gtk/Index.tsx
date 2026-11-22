@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Head, Link, router } from '@inertiajs/react';
+import { Head, Link, router, usePage } from '@inertiajs/react';
 import AppLayout from '@/Layouts/AppLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -29,6 +29,8 @@ interface PaginationProps {
 }
 
 export default function Index({ staff, filters }: { staff: PaginationProps, filters: any }) {
+    const { auth } = usePage<{ auth: { user?: { role: string } } }>().props;
+    const canEdit = ['admin', 'kaur_tu', 'staf', 'operator'].includes(auth?.user?.role || '');
     const [search, setSearch] = useState(filters.search || '');
 
     const handleSearch = (e: React.FormEvent) => {
@@ -119,11 +121,13 @@ export default function Index({ staff, filters }: { staff: PaginationProps, filt
                                                             Detail
                                                         </Button>
                                                     </Link>
-                                                    <Link href={`/gtk/${item.id}/edit`}>
-                                                        <Button variant="outline" size="sm" className="h-8 px-2">
-                                                            Edit
-                                                        </Button>
-                                                    </Link>
+                                                    {canEdit && (
+                                                        <Link href={`/gtk/${item.id}/edit`}>
+                                                            <Button variant="outline" size="sm" className="h-8 px-2">
+                                                                Edit
+                                                            </Button>
+                                                        </Link>
+                                                    )}
                                                 </div>
                                             </TableCell>
                                         </TableRow>
