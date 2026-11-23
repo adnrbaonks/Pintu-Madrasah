@@ -8,6 +8,7 @@ use App\Models\Archive;
 use App\Models\ArchiveCategory;
 use App\Models\OrganizationUnit;
 use App\Models\PpdbDocument;
+use App\Models\StaffChangeAttachment;
 use App\Models\StaffDocument;
 use App\Models\Student;
 use App\Models\StudentDocument;
@@ -297,10 +298,43 @@ class ArchiveController extends Controller
 
     /**
      * Show private files directly from storage (Legacy / PPDB / Mutasi / GTK Document endpoint).
+     * Menerapkan sanitasi nama file, validasi whitelist folder, dan otorisasi kepemilikan objek.
      */
-    public function show($type, $filename)
+    public function show(Request $request, $type, $filename)
     {
-        $path = "archives/{$type}/{$filename}";
+        $allowedTypes = ['student_document', 'staff_document', 'staff_change_attachment', 'mutation', 'ppdb', 'photo'];
+        if (! in_array($type, $allowedTypes, true)) {
+            abort(404, 'Tipe dokumen tidak valid.');
+        }
+
+        $decodedFilename = rawurldecode((string) $filename);
+        $cleanFilename = basename($decodedFilename);
+        if ($cleanFilename !== $decodedFilename || str_contains($decodedFilename, '..')) {
+            abort(400, 'Nama berkas tidak valid.');
+        }
+
+        $user = $request->user();
+        if (! $user) {
+            abort(403, 'Akses tidak diizinkan.');
+        }
+
+        $isPrivileged = in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'], true);
+        $isOwner = false;
+
+        if ($type === 'staff_document') {
+            $document = StaffDocument::find(pathinfo($cleanFilename, PATHINFO_FILENAME));
+            $isOwner = $document !== null && $user->staff_id !== null && $document->staff_id === $user->staff_id;
+        } elseif ($type === 'staff_change_attachment') {
+            $attachment = StaffChangeAttachment::with('changeRequest')->find(pathinfo($cleanFilename, PATHINFO_FILENAME));
+            $isOwner = $attachment?->changeRequest?->requester_user_id === $user->id;
+        }
+
+        // Otorisasi granular berdasarkan kepemilikan dokumen jika bukan staf/admin.
+        if (! $isPrivileged && ! $isOwner) {
+            abort(403, 'Anda tidak memiliki hak akses untuk membuka dokumen ini.');
+        }
+
+        $path = "archives/{$type}/{$cleanFilename}";
 
         if (! Storage::disk('local')->exists($path)) {
             abort(404, 'File not found or has been uploaded to Google Drive.');

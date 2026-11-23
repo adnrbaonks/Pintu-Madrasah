@@ -424,9 +424,11 @@ Route::middleware('auth')->group(function () {
             Route::get('/absen-harian', [PrintController::class, 'absenHarian'])->name('absen-harian');
         });
 
-        // ── Archives & Document Retry — admin & staf only ──────────
-        Route::get('/archives/{type}/{filename}', [ArchiveController::class, 'show'])->name('archives.show');
+        // ── Document Retry — role-gated ─────────────────────────────
         Route::post('/documents/{type}/{id}/retry', [ArchiveController::class, 'retry'])->name('documents.retry');
 
     });
+
+    // Private document access uses object-level authorization in the controller.
+    Route::get('/archives/{type}/{filename}', [ArchiveController::class, 'show'])->name('archives.show');
 });
