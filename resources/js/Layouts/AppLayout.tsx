@@ -108,10 +108,14 @@ function buildNavItems(role: string) {
         {
             label: 'GTK',
             icon: Users,
-            roles: ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'],
+            roles: ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator', 'guru', 'pegawai'],
             children: [
-                { label: 'Master GTK', href: '/gtk' },
-                { label: 'Struktur & Jabatan', href: '/organisasi' },
+                { label: 'Layanan Mandiri GTK', href: '/profil-gtk' },
+                { label: 'Pengajuan Data Saya', href: '/profil-gtk/pengajuan' },
+                { label: 'Master GTK', href: '/gtk', roles: ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'] },
+                { label: 'Struktur & Jabatan', href: '/organisasi', roles: ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'] },
+                { label: 'Verifikasi TU (GTK)', href: '/verifikasi-gtk', roles: ['admin', 'kaur_tu', 'staf', 'operator'] },
+                { label: 'Persetujuan Kamad', href: '/persetujuan-gtk', roles: ['admin', 'kepala_madrasah'] },
                 { label: 'Validasi TPG', href: '/gtk/tpg', roles: ['admin', 'kepala_madrasah', 'operator', 'kaur_tu'] },
             ],
         },

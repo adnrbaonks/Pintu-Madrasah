@@ -64,6 +64,11 @@ class Staff extends Model
         return $this->hasMany(PositionAssignment::class);
     }
 
+    public function changeRequests()
+    {
+        return $this->hasMany(StaffChangeRequest::class);
+    }
+
     // ── Computed Attributes ───────────────────────────────────────────
 
     public function getDisplayNameAttribute(): string

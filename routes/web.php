@@ -22,7 +22,11 @@ use App\Http\Controllers\RoleController;
 use App\Http\Controllers\RombelController;
 use App\Http\Controllers\SchoolClassController;
 use App\Http\Controllers\SettingController;
+use App\Http\Controllers\StaffApprovalController;
+use App\Http\Controllers\StaffChangeRequestController;
 use App\Http\Controllers\StaffController;
+use App\Http\Controllers\StaffSelfController;
+use App\Http\Controllers\StaffVerificationController;
 use App\Http\Controllers\StatistikController;
 use App\Http\Controllers\StudentController;
 use App\Http\Controllers\StudentDocumentController;
@@ -73,6 +77,42 @@ Route::middleware('auth')->group(function () {
     Route::get('/profile', [ProfileController::class, 'show'])->name('profile.show');
     Route::put('/profile', [ProfileController::class, 'update'])->name('profile.update');
     Route::put('/profile/password', [ProfileController::class, 'updatePassword'])->name('profile.password');
+
+    // ── Layanan Mandiri GTK (Self-Service & Pengajuan Perubahan Data - WP5) ──
+    Route::prefix('profil-gtk')->name('staff-self.')->group(function () {
+        Route::get('/', [StaffSelfController::class, 'profile'])->name('profile');
+        Route::get('/dokumen', [StaffSelfController::class, 'documents'])->name('documents.index');
+        Route::post('/dokumen', [StaffSelfController::class, 'uploadDocument'])->name('documents.store');
+        Route::delete('/dokumen/{document}', [StaffSelfController::class, 'destroyDocument'])->name('documents.destroy');
+
+        Route::prefix('pengajuan')->name('requests.')->group(function () {
+            Route::get('/', [StaffChangeRequestController::class, 'index'])->name('index');
+            Route::get('/create', [StaffChangeRequestController::class, 'create'])->name('create');
+            Route::post('/', [StaffChangeRequestController::class, 'store'])->name('store');
+            Route::get('/{changeRequest}', [StaffChangeRequestController::class, 'show'])->name('show');
+            Route::put('/{changeRequest}', [StaffChangeRequestController::class, 'update'])->name('update');
+            Route::post('/{changeRequest}/submit', [StaffChangeRequestController::class, 'submit'])->name('submit');
+            Route::post('/{changeRequest}/cancel', [StaffChangeRequestController::class, 'cancel'])->name('cancel');
+        });
+    });
+
+    // ── Verifikasi Perubahan Data GTK (Tahap 1: Tata Usaha - WP5) ──
+    Route::middleware('checkrole:admin,kaur_tu,staf,operator')->prefix('verifikasi-gtk')->name('staff-verification.')->group(function () {
+        Route::get('/', [StaffVerificationController::class, 'index'])->name('index');
+        Route::get('/{changeRequest}', [StaffVerificationController::class, 'show'])->name('show');
+        Route::post('/{changeRequest}/verify', [StaffVerificationController::class, 'verify'])->name('verify');
+        Route::post('/{changeRequest}/revision', [StaffVerificationController::class, 'revision'])->name('revision');
+        Route::post('/{changeRequest}/reject', [StaffVerificationController::class, 'reject'])->name('reject');
+    });
+
+    // ── Persetujuan Perubahan Data GTK (Tahap 2: Kepala Madrasah - WP5) ──
+    Route::middleware('checkrole:admin,kepala_madrasah')->prefix('persetujuan-gtk')->name('staff-approval.')->group(function () {
+        Route::get('/', [StaffApprovalController::class, 'index'])->name('index');
+        Route::get('/{changeRequest}', [StaffApprovalController::class, 'show'])->name('show');
+        Route::post('/{changeRequest}/approve', [StaffApprovalController::class, 'approve'])->name('approve');
+        Route::post('/{changeRequest}/revision', [StaffApprovalController::class, 'revision'])->name('revision');
+        Route::post('/{changeRequest}/reject', [StaffApprovalController::class, 'reject'])->name('reject');
+    });
 
     // ── Dashboard — semua role ─────────────────────────────────────
     Route::get('/', [DashboardController::class, 'index'])->name('dashboard');
