@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\User;
 use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\LazilyRefreshDatabase;
+use Spatie\Permission\Models\Role;
 use Tests\TestCase;
 
 class RbacAuthorizationTest extends TestCase
@@ -122,5 +123,17 @@ class RbacAuthorizationTest extends TestCase
         $guru->givePermissionTo('view_audit_logs');
 
         $this->actingAs($guru)->get('/audit-logs')->assertOk();
+    }
+
+    public function test_permission_changes_take_effect_immediately_on_routes(): void
+    {
+        $guru = User::factory()->create(['role' => 'guru']);
+        $this->actingAs($guru)->get('/bk')->assertOk();
+
+        // Cabut manage_bk dari guru
+        $guruRole = Role::findByName('guru');
+        $guruRole->revokePermissionTo('manage_bk');
+
+        $this->actingAs($guru)->get('/bk')->assertForbidden();
     }
 }

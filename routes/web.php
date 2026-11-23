@@ -105,7 +105,7 @@ Route::middleware('auth')->group(function () {
     });
 
     // ── Verifikasi Perubahan Data GTK (Tahap 1: Tata Usaha - WP5) ──
-    Route::middleware('checkrole:admin,kaur_tu,staf,operator')->prefix('verifikasi-gtk')->name('staff-verification.')->group(function () {
+    Route::middleware('permission:verify_staff_changes')->prefix('verifikasi-gtk')->name('staff-verification.')->group(function () {
         Route::get('/', [StaffVerificationController::class, 'index'])->name('index');
         Route::get('/{changeRequest}', [StaffVerificationController::class, 'show'])->name('show');
         Route::post('/{changeRequest}/verify', [StaffVerificationController::class, 'verify'])->name('verify');
@@ -114,7 +114,7 @@ Route::middleware('auth')->group(function () {
     });
 
     // ── Persetujuan Perubahan Data GTK (Tahap 2: Kepala Madrasah - WP5) ──
-    Route::middleware('checkrole:admin,kepala_madrasah')->prefix('persetujuan-gtk')->name('staff-approval.')->group(function () {
+    Route::middleware('permission:approve_staff_changes')->prefix('persetujuan-gtk')->name('staff-approval.')->group(function () {
         Route::get('/', [StaffApprovalController::class, 'index'])->name('index');
         Route::get('/{changeRequest}', [StaffApprovalController::class, 'show'])->name('show');
         Route::post('/{changeRequest}/approve', [StaffApprovalController::class, 'approve'])->name('approve');
@@ -167,7 +167,7 @@ Route::middleware('auth')->group(function () {
         Route::delete('/{webhook}', [WebhookSubscriptionController::class, 'destroy'])->name('destroy');
     });
     // ── BK (Pembinaan Karakter & Kedisiplinan) ────────────────────
-    Route::middleware('checkrole:admin,kepala_madrasah,kaur_tu,staf,operator,guru')->prefix('bk')->name('bk.')->group(function () {
+    Route::middleware('permission:manage_bk')->prefix('bk')->name('bk.')->group(function () {
         Route::get('/', [BkController::class, 'index'])->name('index');
         Route::post('/', [BkController::class, 'store'])->name('store');
         Route::put('/{bk}', [BkController::class, 'update'])->name('update');
@@ -190,7 +190,7 @@ Route::middleware('auth')->group(function () {
         Route::post('/{archive}/versions', [ArchiveController::class, 'storeVersion'])->name('versions.store');
         Route::delete('/{archive}', [ArchiveController::class, 'destroy'])->name('destroy');
 
-        Route::middleware('checkrole:admin,kepala_madrasah,kaur_tu,staf,operator')->prefix('kategori')->name('categories.')->group(function () {
+        Route::middleware('permission:manage_archives')->prefix('kategori')->name('categories.')->group(function () {
             Route::post('/', [ArchiveCategoryController::class, 'store'])->name('store');
             Route::put('/{category}', [ArchiveCategoryController::class, 'update'])->name('update');
             Route::delete('/{category}', [ArchiveCategoryController::class, 'destroy'])->name('destroy');
@@ -247,7 +247,7 @@ Route::middleware('auth')->group(function () {
     });
 
     // ── Data Siswa, GTK, PPDB — staf, operator, kaur TU, kamad, admin ──
-    Route::middleware('checkrole:admin,kepala_madrasah,kaur_tu,staf,operator')->group(function () {
+    Route::middleware('role_or_permission:admin|kepala_madrasah|kaur_tu|staf|operator')->group(function () {
 
         // Siswa
         Route::prefix('students')->name('students.')->group(function () {
@@ -319,20 +319,20 @@ Route::middleware('auth')->group(function () {
             Route::get('/', [StaffController::class, 'index'])->name('index');
             Route::get('/tpg', [StatistikController::class, 'tpg'])->name('tpg');
             Route::put('/{staff}/tpg-status', [StatistikController::class, 'updateTpgStatus'])
-                ->middleware('checkrole:admin,kepala_madrasah,kaur_tu,operator')
+                ->middleware('permission:validate_tpg')
                 ->name('tpg.update');
             Route::get('/{staff}', [StaffController::class, 'show'])->name('show');
             Route::get('/{staff}/edit', [StaffController::class, 'edit'])
-                ->middleware('checkrole:admin,kaur_tu,staf,operator')
+                ->middleware('permission:edit_staff')
                 ->name('edit');
             Route::put('/{staff}', [StaffController::class, 'update'])
-                ->middleware('checkrole:admin,kaur_tu,staf,operator')
+                ->middleware('permission:edit_staff')
                 ->name('update');
             Route::post('/{staff}/documents', [StaffController::class, 'uploadDocument'])
-                ->middleware('checkrole:admin,kaur_tu,staf,operator')
+                ->middleware('permission:edit_staff')
                 ->name('documents.upload');
             Route::delete('/{staff}/documents/{document}', [StaffController::class, 'destroyDocument'])
-                ->middleware('checkrole:admin,kaur_tu,staf,operator')
+                ->middleware('permission:edit_staff')
                 ->name('documents.destroy');
         });
 
@@ -340,7 +340,7 @@ Route::middleware('auth')->group(function () {
         Route::prefix('organisasi')->name('organization.')->group(function () {
             Route::get('/', [OrganizationController::class, 'index'])->name('index');
 
-            Route::middleware('checkrole:admin,kaur_tu,staf,operator')->group(function () {
+            Route::middleware('permission:manage_organization')->group(function () {
                 Route::post('/unit', [OrganizationController::class, 'storeUnit'])->name('units.store');
                 Route::put('/unit/{unit}', [OrganizationController::class, 'updateUnit'])->name('units.update');
                 Route::delete('/unit/{unit}', [OrganizationController::class, 'destroyUnit'])->name('units.destroy');
