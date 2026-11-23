@@ -96,8 +96,12 @@ class PkkmController extends Controller
             ->with('success', "Instrumen PKKM {$instrument->code} berhasil dibuat dengan komponen dinamis.");
     }
 
-    public function show(PkkmInstrument $instrument): Response
+    public function show(Request $request, PkkmInstrument $instrument): Response
     {
+        $this->authorizeInstrumentAccess($request, $instrument);
+
+        $this->authorizeInstrumentAccess($request, $instrument);
+
         $instrument->load([
             'academicYear:id,year,semester',
             'headmaster:id,name',
@@ -173,6 +177,13 @@ class PkkmController extends Controller
     {
         $user = $request->user();
         $instrument = $component->instrument;
+        abort_unless(
+            $user->role === 'admin'
+                || $instrument->headmaster_user_id === $user->id
+                || $component->pic_user_id === $user->id,
+            403,
+            'Hanya asesor atau penanggung jawab komponen yang dapat mengisi asesmen.'
+        );
 
         if ($instrument->status === PkkmInstrument::STATUS_FINALIZED) {
             return redirect()->back()->withErrors(['instrument' => 'Instrumen PKKM sudah difinalisasi dan terkunci.']);
@@ -185,7 +196,7 @@ class PkkmController extends Controller
             'assessor_notes' => 'nullable|string|max:1000',
         ]);
 
-        $canVerifyScore = in_array($user->role, ['admin', 'kepala_madrasah'], true);
+        $canVerifyScore = $user->role === 'admin' || $instrument->headmaster_user_id === $user->id;
 
         PkkmAssessment::updateOrCreate(
             [
@@ -220,6 +231,17 @@ class PkkmController extends Controller
     public function storeEvidence(Request $request, PkkmComponent $component): RedirectResponse
     {
         $user = $request->user();
+        $instrument = $component->instrument;
+        abort_unless(
+            in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu'], true)
+                || $component->pic_user_id === $user->id,
+            403,
+            'Hanya pengelola PKKM atau penanggung jawab komponen yang dapat mengunggah bukti.'
+        );
+        if ($instrument->status === PkkmInstrument::STATUS_FINALIZED) {
+            return redirect()->back()->withErrors(['instrument' => 'Instrumen PKKM sudah difinalisasi dan terkunci.']);
+        }
+
         $validated = $request->validate([
             'title' => 'required|string|max:255',
             'archive_id' => 'nullable|uuid|exists:archives,id',
@@ -242,6 +264,11 @@ class PkkmController extends Controller
             $fileSize = (int) $file->getSize();
         }
 
+        if (isset($validated['archive_id'])) {
+            $archive = Archive::findOrFail($validated['archive_id']);
+            abort_unless($archive->visibility !== Archive::VISIBILITY_PRIVATE || in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu'], true), 403);
+        }
+
         PkkmEvidence::create([
             'pkkm_component_id' => $component->id,
             'archive_id' => $validated['archive_id'] ?? null,
@@ -252,11 +279,32 @@ class PkkmController extends Controller
             'file_size' => $fileSize,
             'external_url' => $validated['external_url'] ?? null,
             'notes' => $validated['notes'] ?? null,
-            'verification_status' => 'verified',
+            'verification_status' => 'pending',
             'uploaded_by' => $user->id,
         ]);
 
         return redirect()->back()->with('success', "Bukti komponen {$component->code} berhasil ditambahkan.");
+    }
+
+    public function reviewEvidence(Request $request, PkkmEvidence $evidence): RedirectResponse
+    {
+        $user = $request->user();
+        $instrument = $evidence->component->instrument;
+        abort_unless(
+            in_array($user->role, ['admin', 'kepala_madrasah'], true)
+                && $user->id !== $evidence->uploaded_by
+                && $instrument->status !== PkkmInstrument::STATUS_FINALIZED,
+            403,
+            'Bukti hanya dapat diverifikasi pihak berwenang selain pengunggah sebelum finalisasi.'
+        );
+
+        $validated = $request->validate([
+            'verification_status' => 'required|in:verified,rejected',
+        ]);
+
+        $evidence->update(['verification_status' => $validated['verification_status']]);
+
+        return redirect()->back()->with('success', 'Status verifikasi bukti diperbarui.');
     }
 
     /**
@@ -277,6 +325,12 @@ class PkkmController extends Controller
         ]);
 
         return redirect()->back()->with('success', "Instrumen PKKM {$instrument->code} resmi difinalisasi.");
+    }
+
+    private function authorizeInstrumentAccess(Request $request, PkkmInstrument $instrument): void
+    {
+        $user = $request->user();
+        abort_unless(in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'], true), 403);
     }
 
     private function seedConfigurableBaselineComponents(PkkmInstrument $instrument, User $actor): void

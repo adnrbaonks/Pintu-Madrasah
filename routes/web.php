@@ -217,6 +217,7 @@ Route::middleware('auth')->group(function () {
         Route::post('/{instrument}/finalize', [PkkmController::class, 'finalize'])->name('finalize');
         Route::post('/components/{component}/assess', [PkkmController::class, 'saveAssessment'])->name('components.assess');
         Route::post('/components/{component}/evidence', [PkkmController::class, 'storeEvidence'])->name('components.evidence');
+        Route::post('/evidence/{evidence}/review', [PkkmController::class, 'reviewEvidence'])->name('evidence.review');
     });
 
     // ── Rapat & Notulen Dinas (WP8.4 - Gelombang 2) ────────────────

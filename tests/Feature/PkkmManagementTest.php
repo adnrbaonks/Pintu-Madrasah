@@ -17,6 +17,44 @@ class PkkmManagementTest extends TestCase
 {
     use LazilyRefreshDatabase;
 
+    public function test_unassigned_user_cannot_read_or_change_pkkm_instrument(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $outsider = User::factory()->create(['role' => 'guru']);
+        $instrument = PkkmInstrument::create([
+            'code' => 'PKKM/2026/999',
+            'title' => 'PKKM privat',
+            'period_year' => '2026',
+            'assessment_type' => 'annual',
+            'headmaster_user_id' => $admin->id,
+            'status' => PkkmInstrument::STATUS_DRAFT,
+            'overall_score' => 0,
+            'created_by' => $admin->id,
+        ]);
+        $component = PkkmComponent::create([
+            'pkkm_instrument_id' => $instrument->id,
+            'category_code' => 'A',
+            'category_name' => 'A',
+            'code' => 'A1',
+            'title' => 'Komponen',
+            'weight' => 1,
+            'max_score' => 100,
+            'sort_order' => 1,
+            'pic_user_id' => $admin->id,
+        ]);
+
+        $this->actingAs($outsider)->get("/pkkm/{$instrument->id}")->assertForbidden();
+        $this->actingAs($outsider)->post("/pkkm/components/{$component->id}/assess", [
+            'self_score' => 100,
+        ])->assertForbidden();
+        $this->actingAs($outsider)->post("/pkkm/components/{$component->id}/evidence", [
+            'title' => 'Bukti tanpa izin',
+        ])->assertForbidden();
+
+        $this->assertDatabaseMissing('pkkm_assessments', ['pkkm_component_id' => $component->id]);
+        $this->assertDatabaseMissing('pkkm_evidence', ['pkkm_component_id' => $component->id]);
+    }
+
     public function test_pkkm_lifecycle_dynamic_components_evidence_and_scoring(): void
     {
         Storage::fake('local');
@@ -87,6 +125,18 @@ class PkkmManagementTest extends TestCase
         $this->assertSame(1, $newComponent->fresh()->evidence()->count());
         $evidence = $newComponent->fresh()->evidence()->first();
         $this->assertSame($archive->id, $evidence->archive_id);
+        $this->assertSame('pending', $evidence->verification_status);
+
+        // Pengunggah tidak boleh melakukan self-verification.
+        $this->actingAs($kaurTu)->post("/pkkm/evidence/{$evidence->id}/review", [
+            'verification_status' => 'verified',
+        ])->assertForbidden();
+
+        // Asesor lain dapat memverifikasi bukti.
+        $this->actingAs($kamad)->post("/pkkm/evidence/{$evidence->id}/review", [
+            'verification_status' => 'verified',
+        ])->assertRedirect();
+        $this->assertSame('verified', $evidence->fresh()->verification_status);
 
         // 5. Guru biasa tidak dapat memfinalisasi instrumen PKKM (403)
         $this->actingAs($guru)->post("/pkkm/{$instrument->id}/finalize")->assertForbidden();
