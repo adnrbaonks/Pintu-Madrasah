@@ -138,8 +138,15 @@ class MeetingController extends Controller
             ->with('success', "Rapat {$meeting->meeting_number} berhasil dijadwalkan dan disinkronkan ke Kalender.");
     }
 
-    public function show(Meeting $meeting): Response
+    public function show(Request $request, Meeting $meeting): Response
     {
+        abort_unless(
+            $meeting->participants()->where('user_id', $request->user()->id)->exists()
+                || in_array($request->user()->role, ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'], true),
+            403,
+            'Anda bukan peserta atau pengelola rapat ini.'
+        );
+
         $meeting->load([
             'organizationUnit:id,code,name',
             'leader:id,name',
@@ -163,11 +170,21 @@ class MeetingController extends Controller
      */
     public function markAttendance(Request $request, Meeting $meeting): RedirectResponse
     {
+        $user = $request->user();
+        $isMeetingManager = in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'], true);
+        $isLeader = $meeting->leader_user_id === $user->id;
+
+        if (! $isMeetingManager && ! $isLeader) {
+            abort(403, 'Hanya pengelola atau pimpinan rapat yang dapat mencatat kehadiran.');
+        }
+
         $validated = $request->validate([
             'user_id' => 'required|uuid|exists:users,id',
             'attendance_status' => 'required|in:present,absent,excused',
             'absence_reason' => 'nullable|string|max:500',
         ]);
+
+        abort_unless($meeting->participants()->where('user_id', $validated['user_id'])->exists(), 422, 'Pengguna bukan peserta rapat.');
 
         MeetingParticipant::updateOrCreate(
             ['meeting_id' => $meeting->id, 'user_id' => $validated['user_id']],
@@ -187,6 +204,11 @@ class MeetingController extends Controller
     public function saveMinutes(Request $request, Meeting $meeting): RedirectResponse
     {
         $user = $request->user();
+        if (! in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'], true)
+            && $meeting->notetaker_user_id !== $user->id) {
+            abort(403, 'Hanya notulis atau pengelola rapat yang dapat menyimpan notulen.');
+        }
+
         $validated = $request->validate([
             'discussion_summary' => 'required|string|max:10000',
             'decisions' => 'required|string|max:5000',
@@ -232,6 +254,12 @@ class MeetingController extends Controller
      */
     public function storeAction(Request $request, Meeting $meeting): RedirectResponse
     {
+        $user = $request->user();
+        if (! in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'], true)
+            && $meeting->leader_user_id !== $user->id) {
+            abort(403, 'Hanya pimpinan atau pengelola rapat yang dapat menetapkan tindak lanjut.');
+        }
+
         $validated = $request->validate([
             'assigned_to_user_id' => 'nullable|uuid|exists:users,id',
             'title' => 'required|string|max:255',
@@ -256,6 +284,12 @@ class MeetingController extends Controller
      */
     public function updateAction(Request $request, MeetingAction $action): RedirectResponse
     {
+        $user = $request->user();
+        $isManager = in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'], true);
+        if (! $isManager && $action->assigned_to_user_id !== $user->id) {
+            abort(403, 'Hanya petugas yang ditugaskan atau pengelola yang dapat memperbarui tindak lanjut.');
+        }
+
         $validated = $request->validate([
             'status' => 'required|in:pending,in_progress,completed,overdue',
             'resolution_notes' => 'nullable|string|max:1000',

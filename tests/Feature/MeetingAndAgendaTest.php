@@ -16,6 +16,60 @@ class MeetingAndAgendaTest extends TestCase
 {
     use LazilyRefreshDatabase;
 
+    public function test_unassigned_users_cannot_change_meeting_records_or_read_meeting_details(): void
+    {
+        $organizer = User::factory()->create(['role' => 'kaur_tu']);
+        $stranger = User::factory()->create(['role' => 'guru']);
+        $target = User::factory()->create(['role' => 'guru']);
+        $meeting = Meeting::create([
+            'meeting_number' => 'NOT/'.now()->format('Y').'/9998',
+            'title' => 'Rapat terbatas',
+            'meeting_type' => 'dinas',
+            'scheduled_at' => now()->addDay(),
+            'location' => 'Aula',
+            'leader_user_id' => $organizer->id,
+            'notetaker_user_id' => $organizer->id,
+            'created_by' => $organizer->id,
+            'status' => Meeting::STATUS_SCHEDULED,
+        ]);
+        MeetingParticipant::create([
+            'meeting_id' => $meeting->id,
+            'user_id' => $organizer->id,
+            'role_in_meeting' => 'leader',
+            'attendance_status' => 'invited',
+        ]);
+        $action = MeetingAction::create([
+            'meeting_id' => $meeting->id,
+            'assigned_to_user_id' => $target->id,
+            'title' => 'Tindak lanjut',
+            'status' => MeetingAction::STATUS_PENDING,
+        ]);
+
+        $this->actingAs($stranger)->get("/rapat-dinas/{$meeting->id}")->assertForbidden();
+        $this->actingAs($stranger)->post("/rapat-dinas/{$meeting->id}/attendance", [
+            'user_id' => $target->id,
+            'attendance_status' => 'present',
+        ])->assertForbidden();
+        $this->actingAs($stranger)->post("/rapat-dinas/{$meeting->id}/minutes", [
+            'discussion_summary' => 'Tidak berwenang',
+            'decisions' => 'Tidak berwenang',
+        ])->assertForbidden();
+        $this->actingAs($stranger)->post("/rapat-dinas/{$meeting->id}/actions", [
+            'title' => 'Tidak berwenang',
+        ])->assertForbidden();
+        $this->actingAs($stranger)->post("/rapat-dinas/actions/{$action->id}", [
+            'status' => MeetingAction::STATUS_COMPLETED,
+        ])->assertForbidden();
+
+        $this->assertDatabaseMissing('meeting_participants', [
+            'meeting_id' => $meeting->id,
+            'user_id' => $target->id,
+            'attendance_status' => 'present',
+        ]);
+        $this->assertDatabaseMissing('meeting_minutes', ['meeting_id' => $meeting->id]);
+        $this->assertSame(MeetingAction::STATUS_PENDING, $action->fresh()->status);
+    }
+
     public function test_meeting_lifecycle_minutes_actions_attendance_and_calendar_sync(): void
     {
         $kaurTu = User::factory()->create(['role' => 'kaur_tu']);
