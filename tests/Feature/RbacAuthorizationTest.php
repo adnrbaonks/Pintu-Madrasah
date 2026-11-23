@@ -14,6 +14,7 @@ class RbacAuthorizationTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->withoutVite();
         (new RolesAndPermissionsSeeder)->run();
     }
 
