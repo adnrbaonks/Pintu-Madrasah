@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Setting;
 use App\Models\User;
 use Illuminate\Foundation\Testing\LazilyRefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class SettingSecurityTest extends TestCase
@@ -63,5 +64,47 @@ class SettingSecurityTest extends TestCase
             ->getJson('/api/v1/students?fields=id,nik,address')
             ->assertOk()
             ->assertJsonMissing(['address' => 'Alamat privat']);
+    }
+
+    public function test_legacy_plaintext_secrets_are_migrated_and_encrypted_transparently(): void
+    {
+        Setting::flushCache();
+
+        // 1. Simpan raw plaintext langsung ke database (meniru data legacy lama)
+        DB::table('settings')->insert([
+            'key' => 'telegram_bot_token',
+            'value' => 'raw-plaintext-telegram-token-987654',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $rawBefore = DB::table('settings')->where('key', 'telegram_bot_token')->value('value');
+        $this->assertSame('raw-plaintext-telegram-token-987654', $rawBefore);
+
+        // 2. Akses melalui Setting::get() harus otomatis mengembalikan nilai asli DAN mengupdate database menjadi terenkripsi (on-read transparent migration)
+        $val = Setting::get('telegram_bot_token');
+        $this->assertSame('raw-plaintext-telegram-token-987654', $val);
+
+        $rawAfter = DB::table('settings')->where('key', 'telegram_bot_token')->value('value');
+        $this->assertNotSame('raw-plaintext-telegram-token-987654', $rawAfter);
+        $this->assertSame('raw-plaintext-telegram-token-987654', decrypt($rawAfter));
+
+        // 3. Uji Artisan command migrasi batch
+        Setting::flushCache();
+        DB::table('settings')->insert([
+            'key' => 'rdm_api_key',
+            'value' => 'legacy-rdm-secret-key-112233',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->artisan('settings:encrypt-secrets')
+            ->expectsOutputToContain('Migrasi selesai. 1 secret terenkripsi')
+            ->assertSuccessful();
+
+        $rawRdm = DB::table('settings')->where('key', 'rdm_api_key')->value('value');
+        $this->assertNotSame('legacy-rdm-secret-key-112233', $rawRdm);
+        $this->assertSame('legacy-rdm-secret-key-112233', decrypt($rawRdm));
+        $this->assertSame('legacy-rdm-secret-key-112233', Setting::get('rdm_api_key'));
     }
 }

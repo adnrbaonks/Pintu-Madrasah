@@ -44,7 +44,8 @@ class PkkmController extends Controller
     public function store(Request $request): RedirectResponse
     {
         $user = $request->user();
-        if (! in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu'], true)) {
+        $canManage = $user && ($user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu']) || in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu'], true));
+        if (! $canManage) {
             abort(403, 'Hanya Admin, Kepala Madrasah, atau Kepala TU yang dapat membuat instrumen PKKM.');
         }
 
@@ -100,8 +101,6 @@ class PkkmController extends Controller
     {
         $this->authorizeInstrumentAccess($request, $instrument);
 
-        $this->authorizeInstrumentAccess($request, $instrument);
-
         $instrument->load([
             'academicYear:id,year,semester',
             'headmaster:id,name',
@@ -125,7 +124,8 @@ class PkkmController extends Controller
     public function storeComponent(Request $request, PkkmInstrument $instrument): RedirectResponse
     {
         $user = $request->user();
-        if (! in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu'], true)) {
+        $canManage = $user && ($user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu']) || in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu'], true));
+        if (! $canManage) {
             abort(403, 'Anda tidak memiliki izin untuk menambah komponen PKKM.');
         }
 
@@ -177,10 +177,14 @@ class PkkmController extends Controller
     {
         $user = $request->user();
         $instrument = $component->instrument;
+
+        $isAdmin = $user && ($user->hasRole('admin') || $user->role === 'admin');
+        $isEvaluatorRole = $user && ($user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu']) || in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu'], true));
+        $isHeadmaster = $instrument->headmaster_user_id === $user?->id;
+        $isComponentPic = $component->pic_user_id === $user?->id;
+
         abort_unless(
-            $user->role === 'admin'
-                || $instrument->headmaster_user_id === $user->id
-                || $component->pic_user_id === $user->id,
+            $isEvaluatorRole || $isHeadmaster || $isComponentPic,
             403,
             'Hanya asesor atau penanggung jawab komponen yang dapat mengisi asesmen.'
         );
@@ -190,13 +194,22 @@ class PkkmController extends Controller
         }
 
         $validated = $request->validate([
-            'self_score' => 'required|numeric|min:0|max:'.$component->max_score,
+            'self_score' => 'nullable|numeric|min:0|max:'.$component->max_score,
             'verified_score' => 'nullable|numeric|min:0|max:'.$component->max_score,
             'self_notes' => 'nullable|string|max:1000',
             'assessor_notes' => 'nullable|string|max:1000',
         ]);
 
-        $canVerifyScore = $user->role === 'admin' || $instrument->headmaster_user_id === $user->id;
+        $isPic = $component->pic_user_id === $user->id;
+        $hasVerifiedScore = isset($validated['verified_score']) && $validated['verified_score'] !== null;
+
+        if ($hasVerifiedScore) {
+            abort_if($isPic, 403, 'PIC komponen tidak diperbolehkan memverifikasi skor pada komponennya sendiri.');
+            abort_unless($isEvaluatorRole, 403, 'Hanya Asesor/Manajemen independen yang dapat mengisi nilai verifikasi.');
+        }
+
+        $existingAssessment = $component->assessment;
+        $selfScore = $validated['self_score'] ?? $existingAssessment?->self_score ?? 0;
 
         PkkmAssessment::updateOrCreate(
             [
@@ -204,13 +217,13 @@ class PkkmController extends Controller
                 'pkkm_component_id' => $component->id,
             ],
             [
-                'self_score' => (float) $validated['self_score'],
-                'verified_score' => $canVerifyScore && isset($validated['verified_score'])
+                'self_score' => (float) $selfScore,
+                'verified_score' => $hasVerifiedScore
                     ? (float) $validated['verified_score']
-                    : null,
-                'self_notes' => $validated['self_notes'] ?? null,
-                'assessor_notes' => $canVerifyScore ? ($validated['assessor_notes'] ?? null) : null,
-                'status' => $canVerifyScore && isset($validated['verified_score']) ? 'verified' : 'submitted',
+                    : ($existingAssessment?->verified_score),
+                'self_notes' => $validated['self_notes'] ?? $existingAssessment?->self_notes,
+                'assessor_notes' => $hasVerifiedScore ? ($validated['assessor_notes'] ?? null) : $existingAssessment?->assessor_notes,
+                'status' => $hasVerifiedScore ? 'verified' : ($existingAssessment?->status ?? 'submitted'),
                 'assessed_by' => $user->id,
                 'assessed_at' => now(),
             ]
@@ -232,9 +245,9 @@ class PkkmController extends Controller
     {
         $user = $request->user();
         $instrument = $component->instrument;
+        $isManager = $user && ($user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu']) || in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu'], true));
         abort_unless(
-            in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu'], true)
-                || $component->pic_user_id === $user->id,
+            $isManager || $component->pic_user_id === $user->id,
             403,
             'Hanya pengelola PKKM atau penanggung jawab komponen yang dapat mengunggah bukti.'
         );
@@ -266,7 +279,7 @@ class PkkmController extends Controller
 
         if (isset($validated['archive_id'])) {
             $archive = Archive::findOrFail($validated['archive_id']);
-            abort_unless($archive->visibility !== Archive::VISIBILITY_PRIVATE || in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu'], true), 403);
+            abort_unless($archive->visibility !== Archive::VISIBILITY_PRIVATE || $isManager, 403);
         }
 
         PkkmEvidence::create([
@@ -290,12 +303,17 @@ class PkkmController extends Controller
     {
         $user = $request->user();
         $instrument = $evidence->component->instrument;
+        $canReviewRole = $user && ($user->hasAnyRole(['admin', 'kepala_madrasah']) || in_array($user->role, ['admin', 'kepala_madrasah'], true));
+        $isUploader = $user->id === $evidence->uploaded_by;
+        $isComponentPic = $user->id === $evidence->component->pic_user_id;
+
         abort_unless(
-            in_array($user->role, ['admin', 'kepala_madrasah'], true)
-                && $user->id !== $evidence->uploaded_by
+            $canReviewRole
+                && ! $isUploader
+                && ! $isComponentPic
                 && $instrument->status !== PkkmInstrument::STATUS_FINALIZED,
             403,
-            'Bukti hanya dapat diverifikasi pihak berwenang selain pengunggah sebelum finalisasi.'
+            'Bukti hanya dapat diverifikasi pihak berwenang selain pengunggah dan penanggung jawab komponen sebelum finalisasi.'
         );
 
         $validated = $request->validate([
@@ -313,7 +331,8 @@ class PkkmController extends Controller
     public function finalize(Request $request, PkkmInstrument $instrument): RedirectResponse
     {
         $user = $request->user();
-        if (! in_array($user->role, ['admin', 'kepala_madrasah'], true)) {
+        $canFinalize = $user && ($user->hasAnyRole(['admin', 'kepala_madrasah']) || in_array($user->role, ['admin', 'kepala_madrasah'], true));
+        if (! $canFinalize) {
             abort(403, 'Hanya Kepala Madrasah atau Admin yang dapat memfinalisasi instrumen PKKM.');
         }
 
@@ -330,7 +349,11 @@ class PkkmController extends Controller
     private function authorizeInstrumentAccess(Request $request, PkkmInstrument $instrument): void
     {
         $user = $request->user();
-        abort_unless(in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'], true), 403);
+        $isManager = $user && ($user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator']) || in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'], true));
+        $isHeadmaster = $instrument->headmaster_user_id === $user?->id;
+        $isPic = $instrument->components()->where('pic_user_id', $user?->id)->exists();
+
+        abort_unless($isManager || $isHeadmaster || $isPic, 403, 'Anda tidak memiliki hak akses untuk melihat instrumen PKKM ini.');
     }
 
     private function seedConfigurableBaselineComponents(PkkmInstrument $instrument, User $actor): void

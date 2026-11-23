@@ -149,4 +149,75 @@ class PkkmManagementTest extends TestCase
         $this->assertSame($kamad->id, $instrument->finalized_by);
         $this->assertNotNull($instrument->finalized_at);
     }
+
+    public function test_pkkm_security_pic_and_uploader_cannot_self_verify(): void
+    {
+        Storage::fake('local');
+
+        $kaurTu = User::factory()->create(['role' => 'kaur_tu']);
+        $kamad = User::factory()->create(['role' => 'kepala_madrasah']);
+        $picGuru = User::factory()->create(['role' => 'guru']);
+        $guruLain = User::factory()->create(['role' => 'guru']);
+
+        $instrument = PkkmInstrument::create([
+            'code' => 'PKKM/2026/SEC',
+            'title' => 'PKKM Security Test',
+            'period_year' => '2026',
+            'assessment_type' => 'annual',
+            'headmaster_user_id' => $kamad->id,
+            'status' => PkkmInstrument::STATUS_IN_PROGRESS,
+            'overall_score' => 0,
+            'created_by' => $kaurTu->id,
+        ]);
+
+        $component = PkkmComponent::create([
+            'pkkm_instrument_id' => $instrument->id,
+            'category_code' => 'A',
+            'category_name' => 'Usaha Madrasah',
+            'code' => 'A1',
+            'title' => 'Komponen A1',
+            'weight' => 20,
+            'max_score' => 100,
+            'sort_order' => 1,
+            'pic_user_id' => $picGuru->id,
+        ]);
+
+        // 1. PIC komponen dilarang mengisi verified_score (hanya boleh self_score)
+        $this->actingAs($picGuru)->post("/pkkm/components/{$component->id}/assess", [
+            'self_score' => 85,
+            'verified_score' => 90,
+        ])->assertForbidden();
+
+        // 2. Evaluator sah (Kaur TU) dapat mengisi verified_score
+        $this->actingAs($kaurTu)->post("/pkkm/components/{$component->id}/assess", [
+            'verified_score' => 90,
+            'evaluator_notes' => 'Telah diverifikasi sesuai bukti fisik',
+        ])->assertRedirect();
+
+        $this->assertDatabaseHas('pkkm_assessments', [
+            'pkkm_component_id' => $component->id,
+            'verified_score' => 90,
+        ]);
+
+        // 3. Upload bukti oleh PIC
+        $file = UploadedFile::fake()->create('sop.pdf', 500, 'application/pdf');
+        $this->actingAs($picGuru)->post("/pkkm/components/{$component->id}/evidence", [
+            'title' => 'Dokumen SOP Madrasah',
+            'file' => $file,
+        ])->assertRedirect();
+
+        $evidence = $component->evidence()->firstOrFail();
+
+        // 4. PIC dilarang mereview/memverifikasi bukti sendiri (403)
+        $this->actingAs($picGuru)->post("/pkkm/evidence/{$evidence->id}/review", [
+            'verification_status' => 'verified',
+        ])->assertForbidden();
+
+        // 5. Verifikasi oleh Kepala Madrasah / Asesor diizinkan
+        $this->actingAs($kamad)->post("/pkkm/evidence/{$evidence->id}/review", [
+            'verification_status' => 'verified',
+        ])->assertRedirect();
+
+        $this->assertSame('verified', $evidence->fresh()->verification_status);
+    }
 }

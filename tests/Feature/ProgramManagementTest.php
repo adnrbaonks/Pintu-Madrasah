@@ -188,4 +188,84 @@ class ProgramManagementTest extends TestCase
 
         $this->assertSame(ProgramReport::STATUS_SUBMITTED, $report->fresh()->status);
     }
+
+    public function test_program_completion_requires_all_activities_completed_100_percent_progress_and_approved_reports(): void
+    {
+        $pic = User::factory()->create(['role' => 'staf']);
+        $kamad = User::factory()->create(['role' => 'kepala_madrasah']);
+        $guru = User::factory()->create(['role' => 'guru']);
+
+        $program = Program::create([
+            'code' => 'PRG/2026/COMPL-1',
+            'title' => 'Program uji penyelesaian',
+            'pic_user_id' => $pic->id,
+            'created_by' => $pic->id,
+            'status' => Program::STATUS_IN_PROGRESS,
+            'budget_amount' => 1000000,
+            'progress_percent' => 0,
+        ]);
+
+        // 1. Gagal diselesaikan jika belum ada kegiatan
+        $this->actingAs($kamad)->post("/program-kerja/{$program->id}/status", [
+            'status' => Program::STATUS_COMPLETED,
+        ])->assertStatus(422);
+
+        // Tambah kegiatan dengan status 'in_progress' dan belum selesai
+        $activity = ProgramActivity::create([
+            'program_id' => $program->id,
+            'title' => 'Kegiatan Utama',
+            'status' => 'in_progress',
+            'progress_percent' => 50,
+        ]);
+
+        // 2. Gagal diselesaikan jika kegiatan belum 'completed'
+        $this->actingAs($kamad)->post("/program-kerja/{$program->id}/status", [
+            'status' => Program::STATUS_COMPLETED,
+        ])->assertStatus(422);
+
+        $activity->update(['status' => 'completed', 'progress_percent' => 100]);
+
+        // 3. Gagal diselesaikan jika belum ada laporan disetujui
+        $this->actingAs($kamad)->post("/program-kerja/{$program->id}/status", [
+            'status' => Program::STATUS_COMPLETED,
+        ])->assertStatus(422);
+
+        // Buat laporan tetapi masih tahap submitted
+        $report = ProgramReport::create([
+            'program_id' => $program->id,
+            'program_activity_id' => $activity->id,
+            'title' => 'Laporan Akhir',
+            'report_date' => now()->toDateString(),
+            'summary' => 'Kegiatan selesai.',
+            'achieved_percent' => 100,
+            'status' => ProgramReport::STATUS_SUBMITTED,
+            'submitted_by' => $pic->id,
+        ]);
+
+        // 4. Gagal diselesaikan jika laporan belum disetujui (masih submitted)
+        $this->actingAs($kamad)->post("/program-kerja/{$program->id}/status", [
+            'status' => Program::STATUS_COMPLETED,
+        ])->assertStatus(422);
+
+        // Setujui laporan dan set program progress 100%
+        $report->update(['status' => ProgramReport::STATUS_APPROVED]);
+        $program->update(['progress_percent' => 100]);
+
+        // 5. User tanpa wewenang (guru luar) ditolak (403)
+        $this->actingAs($guru)->post("/program-kerja/{$program->id}/status", [
+            'status' => Program::STATUS_COMPLETED,
+        ])->assertForbidden();
+
+        // 6. PIC atau Kamad berhasil menyelesaikan program
+        $this->actingAs($pic)->post("/program-kerja/{$program->id}/status", [
+            'status' => Program::STATUS_COMPLETED,
+        ])->assertRedirect();
+
+        $this->assertSame(Program::STATUS_COMPLETED, $program->fresh()->status);
+
+        // 7. Program yang sudah ditutup tidak dapat ditambah kegiatan baru (422)
+        $this->actingAs($pic)->post("/program-kerja/{$program->id}/activities", [
+            'title' => 'Kegiatan Terlambat',
+        ])->assertStatus(422);
+    }
 }

@@ -15,20 +15,46 @@ class AnnouncementController extends Controller
     {
         $user = $request->user();
 
-        $announcements = Announcement::query()
+        $query = Announcement::query()
             ->with(['author:id,name,role', 'archive:id,archive_number,title'])
             ->where('is_active', true)
             ->whereDate('publish_date', '<=', now()->toDateString())
             ->where(function ($q): void {
                 $q->whereNull('expires_at')
                     ->orWhereDate('expires_at', '>=', now()->toDateString());
-            })
-            ->orderByDesc('is_pinned')
+            });
+
+        $isAdmin = $user && ($user->hasRole('admin') || $user->role === 'admin');
+
+        if (! $isAdmin) {
+            $userRoles = $user ? $user->roles()->pluck('name')->push($user->role)->filter()->unique()->values()->all() : [];
+            $isGtk = ! empty($user->staff_id) || ($user && ($user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator', 'guru', 'pegawai']) || in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator', 'guru', 'pegawai'], true)));
+
+            $query->where(function ($scopeQuery) use ($user, $userRoles, $isGtk): void {
+                $scopeQuery->where('author_user_id', $user->id)
+                    ->orWhere('target_scope', 'all');
+
+                if ($isGtk) {
+                    $scopeQuery->orWhere('target_scope', 'gtk_only');
+                }
+
+                $scopeQuery->orWhere(function ($roleQuery) use ($userRoles): void {
+                    $roleQuery->where('target_scope', 'role_specific')
+                        ->where(function ($sub) use ($userRoles): void {
+                            foreach ($userRoles as $role) {
+                                $sub->orWhereJsonContains('target_roles', $role);
+                            }
+                        });
+                });
+            });
+        }
+
+        $announcements = $query->orderByDesc('is_pinned')
             ->orderByDesc('publish_date')
             ->orderByDesc('created_at')
             ->get();
 
-        $canManage = in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'], true);
+        $canManage = $user && ($user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator']) || in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'], true));
 
         return Inertia::render('Announcements/Index', [
             'announcements' => $announcements,
@@ -40,7 +66,8 @@ class AnnouncementController extends Controller
     public function store(Request $request): RedirectResponse
     {
         $user = $request->user();
-        if (! in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'], true)) {
+        $canManage = $user && ($user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator']) || in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'], true));
+        if (! $canManage) {
             abort(403, 'Anda tidak memiliki hak akses untuk mempublikasikan pengumuman.');
         }
 
@@ -76,7 +103,8 @@ class AnnouncementController extends Controller
     public function destroy(Request $request, Announcement $announcement): RedirectResponse
     {
         $user = $request->user();
-        if (! in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu'], true)) {
+        $canDelete = $user && ($user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu']) || in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu'], true));
+        if (! $canDelete) {
             abort(403);
         }
 

@@ -10,6 +10,7 @@ use App\Models\MeetingAction;
 use App\Models\MeetingParticipant;
 use App\Models\User;
 use Illuminate\Foundation\Testing\LazilyRefreshDatabase;
+use Inertia\Testing\AssertableInertia;
 use Tests\TestCase;
 
 class MeetingAndAgendaTest extends TestCase
@@ -186,5 +187,64 @@ class MeetingAndAgendaTest extends TestCase
 
         $this->artisan('reminders:process-upcoming')->assertSuccessful();
         $this->assertSame(MeetingAction::STATUS_OVERDUE, $action2->fresh()->status);
+    }
+
+    public function test_meeting_security_constraints_and_assignee_rules(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $kamad = User::factory()->create(['role' => 'kepala_madrasah']);
+        $guruPeserta = User::factory()->create(['role' => 'guru']);
+        $guruLuar = User::factory()->create(['role' => 'guru']);
+
+        $meeting = Meeting::create([
+            'meeting_number' => 'NOTULEN/2026/001',
+            'title' => 'Rapat Terbatas Manajemen',
+            'meeting_type' => 'dinas',
+            'scheduled_at' => now()->addDay(),
+            'leader_user_id' => $kamad->id,
+            'notetaker_user_id' => $admin->id,
+            'status' => Meeting::STATUS_SCHEDULED,
+        ]);
+        $meeting->participants()->create([
+            'user_id' => $guruPeserta->id,
+            'attendance_status' => 'registered',
+        ]);
+
+        // 1. Assign action ke guru yang BUKAN peserta rapat harus ditolak (422)
+        $this->actingAs($kamad)->post("/rapat-dinas/{$meeting->id}/actions", [
+            'assigned_to_user_id' => $guruLuar->id,
+            'title' => 'Tugas untuk guru luar',
+            'due_date' => now()->addDays(3)->toDateString(),
+        ])->assertSessionHasErrors(['assigned_to_user_id']);
+
+        // 2. Action yang ditugaskan ke guruPeserta tidak boleh diselesaikan oleh guruLuar (403)
+        $action = MeetingAction::create([
+            'meeting_id' => $meeting->id,
+            'assigned_to_user_id' => $guruPeserta->id,
+            'title' => 'Tugas internal peserta',
+            'status' => MeetingAction::STATUS_PENDING,
+            'due_date' => now()->addDays(3)->toDateString(),
+        ]);
+
+        $this->actingAs($guruLuar)->post("/rapat-dinas/actions/{$action->id}", [
+            'status' => MeetingAction::STATUS_COMPLETED,
+            'resolution_notes' => 'Mencoba menyelesaikan tugas orang lain',
+        ])->assertForbidden();
+
+        // 3. Guru luar rapat tidak melihat rapat terbatas di daftar rapat
+        $response = $this->actingAs($guruLuar)->get('/rapat-dinas');
+        $response->assertOk();
+        $response->assertInertia(fn (AssertableInertia $page) => $page
+            ->component('Meetings/Index', false)
+            ->where('meetings', fn ($data) => collect($data)->where('id', $meeting->id)->isEmpty())
+        );
+
+        // 4. Guru peserta DAPAT melihat rapat di daftar rapat
+        $responsePeserta = $this->actingAs($guruPeserta)->get('/rapat-dinas');
+        $responsePeserta->assertOk();
+        $responsePeserta->assertInertia(fn (AssertableInertia $page) => $page
+            ->component('Meetings/Index', false)
+            ->where('meetings', fn ($data) => collect($data)->where('id', $meeting->id)->isNotEmpty())
+        );
     }
 }
