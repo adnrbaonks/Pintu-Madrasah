@@ -7,33 +7,47 @@ use Illuminate\Http\Resources\Json\JsonResource;
 
 class StaffResource extends JsonResource
 {
-    public const ALLOWED_FIELDS = [
+    /**
+     * Atribut default non-PII yang aman dikembalikan tanpa scope staff:pii.
+     */
+    public const NON_PII_FIELDS = [
         'id',
-        'nik',
-        'nuptk',
-        'nip',
-        'npk',
         'name',
         'full_name_with_titles',
         'first_title',
         'last_title',
         'gender',
+        'employment_status',
+        'functional_position',
+        'is_active',
+        'created_at',
+        'updated_at',
+        'position_assignments',
+    ];
+
+    /**
+     * Atribut sensitif (PII) yang wajib memerlukan scope staff:pii.
+     */
+    public const PII_FIELDS = [
+        'nik',
+        'nuptk',
+        'nip',
+        'npk',
         'birth_place',
         'birth_date',
         'phone',
         'email',
-        'employment_status',
-        'functional_position',
         'highest_education',
         'university_name',
         'study_program',
         'graduation_year',
         'civil_rank',
         'civil_rank_tmt',
-        'is_active',
-        'created_at',
-        'updated_at',
-        'position_assignments',
+    ];
+
+    public const ALLOWED_FIELDS = [
+        ...self::NON_PII_FIELDS,
+        ...self::PII_FIELDS,
     ];
 
     /**
@@ -43,20 +57,30 @@ class StaffResource extends JsonResource
     {
         $attributes = $this->resource->toArray();
 
+        // 1. Periksa izin scope PII pada API client
+        $scopes = (array) $request->attributes->get('api_scopes', []);
+        $hasPiiScope = in_array('staff:pii', $scopes, true);
+
+        // 2. Tentukan field yang diizinkan untuk pemanggil ini (deny by default)
+        $allowedFields = $hasPiiScope
+            ? self::ALLOWED_FIELDS
+            : self::NON_PII_FIELDS;
+
+        // 3. Evaluasi parameter ?fields=...
         $fieldsParam = $request->query('fields');
-        if (! is_string($fieldsParam) || trim($fieldsParam) === '') {
-            return $attributes;
+        if (is_string($fieldsParam) && trim($fieldsParam) !== '') {
+            $requested = array_map('trim', explode(',', $fieldsParam));
+            // Abaikan/tolak field yang tidak diizinkan sesuai scope
+            $selectedFields = array_values(array_intersect($allowedFields, $requested));
+
+            if (! in_array('id', $selectedFields, true)) {
+                array_unshift($selectedFields, 'id');
+            }
+        } else {
+            // Tanpa parameter fields khusus, kembalikan hanya atribut non-PII default
+            $selectedFields = self::NON_PII_FIELDS;
         }
 
-        $requested = array_values(array_intersect(
-            self::ALLOWED_FIELDS,
-            array_map('trim', explode(',', $fieldsParam)),
-        ));
-
-        if (! in_array('id', $requested, true)) {
-            array_unshift($requested, 'id');
-        }
-
-        return array_intersect_key($attributes, array_flip($requested));
+        return array_intersect_key($attributes, array_flip($selectedFields));
     }
 }

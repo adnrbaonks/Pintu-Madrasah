@@ -216,6 +216,67 @@ class ApiStandardAndSecurityTest extends TestCase
             ->assertJsonStructure(['data' => ['id', 'full_label'], 'meta' => ['request_id']]);
     }
 
+    public function test_staff_and_student_api_default_to_non_pii_and_filter_requested_fields_by_client_scope(): void
+    {
+        $staff = Staff::factory()->create([
+            'nik' => '1234567890123456',
+            'phone' => '081234567890',
+            'email' => 'private.staff@example.test',
+        ]);
+        $student = Student::factory()->create([
+            'nik' => '9876543210123456',
+            'kk_number' => '1111222233334444',
+            'address' => 'Alamat privat',
+            'father_name' => 'Nama Ayah Privat',
+        ]);
+
+        $readOnlyKey = app(ApiKeyService::class)->createClient([
+            'name' => 'Non-PII consumer',
+            'scopes' => ['students:read', 'staff:read'],
+        ])['plain_key'];
+        $piiKey = app(ApiKeyService::class)->createClient([
+            'name' => 'PII consumer',
+            'scopes' => ['students:read', 'students:pii', 'staff:read', 'staff:pii'],
+        ])['plain_key'];
+
+        $this->withHeader('X-API-KEY', $readOnlyKey)
+            ->getJson('/api/v1/staff')
+            ->assertOk()
+            ->assertJsonMissing(['nik' => $staff->nik])
+            ->assertJsonMissing(['phone' => $staff->phone])
+            ->assertJsonMissing(['email' => $staff->email]);
+
+        $this->withHeader('X-API-KEY', $readOnlyKey)
+            ->getJson('/api/v1/staff?fields=id,nik,phone,email')
+            ->assertOk()
+            ->assertJsonMissing(['nik' => $staff->nik])
+            ->assertJsonMissing(['phone' => $staff->phone])
+            ->assertJsonMissing(['email' => $staff->email]);
+
+        $this->withHeader('X-API-KEY', $readOnlyKey)
+            ->getJson('/api/v1/students?fields=id,nik,kk_number,address,father_name')
+            ->assertOk()
+            ->assertJsonMissing(['nik' => $student->nik])
+            ->assertJsonMissing(['kk_number' => $student->kk_number])
+            ->assertJsonMissing(['address' => 'Alamat privat'])
+            ->assertJsonMissing(['father_name' => 'Nama Ayah Privat']);
+
+        $this->withHeader('X-API-KEY', $piiKey)
+            ->getJson('/api/v1/staff?fields=id,nik,phone,email')
+            ->assertOk()
+            ->assertJsonFragment(['nik' => $staff->nik])
+            ->assertJsonFragment(['phone' => $staff->phone])
+            ->assertJsonFragment(['email' => $staff->email]);
+
+        $this->withHeader('X-API-KEY', $piiKey)
+            ->getJson('/api/v1/students?fields=id,nik,kk_number,address,father_name')
+            ->assertOk()
+            ->assertJsonFragment(['nik' => $student->nik])
+            ->assertJsonFragment(['kk_number' => $student->kk_number])
+            ->assertJsonFragment(['address' => 'Alamat privat'])
+            ->assertJsonFragment(['father_name' => 'Nama Ayah Privat']);
+    }
+
     public function test_emis_endpoints_require_valid_integration_token_or_operator_session_and_validate_jwt_exp(): void
     {
         $operator = User::factory()->create(['role' => 'operator']);

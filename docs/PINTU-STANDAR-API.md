@@ -59,12 +59,17 @@ pm_live_<prefix8>_<secret40>
 
 | Scope | Grup | Deskripsi |
 |---|---|---|
-| `students:read` | Siswa | Membaca daftar dan profil siswa |
-| `students:pii` | Siswa (PII) | Akses eksplisit atribut sensitif siswa (NIK, No. KK, penghasilan orang tua) |
-| `staff:read` | GTK | Membaca daftar dan profil guru & tenaga kependidikan |
-| `staff:pii` | GTK (PII) | Akses eksplisit atribut sensitif GTK (NIK, gaji/tunjangan) |
+| `students:read` | Siswa | Membaca daftar dan profil siswa (hanya atribut non-PII secara default) |
+| `students:pii` | Siswa (PII) | Akses eksplisit atribut sensitif siswa (NIK, No. KK/`kk_number`, alamat, nama orang tua/wali, dokumen) via parameter `?fields=...` |
+| `staff:read` | GTK | Membaca daftar dan profil guru & tenaga kependidikan (hanya atribut non-PII secara default) |
+| `staff:pii` | GTK (PII) | Akses eksplisit atribut sensitif GTK (NIK, NUPTK, NIP, NPK, telepon, email, tempat/tanggal lahir, riwayat pendidikan & kepangkatan) via parameter `?fields=...` |
 | `classes:read` | Akademik | Membaca daftar rombongan belajar, kelas, dan wali kelas |
 | `academic-years:read` | Akademik | Membaca informasi tahun ajaran aktif |
+
+> **Catatan Keamanan PII:**
+> - Terapkan prinsip *deny by default*. Tanpa parameter `?fields=...`, respons API hanya mengembalikan atribut non-PII yang aman.
+> - Atribut PII hanya dapat diakses apabila API client memiliki scope PII terkait (`students:pii` atau `staff:pii`) dan secara eksplisit dicantumkan pada parameter `?fields=...`.
+> - Permintaan atribut PII tanpa kepemilikan scope yang sesuai akan diabaikan secara aman (*silent drop*) sehingga respons tetap valid tanpa membocorkan data pribadi.
 
 ---
 
