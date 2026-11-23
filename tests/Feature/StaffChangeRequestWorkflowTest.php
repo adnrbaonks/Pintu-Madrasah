@@ -211,9 +211,15 @@ class StaffChangeRequestWorkflowTest extends TestCase
 
         $this->assertSame(StaffChangeRequest::STATUS_UNDER_TU_REVIEW, $tuRequest->fresh()->status);
 
-        // Operator lain memverifikasi pengajuan Kaur TU -> berhasil
+        // Operator mencoba memverifikasi pengajuan -> ditolak 403 (bukan wewenang Kaur TU)
         $this->actingAs($operator)
             ->post("/verifikasi-gtk/{$tuRequest->id}/verify", ['notes' => 'Verified by operator'])
+            ->assertForbidden();
+
+        // Kaur TU lain memverifikasi pengajuan Kaur TU -> berhasil
+        $anotherKaurTu = User::factory()->create(['role' => 'kaur_tu']);
+        $this->actingAs($anotherKaurTu)
+            ->post("/verifikasi-gtk/{$tuRequest->id}/verify", ['notes' => 'Verified by peer TU'])
             ->assertSessionHasNoErrors();
 
         $this->assertSame(StaffChangeRequest::STATUS_PENDING_HEAD_APPROVAL, $tuRequest->fresh()->status);
@@ -366,5 +372,172 @@ class StaffChangeRequestWorkflowTest extends TestCase
             ->assertRedirect();
 
         $this->assertDatabaseMissing('staff_documents', ['id' => $docA->id]);
+    }
+
+    public function test_technical_admin_staff_and_operator_cannot_verify_or_approve_change_requests(): void
+    {
+        $staff = Staff::factory()->create(['phone' => '0812345678']);
+        $guru = User::factory()->create(['role' => 'guru', 'staff_id' => $staff->id]);
+        $admin = User::factory()->create(['role' => 'admin']);
+        $staf = User::factory()->create(['role' => 'staf']);
+        $operator = User::factory()->create(['role' => 'operator']);
+
+        // Buat pengajuan berstatus under_tu_review
+        $this->actingAs($guru)->post('/profil-gtk/pengajuan', [
+            'reason' => 'Uji otorisasi penolakan role non-pejabat',
+            'changes' => ['phone' => '0899999999'],
+            'submit_now' => true,
+        ])->assertRedirect();
+
+        $changeRequest = StaffChangeRequest::where('staff_id', $staff->id)->firstOrFail();
+
+        // 1. Verifikasi TU ditolak untuk Admin, Staf, dan Operator
+        foreach ([$admin, $staf, $operator] as $unauthorizedUser) {
+            $this->actingAs($unauthorizedUser)->get('/verifikasi-gtk')->assertForbidden();
+            $this->actingAs($unauthorizedUser)
+                ->post("/verifikasi-gtk/{$changeRequest->id}/verify", ['notes' => 'Attempt by unauthorized'])
+                ->assertForbidden();
+        }
+
+        // 2. Sekarang kita majukan pengajuan ke pending_head_approval lewat Kaur TU yang sah
+        $kaurTu = User::factory()->create(['role' => 'kaur_tu']);
+        $this->actingAs($kaurTu)
+            ->post("/verifikasi-gtk/{$changeRequest->id}/verify", ['notes' => 'Sah diverifikasi TU'])
+            ->assertRedirect();
+
+        $this->assertSame(StaffChangeRequest::STATUS_PENDING_HEAD_APPROVAL, $changeRequest->fresh()->status);
+
+        // 3. Persetujuan Kepala Madrasah ditolak untuk Admin, Kaur TU, Staf, dan Operator
+        foreach ([$admin, $kaurTu, $staf, $operator] as $unauthorizedApprover) {
+            $this->actingAs($unauthorizedApprover)->get('/persetujuan-gtk')->assertForbidden();
+            $this->actingAs($unauthorizedApprover)
+                ->post("/persetujuan-gtk/{$changeRequest->id}/approve", ['notes' => 'Attempt approve'])
+                ->assertForbidden();
+        }
+    }
+
+    public function test_self_decision_blocked_when_approver_is_linked_to_same_staff_via_different_account(): void
+    {
+        $sharedStaff = Staff::factory()->create(['phone' => '0877777777']);
+
+        // Akun pemohon (misal akun guru)
+        $requesterUser = User::factory()->create([
+            'role' => 'guru',
+            'staff_id' => $sharedStaff->id,
+        ]);
+
+        // Akun verifikator Kaur TU tetapi terhubung ke data Staff yang sama!
+        $kaurTuSameStaff = User::factory()->create([
+            'role' => 'kaur_tu',
+            'staff_id' => $sharedStaff->id,
+        ]);
+
+        // Akun Kepala Madrasah yang juga terhubung ke data Staff yang sama
+        $kamadSameStaff = User::factory()->create([
+            'role' => 'kepala_madrasah',
+            'staff_id' => $sharedStaff->id,
+        ]);
+
+        $this->actingAs($requesterUser)->post('/profil-gtk/pengajuan', [
+            'reason' => 'Uji pencegahan self-decision via staff_id',
+            'changes' => ['phone' => '0877777778'],
+            'submit_now' => true,
+        ])->assertRedirect();
+
+        $changeRequest = StaffChangeRequest::where('staff_id', $sharedStaff->id)->firstOrFail();
+
+        // Kaur TU dengan staff_id sama harus ditolak meskipun beda user_id
+        $this->actingAs($kaurTuSameStaff)
+            ->post("/verifikasi-gtk/{$changeRequest->id}/verify", ['notes' => 'Beda user tapi staff sama'])
+            ->assertSessionHasErrors('decision');
+
+        // Lakukan verifikasi dengan Kaur TU lain
+        $legitKaurTu = User::factory()->create(['role' => 'kaur_tu']);
+        $this->actingAs($legitKaurTu)
+            ->post("/verifikasi-gtk/{$changeRequest->id}/verify", ['notes' => 'TU sah'])
+            ->assertRedirect();
+
+        // Kamad dengan staff_id sama harus ditolak meskipun beda user_id
+        $this->actingAs($kamadSameStaff)
+            ->post("/persetujuan-gtk/{$changeRequest->id}/approve", ['notes' => 'Kamad akun terpisah tapi staff sama'])
+            ->assertSessionHasErrors('decision');
+    }
+
+    public function test_explicit_null_and_empty_string_field_clearing_can_be_submitted_and_applied(): void
+    {
+        $staff = Staff::factory()->create([
+            'phone' => '081234567890',
+            'last_title' => 'S.Pd.',
+            'birth_place' => 'Bandung',
+        ]);
+        $guru = User::factory()->create(['role' => 'guru', 'staff_id' => $staff->id]);
+        $kaurTu = User::factory()->create(['role' => 'kaur_tu']);
+        $kamad = User::factory()->create(['role' => 'kepala_madrasah']);
+
+        // Mengajukan pengosongan phone (string kosong '') dan last_title (null)
+        $this->actingAs($guru)->post('/profil-gtk/pengajuan', [
+            'reason' => 'Hapus gelar dan kosongkan nomor telepon sementara',
+            'changes' => [
+                'phone' => '',
+                'last_title' => null,
+            ],
+            'submit_now' => true,
+        ])->assertRedirect();
+
+        $changeRequest = StaffChangeRequest::where('staff_id', $staff->id)->firstOrFail();
+        $this->assertSame(2, $changeRequest->items()->count());
+
+        $phoneItem = $changeRequest->items()->where('field', 'phone')->first();
+        $this->assertNull($phoneItem->proposed_value);
+        $this->assertSame('081234567890', $phoneItem->old_value);
+
+        $titleItem = $changeRequest->items()->where('field', 'last_title')->first();
+        $this->assertNull($titleItem->proposed_value);
+        $this->assertSame('S.Pd.', $titleItem->old_value);
+
+        // Verifikasi TU & Persetujuan Kamad
+        $this->actingAs($kaurTu)->post("/verifikasi-gtk/{$changeRequest->id}/verify")->assertRedirect();
+        $this->actingAs($kamad)->post("/persetujuan-gtk/{$changeRequest->id}/approve")->assertRedirect();
+
+        $staff->refresh();
+        $this->assertNull($staff->phone);
+        $this->assertNull($staff->last_title);
+        $this->assertSame('Bandung', $staff->birth_place); // Tidak terpengaruh
+    }
+
+    public function test_reconciliation_of_pending_external_sync_when_emis_sync_completes(): void
+    {
+        $staff = Staff::factory()->create([
+            'civil_rank' => 'III/a',
+        ]);
+        $guru = User::factory()->create(['role' => 'guru', 'staff_id' => $staff->id]);
+        $kaurTu = User::factory()->create(['role' => 'kaur_tu']);
+        $kamad = User::factory()->create(['role' => 'kepala_madrasah']);
+
+        $this->actingAs($guru)->post('/profil-gtk/pengajuan', [
+            'reason' => 'Update kepangkatan EMIS',
+            'changes' => ['civil_rank' => 'III/b'],
+            'submit_now' => true,
+        ])->assertRedirect();
+
+        $changeRequest = StaffChangeRequest::where('staff_id', $staff->id)->firstOrFail();
+        $this->actingAs($kaurTu)->post("/verifikasi-gtk/{$changeRequest->id}/verify")->assertRedirect();
+        $this->actingAs($kamad)->post("/persetujuan-gtk/{$changeRequest->id}/approve")->assertRedirect();
+
+        $changeRequest->refresh();
+        $this->assertSame(StaffChangeRequest::STATUS_PENDING_EXTERNAL_SYNC, $changeRequest->status);
+
+        // Mensimulasikan hasil sinkronisasi EMIS (master data diperbarui ke nilai proposed)
+        $staff->update(['civil_rank' => 'III/b']);
+
+        // Panggil rekonsiliasi
+        $service = app(StaffChangeRequestService::class);
+        $service->reconcileExternalSync($changeRequest);
+
+        $changeRequest->refresh();
+        $this->assertSame(StaffChangeRequest::STATUS_COMPLETED, $changeRequest->status);
+
+        $item = $changeRequest->items()->where('field', 'civil_rank')->first();
+        $this->assertSame('applied', $item->apply_status);
     }
 }

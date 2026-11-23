@@ -210,6 +210,7 @@ class StaffChangeRequestService
      */
     public function verifyByTu(StaffChangeRequest $changeRequest, User $actor, ?string $notes = null): StaffChangeRequest
     {
+        $this->ensureTuReviewerAuthority($actor);
         $this->ensureNotSelfDecision($changeRequest, $actor);
         $this->ensureStatusIn($changeRequest, [
             StaffChangeRequest::STATUS_SUBMITTED,
@@ -270,12 +271,20 @@ class StaffChangeRequestService
             StaffChangeRequest::STATUS_PENDING_HEAD_APPROVAL,
         ], 'Pengajuan pada status ini tidak dapat diminta revisi.');
 
-        return DB::transaction(function () use ($changeRequest, $actor, $notes): StaffChangeRequest {
+        $isHeadStage = in_array($changeRequest->status, [
+            StaffChangeRequest::STATUS_VERIFIED,
+            StaffChangeRequest::STATUS_PENDING_HEAD_APPROVAL,
+        ], true);
+
+        if ($isHeadStage) {
+            $this->ensureHeadApproverAuthority($actor);
+        } else {
+            $this->ensureTuReviewerAuthority($actor);
+        }
+
+        return DB::transaction(function () use ($changeRequest, $actor, $notes, $isHeadStage): StaffChangeRequest {
             $beforeStatus = $changeRequest->status;
-            $stage = in_array($changeRequest->status, [
-                StaffChangeRequest::STATUS_VERIFIED,
-                StaffChangeRequest::STATUS_PENDING_HEAD_APPROVAL,
-            ], true) ? 'head_approval' : 'tu_review';
+            $stage = $isHeadStage ? 'head_approval' : 'tu_review';
 
             StaffChangeApproval::create([
                 'request_id' => $changeRequest->id,
@@ -318,6 +327,7 @@ class StaffChangeRequestService
      */
     public function rejectByTu(StaffChangeRequest $changeRequest, User $actor, string $notes): StaffChangeRequest
     {
+        $this->ensureTuReviewerAuthority($actor);
         $this->ensureNotSelfDecision($changeRequest, $actor);
         $this->ensureStatusIn($changeRequest, [
             StaffChangeRequest::STATUS_SUBMITTED,
@@ -336,6 +346,7 @@ class StaffChangeRequestService
         ?string $notes = null,
         bool $autoApply = true,
     ): StaffChangeRequest {
+        $this->ensureHeadApproverAuthority($actor);
         $this->ensureNotSelfDecision($changeRequest, $actor);
         $this->ensureStatusIn($changeRequest, [
             StaffChangeRequest::STATUS_VERIFIED,
@@ -393,6 +404,7 @@ class StaffChangeRequestService
      */
     public function rejectByHead(StaffChangeRequest $changeRequest, User $actor, string $notes): StaffChangeRequest
     {
+        $this->ensureHeadApproverAuthority($actor);
         $this->ensureNotSelfDecision($changeRequest, $actor);
         $this->ensureStatusIn($changeRequest, [
             StaffChangeRequest::STATUS_VERIFIED,
@@ -475,7 +487,7 @@ class StaffChangeRequestService
                 StaffChangeHistory::create([
                     'request_id' => $lockedRequest->id,
                     'item_id' => $item->id,
-                    'applied_value' => (string) $item->proposed_value,
+                    'applied_value' => $item->proposed_value === null ? null : (string) $item->proposed_value,
                     'applied_by' => $actorId,
                     'applied_at' => now(),
                     'source' => 'local',
@@ -582,6 +594,64 @@ class StaffChangeRequestService
     }
 
     /**
+     * Rekonsiliasi item pengajuan berstatus pending_external_sync saat sinkronisasi EMIS terjadi.
+     */
+    public function reconcileExternalSync(StaffChangeRequest $changeRequest, ?User $actor = null): StaffChangeRequest
+    {
+        $this->ensureStatusIn($changeRequest, [
+            StaffChangeRequest::STATUS_PENDING_EXTERNAL_SYNC,
+        ], 'Hanya pengajuan berstatus pending_external_sync yang dapat direkonsiliasi.');
+
+        return DB::transaction(function () use ($changeRequest, $actor): StaffChangeRequest {
+            $staff = $changeRequest->staff()->lockForUpdate()->firstOrFail();
+            $actorId = $actor?->id ?? auth()->id();
+
+            $pendingItems = $changeRequest->items()
+                ->where('apply_status', 'pending_external_sync')
+                ->get();
+
+            foreach ($pendingItems as $item) {
+                $currentVal = $staff->getAttribute($item->field);
+                $currentNormalized = ($currentVal === null || $currentVal === '') ? null : (string) $currentVal;
+                $proposedNormalized = ($item->proposed_value === null || $item->proposed_value === '') ? null : (string) $item->proposed_value;
+
+                if ($currentNormalized === $proposedNormalized) {
+                    $item->update([
+                        'apply_status' => 'applied',
+                        'apply_error' => null,
+                    ]);
+
+                    StaffChangeHistory::create([
+                        'request_id' => $changeRequest->id,
+                        'item_id' => $item->id,
+                        'applied_value' => $proposedNormalized,
+                        'applied_by' => $actorId,
+                        'applied_at' => now(),
+                        'source' => 'emis_sync',
+                    ]);
+                }
+            }
+
+            $remainingPending = $changeRequest->items()
+                ->where('apply_status', '!=', 'applied')
+                ->count();
+
+            if ($remainingPending === 0) {
+                $changeRequest->update([
+                    'status' => StaffChangeRequest::STATUS_COMPLETED,
+                    'current_stage' => 'completed',
+                ]);
+
+                if ($changeRequest->requester) {
+                    $changeRequest->requester->notify(new ChangeRequestApplied($changeRequest));
+                }
+            }
+
+            return $changeRequest->fresh(['items', 'histories']);
+        });
+    }
+
+    /**
      * @param  array<string, mixed>  $proposedChanges
      * @return array<int, array<string, mixed>>
      */
@@ -595,13 +665,9 @@ class StaffChangeRequestService
                 continue;
             }
 
-            if ($proposedValue === null || $proposedValue === '') {
-                continue;
-            }
-
             $currentValue = $staff->getAttribute($field);
-            $currentString = $currentValue === null ? null : (string) $currentValue;
-            $proposedString = (string) $proposedValue;
+            $currentString = ($currentValue === null || $currentValue === '') ? null : (string) $currentValue;
+            $proposedString = ($proposedValue === null || $proposedValue === '') ? null : (string) $proposedValue;
 
             if ($currentString === $proposedString) {
                 continue;
@@ -653,9 +719,45 @@ class StaffChangeRequestService
 
     private function ensureNotSelfDecision(StaffChangeRequest $changeRequest, User $actor): void
     {
-        if ($changeRequest->requester_user_id === $actor->id) {
+        if ($changeRequest->requester_user_id === $actor->id || ($changeRequest->created_by && $changeRequest->created_by === $actor->id)) {
             throw ValidationException::withMessages([
                 'decision' => 'Pemohon tidak diizinkan memverifikasi atau menyetujui pengajuannya sendiri.',
+            ]);
+        }
+
+        if ($changeRequest->staff_id && $actor->staff_id && $changeRequest->staff_id === $actor->staff_id) {
+            throw ValidationException::withMessages([
+                'decision' => 'Pengguna yang terhubung dengan data GTK yang sama dilarang memverifikasi atau menyetujui pengajuan ini.',
+            ]);
+        }
+    }
+
+    private function ensureTuReviewerAuthority(User $actor): void
+    {
+        if ($actor->hasRole('admin') && ! $actor->hasRole('kaur_tu')) {
+            throw ValidationException::withMessages([
+                'actor' => 'Admin teknis tidak berwenang memverifikasi pengajuan perubahan data GTK.',
+            ]);
+        }
+
+        if (! $actor->hasRole('kaur_tu') && ! $actor->can('verify_staff_changes')) {
+            throw ValidationException::withMessages([
+                'actor' => 'Hanya Kaur TU yang memiliki kewenangan memverifikasi perubahan data GTK.',
+            ]);
+        }
+    }
+
+    private function ensureHeadApproverAuthority(User $actor): void
+    {
+        if ($actor->hasRole('admin') && ! $actor->hasRole('kepala_madrasah')) {
+            throw ValidationException::withMessages([
+                'actor' => 'Admin teknis tidak berwenang menyetujui pengajuan perubahan data GTK.',
+            ]);
+        }
+
+        if (! $actor->hasRole('kepala_madrasah') && ! $actor->can('approve_staff_changes')) {
+            throw ValidationException::withMessages([
+                'actor' => 'Hanya Kepala Madrasah yang memiliki kewenangan menyetujui perubahan data GTK.',
             ]);
         }
     }
@@ -687,8 +789,8 @@ class StaffChangeRequestService
         }
 
         $roles = $stage === 'head_approval'
-            ? ['kepala_madrasah', 'admin']
-            : ['kaur_tu', 'operator', 'admin'];
+            ? ['kepala_madrasah']
+            : ['kaur_tu'];
 
         return User::query()
             ->whereIn('role', $roles)

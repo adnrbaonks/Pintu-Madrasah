@@ -4,7 +4,9 @@ namespace App\Jobs;
 
 use App\Models\EmisGtkStaging;
 use App\Models\Staff;
+use App\Models\StaffChangeRequest;
 use App\Services\OutboxService;
+use App\Services\StaffChangeRequestService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -77,6 +79,14 @@ class CommitEmisGtkStagingJob implements ShouldQueue
                             }
 
                             $existing->update(array_filter($staffData, fn ($value) => $value !== null));
+
+                            // Rekonsiliasi pengajuan perubahan GTK yang berstatus pending_external_sync
+                            $pendingRequests = StaffChangeRequest::where('staff_id', $existing->id)
+                                ->where('status', StaffChangeRequest::STATUS_PENDING_EXTERNAL_SYNC)
+                                ->get();
+                            foreach ($pendingRequests as $pendingReq) {
+                                app(StaffChangeRequestService::class)->reconcileExternalSync($pendingReq);
+                            }
 
                             return true;
                         }

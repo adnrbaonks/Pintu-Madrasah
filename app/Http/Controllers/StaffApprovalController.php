@@ -17,6 +17,8 @@ class StaffApprovalController extends Controller
 
     public function index(Request $request): Response
     {
+        $this->authorizeApprover($request);
+
         $statusFilter = $request->input('status');
 
         $requests = StaffChangeRequest::query()
@@ -51,8 +53,10 @@ class StaffApprovalController extends Controller
         ]);
     }
 
-    public function show(StaffChangeRequest $changeRequest): Response
+    public function show(Request $request, StaffChangeRequest $changeRequest): Response
     {
+        $this->authorizeApprover($request);
+
         $changeRequest->load([
             'staff:id,full_name_with_titles,nip,nuptk,employment_status',
             'requester:id,name,username,role',
@@ -70,6 +74,8 @@ class StaffApprovalController extends Controller
 
     public function approve(Request $request, StaffChangeRequest $changeRequest): RedirectResponse
     {
+        $this->authorizeApprover($request);
+
         $validated = $request->validate([
             'notes' => ['nullable', 'string', 'max:1000'],
         ]);
@@ -85,6 +91,8 @@ class StaffApprovalController extends Controller
 
     public function revision(Request $request, StaffChangeRequest $changeRequest): RedirectResponse
     {
+        $this->authorizeApprover($request);
+
         $validated = $request->validate([
             'notes' => ['required', 'string', 'max:1000'],
         ]);
@@ -100,6 +108,8 @@ class StaffApprovalController extends Controller
 
     public function reject(Request $request, StaffChangeRequest $changeRequest): RedirectResponse
     {
+        $this->authorizeApprover($request);
+
         $validated = $request->validate([
             'notes' => ['required', 'string', 'max:1000'],
         ]);
@@ -111,5 +121,22 @@ class StaffApprovalController extends Controller
         );
 
         return back()->with('success', 'Pengajuan perubahan data ditolak oleh Kepala Madrasah.');
+    }
+
+    private function authorizeApprover(Request $request): void
+    {
+        $user = $request->user();
+
+        if (! $user) {
+            abort(401);
+        }
+
+        if ($user->hasRole('admin') && ! $user->hasRole('kepala_madrasah')) {
+            abort(403, 'Admin teknis tidak berwenang menyetujui pengajuan perubahan data GTK.');
+        }
+
+        if (! $user->hasRole('kepala_madrasah') && ! $user->can('approve_staff_changes')) {
+            abort(403, 'Hanya Kepala Madrasah yang memiliki kewenangan menyetujui perubahan data GTK.');
+        }
     }
 }

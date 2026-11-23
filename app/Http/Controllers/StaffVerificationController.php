@@ -17,6 +17,8 @@ class StaffVerificationController extends Controller
 
     public function index(Request $request): Response
     {
+        $this->authorizeVerifier($request);
+
         $statusFilter = $request->input('status');
 
         $requests = StaffChangeRequest::query()
@@ -43,8 +45,10 @@ class StaffVerificationController extends Controller
         ]);
     }
 
-    public function show(StaffChangeRequest $changeRequest): Response
+    public function show(Request $request, StaffChangeRequest $changeRequest): Response
     {
+        $this->authorizeVerifier($request);
+
         $changeRequest->load([
             'staff:id,full_name_with_titles,nip,nuptk,employment_status',
             'requester:id,name,username,role',
@@ -62,6 +66,8 @@ class StaffVerificationController extends Controller
 
     public function verify(Request $request, StaffChangeRequest $changeRequest): RedirectResponse
     {
+        $this->authorizeVerifier($request);
+
         $validated = $request->validate([
             'notes' => ['nullable', 'string', 'max:1000'],
         ]);
@@ -77,6 +83,8 @@ class StaffVerificationController extends Controller
 
     public function revision(Request $request, StaffChangeRequest $changeRequest): RedirectResponse
     {
+        $this->authorizeVerifier($request);
+
         $validated = $request->validate([
             'notes' => ['required', 'string', 'max:1000'],
         ]);
@@ -92,6 +100,8 @@ class StaffVerificationController extends Controller
 
     public function reject(Request $request, StaffChangeRequest $changeRequest): RedirectResponse
     {
+        $this->authorizeVerifier($request);
+
         $validated = $request->validate([
             'notes' => ['required', 'string', 'max:1000'],
         ]);
@@ -103,5 +113,22 @@ class StaffVerificationController extends Controller
         );
 
         return back()->with('success', 'Pengajuan perubahan data ditolak pada tahap verifikasi Tata Usaha.');
+    }
+
+    private function authorizeVerifier(Request $request): void
+    {
+        $user = $request->user();
+
+        if (! $user) {
+            abort(401);
+        }
+
+        if ($user->hasRole('admin') && ! $user->hasRole('kaur_tu')) {
+            abort(403, 'Admin teknis tidak berwenang memverifikasi pengajuan perubahan data GTK.');
+        }
+
+        if (! $user->hasRole('kaur_tu') && ! $user->can('verify_staff_changes')) {
+            abort(403, 'Hanya Kaur TU yang memiliki kewenangan memverifikasi perubahan data GTK.');
+        }
     }
 }

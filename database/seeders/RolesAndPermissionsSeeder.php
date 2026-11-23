@@ -79,7 +79,7 @@ class RolesAndPermissionsSeeder extends Seeder
         $staf->syncPermissions([
             'view_students', 'create_students', 'edit_students', 'export_students',
             'manage_archives', 'manage_organization',
-            'view_staff', 'edit_staff', 'verify_staff_changes',
+            'view_staff', 'edit_staff',
             'view_rombels', 'manage_rombels',
             'view_academic_years',
             'view_grades',
@@ -96,7 +96,7 @@ class RolesAndPermissionsSeeder extends Seeder
         $operator->syncPermissions([
             'view_students', 'create_students', 'edit_students', 'export_students',
             'manage_archives', 'manage_organization',
-            'view_staff', 'create_staff', 'edit_staff', 'verify_staff_changes',
+            'view_staff', 'create_staff', 'edit_staff',
             'view_rombels', 'manage_rombels',
             'view_academic_years', 'manage_academic_years',
             'view_grades', 'manage_grades',
@@ -146,9 +146,14 @@ class RolesAndPermissionsSeeder extends Seeder
             'view_audit_logs',
         ]);
 
-        // 7) Admin: Seluruh hak akses sistem
+        // 7) Admin: Seluruh hak akses teknis & manajemen madrasah,
+        // KECUALI kewenangan pejabat substantif madrasah (verifikasi Kaur TU & persetujuan Kepala Madrasah)
+        // sesuai aturan WP0.5 TAHAP 3 bahwa admin teknis tidak otomatis menjadi pejabat pemutus.
         $admin = Role::findOrCreate('admin');
-        $admin->syncPermissions(Permission::all());
+        $substantiveDecisionPermissions = ['verify_staff_changes', 'approve_staff_changes'];
+        $admin->syncPermissions(
+            Permission::whereNotIn('name', $substantiveDecisionPermissions)->get()
+        );
 
         // ── 3. Backfill User yang Ada ─────────────────────────────────
         foreach (User::all() as $user) {
