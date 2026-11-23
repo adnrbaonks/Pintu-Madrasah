@@ -11,10 +11,13 @@ use App\Models\WebhookDelivery;
 use App\Models\WebhookSubscription;
 use App\Services\OutboxService;
 use App\Services\WebhookPublisher;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Testing\LazilyRefreshDatabase;
 use Illuminate\Http\Client\Request as HttpClientRequest;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 class WebhookOutboxAndReliabilityTest extends TestCase
@@ -236,5 +239,172 @@ class WebhookOutboxAndReliabilityTest extends TestCase
             Staff::factory()->create(['full_name_with_titles' => 'Bulk Import GTK']);
         });
         $this->assertSame($beforeCount, OutboxEvent::count());
+    }
+
+    public function test_outbox_atomic_claim_and_concurrency_isolation(): void
+    {
+        $service = app(OutboxService::class);
+
+        // Buat 10 event pending
+        for ($i = 1; $i <= 10; $i++) {
+            OutboxEvent::create([
+                'aggregate_type' => 'App\Models\Staff',
+                'aggregate_id' => (string) Str::uuid(),
+                'event_type' => 'staff.updated',
+                'payload' => ['seq' => $i],
+                'status' => OutboxEvent::STATUS_PENDING,
+                'available_at' => now()->subMinute(),
+                'attempts' => 0,
+            ]);
+        }
+
+        // Simulasi Pekerja A mengklaim 6 event
+        $claimedA = $service->claimNextBatch(limit: 6, leaseSeconds: 120, workerId: 'worker-alpha');
+        $this->assertCount(6, $claimedA);
+        foreach ($claimedA as $event) {
+            $this->assertSame(OutboxEvent::STATUS_PROCESSING, $event->status);
+            $this->assertSame('worker-alpha', $event->leased_by);
+            $this->assertNotNull($event->lease_until);
+        }
+
+        // Simulasi Pekerja B mengklaim 6 event secara konkuren
+        $claimedB = $service->claimNextBatch(limit: 6, leaseSeconds: 120, workerId: 'worker-beta');
+        $this->assertCount(4, $claimedB);
+        foreach ($claimedB as $event) {
+            $this->assertSame(OutboxEvent::STATUS_PROCESSING, $event->status);
+            $this->assertSame('worker-beta', $event->leased_by);
+        }
+
+        // Pastikan tidak ada event yang tumpang tindih (disjoint set)
+        $idsA = $claimedA->pluck('id')->all();
+        $idsB = $claimedB->pluck('id')->all();
+        $this->assertEmpty(array_intersect($idsA, $idsB));
+
+        // Pekerja C yang datang berikutnya tidak mendapatkan event pending
+        $claimedC = $service->claimNextBatch(limit: 5, leaseSeconds: 120, workerId: 'worker-gamma');
+        $this->assertCount(0, $claimedC);
+    }
+
+    public function test_outbox_lease_expiry_and_recovery(): void
+    {
+        $service = app(OutboxService::class);
+
+        // Event yang terhenti dalam status processing dan lease sudah lewat 5 menit lalu
+        $stalled = OutboxEvent::create([
+            'aggregate_type' => 'App\Models\Student',
+            'aggregate_id' => (string) Str::uuid(),
+            'event_type' => 'student.updated',
+            'payload' => ['name' => 'Siswa Stalled'],
+            'status' => OutboxEvent::STATUS_PROCESSING,
+            'reserved_at' => now()->subMinutes(6),
+            'lease_until' => now()->subMinute(),
+            'leased_by' => 'crashed-worker-pid-999',
+            'attempts' => 1,
+        ]);
+
+        $recovered = $service->recoverStalled(maxAttempts: 5);
+        $this->assertSame(1, $recovered);
+
+        $stalled->refresh();
+        $this->assertSame(OutboxEvent::STATUS_PENDING, $stalled->status);
+        $this->assertSame(2, $stalled->attempts);
+        $this->assertNull($stalled->lease_until);
+        $this->assertNull($stalled->leased_by);
+        $this->assertNotNull($stalled->available_at);
+        $this->assertTrue($stalled->available_at->isFuture());
+    }
+
+    public function test_outbox_stalled_max_attempts_moves_to_failed_dead_letter(): void
+    {
+        $service = app(OutboxService::class);
+
+        $deadLetterEvent = OutboxEvent::create([
+            'aggregate_type' => 'App\Models\Staff',
+            'aggregate_id' => (string) Str::uuid(),
+            'event_type' => 'staff.updated',
+            'payload' => ['name' => 'Guru Dead Letter'],
+            'status' => OutboxEvent::STATUS_PROCESSING,
+            'lease_until' => now()->subMinute(),
+            'leased_by' => 'old-worker',
+            'attempts' => 4, // Upaya ke-5 akan menjadi dead letter
+        ]);
+
+        $recovered = $service->recoverStalled(maxAttempts: 5);
+        $this->assertSame(1, $recovered);
+
+        $deadLetterEvent->refresh();
+        $this->assertSame(OutboxEvent::STATUS_FAILED, $deadLetterEvent->status);
+        $this->assertSame(5, $deadLetterEvent->attempts);
+        $this->assertNull($deadLetterEvent->lease_until);
+        $this->assertStringContainsString('dead-letter', $deadLetterEvent->last_error);
+    }
+
+    public function test_outbox_asynchronous_queue_delivery_using_database_driver(): void
+    {
+        // Pastikan driver asynchronous (database) aktif, bukan sync
+        config(['queue.default' => 'database']);
+
+        Http::fake([
+            'https://satelit.example.com/*' => Http::response(['ok' => true], 200),
+        ]);
+
+        $sub = WebhookSubscription::create([
+            'event' => 'student.enrolled',
+            'target_url' => 'https://satelit.example.com/enrolled',
+            'secret' => 'whsec_async_queue_secret',
+            'is_active' => true,
+        ]);
+
+        $outbox = OutboxEvent::create([
+            'aggregate_type' => 'App\Models\Student',
+            'aggregate_id' => (string) Str::uuid(),
+            'event_type' => 'student.enrolled',
+            'payload' => ['nisn' => '1234567890', 'name' => 'Siswa Antrean Async'],
+            'status' => OutboxEvent::STATUS_PENDING,
+            'available_at' => now(),
+            'attempts' => 0,
+        ]);
+
+        $service = app(OutboxService::class);
+        $processed = $service->processPending(limit: 10);
+        $this->assertSame(1, $processed);
+
+        // Verifikasi bahwa job benar-benar tersimpan di tabel database jobs (antrean asynchronous)
+        $this->assertDatabaseHas('jobs', [
+            'queue' => 'webhooks',
+        ]);
+
+        // Jalankan worker queue asynchronous secara eksplisit
+        Artisan::call('queue:work', [
+            '--once' => true,
+            '--queue' => 'webhooks',
+        ]);
+
+        // Verifikasi webhook terkirim via HTTP dan outbox event berstatus published dengan lease bersih
+        Http::assertSentCount(1);
+        $outbox->refresh();
+        $this->assertSame(OutboxEvent::STATUS_PUBLISHED, $outbox->status);
+        $this->assertNull($outbox->lease_until);
+        $this->assertNull($outbox->leased_by);
+        $this->assertSame(1, $outbox->attempts);
+
+        // Tabel jobs kini kosong karena job selesai dieksekusi
+        $this->assertDatabaseCount('jobs', 0);
+    }
+
+    public function test_process_outbox_command_and_scheduler_registration(): void
+    {
+        $code = Artisan::call('webhooks:process-outbox', [
+            '--limit' => 50,
+        ]);
+        $this->assertSame(0, $code);
+
+        // Verifikasi command terjadwal di routes/console.php
+        $schedule = app(Schedule::class);
+        $hasScheduledOutbox = collect($schedule->events())->contains(function ($event) {
+            return str_contains($event->command ?? '', 'webhooks:process-outbox');
+        });
+
+        $this->assertTrue($hasScheduledOutbox, 'Command webhooks:process-outbox harus terdaftar di scheduler.');
     }
 }

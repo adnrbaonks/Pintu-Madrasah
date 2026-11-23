@@ -57,6 +57,17 @@ class DispatchWebhookJob implements ShouldQueue
     {
         $publisher ??= app(WebhookPublisher::class);
 
+        if ($this->outboxEventId) {
+            OutboxEvent::whereKey($this->outboxEventId)
+                ->whereIn('status', [OutboxEvent::STATUS_PENDING, OutboxEvent::STATUS_PROCESSING])
+                ->update([
+                    'status' => OutboxEvent::STATUS_PROCESSING,
+                    'reserved_at' => now(),
+                    'lease_until' => now()->addSeconds(300),
+                    'leased_by' => 'job:'.($this->job?->getJobId() ?? Str::random(8)),
+                ]);
+        }
+
         $query = WebhookSubscription::where('is_active', true)
             ->where('event', $this->event);
 
@@ -94,6 +105,9 @@ class DispatchWebhookJob implements ShouldQueue
             OutboxEvent::whereKey($this->outboxEventId)->update([
                 'status' => OutboxEvent::STATUS_FAILED,
                 'last_error' => mb_substr($e->getMessage(), 0, 1000),
+                'reserved_at' => null,
+                'lease_until' => null,
+                'leased_by' => null,
             ]);
         }
 
@@ -231,6 +245,9 @@ class DispatchWebhookJob implements ShouldQueue
         OutboxEvent::whereKey($this->outboxEventId)->update([
             'status' => OutboxEvent::STATUS_PUBLISHED,
             'last_error' => null,
+            'reserved_at' => null,
+            'lease_until' => null,
+            'leased_by' => null,
         ]);
     }
 
@@ -255,6 +272,9 @@ class DispatchWebhookJob implements ShouldQueue
                 'status' => OutboxEvent::STATUS_PUBLISHED,
                 'attempts' => $newAttempts,
                 'last_error' => null,
+                'reserved_at' => null,
+                'lease_until' => null,
+                'leased_by' => null,
             ]);
 
             return;
@@ -269,6 +289,9 @@ class DispatchWebhookJob implements ShouldQueue
             'available_at' => $isDeadLetter
                 ? null
                 : now()->addSeconds($this->backoffSecondsForAttempt($newAttempts)),
+            'reserved_at' => null,
+            'lease_until' => null,
+            'leased_by' => null,
         ]);
     }
 }
