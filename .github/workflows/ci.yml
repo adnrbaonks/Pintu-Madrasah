@@ -45,6 +45,9 @@ jobs:
       - name: Check formatting
         run: ./vendor/bin/pint --test app config database routes tests bootstrap/app.php
 
+      - name: Validate OpenAPI generation
+        run: php artisan l5-swagger:generate
+
   tests-sqlite:
     name: Tests (SQLite)
     runs-on: ubuntu-latest

@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\EmisController;
 use App\Http\Controllers\Api\V1\AcademicYearApiController;
 use App\Http\Controllers\Api\V1\ClassApiController;
+use App\Http\Controllers\Api\V1\HealthController;
 use App\Http\Controllers\Api\V1\StaffApiController;
 use App\Http\Controllers\Api\V1\StudentApiController;
 use Illuminate\Support\Facades\Route;
@@ -15,7 +16,7 @@ use Illuminate\Support\Facades\Route;
 
 // ── Health Check ──────────────────────────────────────────────────────
 Route::get('/health', fn () => response()->json(['status' => 'ok', 'app' => config('app.name')]));
-Route::get('/v1/health', fn () => response()->json(['status' => 'ok', 'version' => 'v1', 'app' => config('app.name')]));
+Route::get('/v1/health', HealthController::class);
 
 // ── EMIS Integration — Token Reception & Sync (Protected by Integration Token / Operator Session) ──
 Route::prefix('emis')->middleware(['throttle:60,1', 'integration.token:emis_siswa'])->group(function () {

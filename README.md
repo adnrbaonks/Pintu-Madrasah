@@ -1,62 +1,104 @@
-# Pintu-Madrasah
+# PINTU MADRASAH — Pusat Informasi & Tata Usaha Madrasah Terpadu
 
-Sistem informasi tata usaha madrasah terpadu (Laravel + Inertia + React).
+**PINTU MADRASAH** adalah sistem informasi administrasi tata usaha dan *Master Data Hub* (Siswa, GTK, Organisasi, Akademik, PPDB, Mutasi, BK, Leger, dan Persuratan) berbasis **Laravel 12**, **Inertia.js**, **React 19 (TypeScript)**, dan **Tailwind CSS 4**.
 
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+Aplikasi ini menjadi sumber kebenaran tunggal (*Single Source of Truth*) bagi ekosistem aplikasi satelit madrasah (**SIPSMAD**, **PTSP**, **E-Surat**, **RDM**, dan **E-Learning**).
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+---
 
-## About Laravel
+## Fitur & Modul Utama
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+1. **Master Data & Kamus Kepemilikan Data (`/siswa`, `/gtk`, `/master/*`, `/pengaturan/kamus-data`):**
+   - Pengelolaan biodata Siswa & GTK dengan kebijakan otoritas per-field (`pintu` vs `emis`) yang ditegakkan oleh `DataOwnershipService`.
+   - Master Mata Pelajaran (`/master/subjects`), Tingkatan Kelas (`/master/classes`), Tahun Ajaran & Kunci Periode (`/master/academic-years`), serta Rombongan Belajar (`/rombel`).
+2. **Struktur Organisasi & Penugasan (`/organisasi*`):**
+   - Hirarki Unit Kerja, Jabatan Struktural/Fungsional/Tambahan, SK Penugasan Pegawai dengan validasi anti-tumpang-tindih jabatan utama, dan resolusi otomatis Pejabat Penyetuju Level 1 (Kepala Madrasah) & Level 2 (Kepala TU / Waka).
+3. **Layanan Mandiri GTK & Workflow Persetujuan Berjenjang (`/profil-gtk*`, `/verifikasi-gtk*`, `/persetujuan-gtk*`):**
+   - Portal mandiri guru/pegawai untuk melihat profil, mengunggah dokumen kepegawaian privat, dan mengajukan perubahan data beserta bukti lampiran.
+   - State machine persetujuan 2 tingkat (**Verifikasi TU → Persetujuan Kepala Madrasah**) dengan pencegahan *self-approval*, penguncian baris (`lockForUpdate`), pemisahan field lokal vs `pending_external_sync` (EMIS), riwayat perubahan per-field, dan notifikasi in-app.
+4. **RBAC Terpadu (`/pengaturan/roles`):**
+   - Otorisasi berbasis `spatie/laravel-permission` dengan 7 role resmi madrasah (`admin`, `kepala_madrasah`, `kaur_tu`, `staf`, `operator`, `guru`, `pegawai`) dan 28 permission granular.
+5. **Open API Gateway v1, Keamanan Key SHA-256 & Transactional Outbox Webhook (`/api-clients`, `/webhooks`):**
+   - Endpoint `/api/v1/*` dengan kunci `pm_live_<prefix8>_<secret40>` ter-hash SHA-256, kontrol scope granular (termasuk `students:pii` & `staff:pii`), header `X-Request-Id`, `Idempotency-Key`, seleksi kolom `?fields=`, dan sinkronisasi inkremental `?updated_since=`.
+   - Transactional Outbox (`outbox_events`) dengan pengiriman webhook ber-signature HMAC-SHA256 v2 (`X-Webhook-Signature-V2`), retry eksponensial 5x, deduplikasi `event_id`, dan replay dari UI.
+6. **Sinkronisasi EMIS Siswa & EMIS GTK Terproteksi (`/emis/siswa`, `/emis/gtk`):**
+   - Penarikan dan staging data EMIS menggunakan token kredensial integrasi terkelola (`pm_int_<prefix8>_<secret40>`), validasi masa berlaku JWT, dan audit `integration_logs`.
+7. **Operasional Akademik & Kesiswaan:**
+   - PPDB Online & Penempatan Kelas (`/ppdb`), Mutasi Masuk/Keluar (`/mutasi`), Kenaikan Kelas (`/kenaikan-kelas`), Bimbingan Konseling (`/bk`), Leger Nilai dengan Formula Dinamis per Tahun Ajaran (`/leger`), serta Cetak Dokumen & Verifikasi QR (`/verify/{token}`).
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+---
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+## Persyaratan Sistem
 
-## Learning Laravel
+- **PHP:** 8.4+ (ekstensi: `pdo_mysql`, `pdo_sqlite`, `redis`, `gd`, `intl`, `zip`, `bcmath`)
+- **Database:** MySQL 8.0+ (Produksi/Staging) atau SQLite (Pengembangan Lokal)
+- **Cache & Queue:** Redis 7+ atau Database Queue
+- **Node.js:** 22+ & NPM
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+---
 
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
-
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
-
-## Agentic Development
-
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
+## Instalasi & Pengembangan Lokal
 
 ```bash
-composer require laravel/boost --dev
+# 1. Pasang dependensi PHP & JS
+composer install
+npm install
 
-php artisan boost:install
+# 2. Salin konfigurasi environment & buat APP_KEY
+cp .env.example .env
+php artisan key:generate
+
+# 3. Jalankan migrasi & seeder awal (termasuk RBAC RolePermissionSeeder)
+php artisan migrate --seed
+
+# 4. Bangun aset frontend (atau jalankan vite dev server)
+npm run build
+
+# 5. Jalankan server aplikasi & worker antrean
+php artisan serve
+php artisan queue:work --queue=default,webhooks,emis
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+---
 
-## Contributing
+## Pengujian & Kualitas Kode
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+Seluruh perubahan wajib lulus test otomatis pada **SQLite** dan **MySQL 8**, pemeriksaan format **Laravel Pint**, validasi **OpenAPI**, serta build **Vite TypeScript**:
 
-## Code of Conduct
+```bash
+# Jalankan seluruh test suite (SQLite in-memory)
+php artisan test
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+# Jalankan seluruh test suite terhadap MySQL 8
+DB_CONNECTION=mysql DB_HOST=127.0.0.1 DB_PORT=3306 DB_DATABASE=pintu_test \
+DB_USERNAME=root DB_PASSWORD=root php artisan test
 
-## Security Vulnerabilities
+# Format kode PHP dengan Laravel Pint
+./vendor/bin/pint
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+# Generate ulang spesifikasi OpenAPI (Swagger)
+php artisan l5-swagger:generate
 
-## License
+# Build produksi frontend
+npm run build
+```
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+---
+
+## Perintah Artisan Penting
+
+| Perintah | Fungsi |
+|---|---|
+| `php artisan api-keys:hash-existing` | Mem-backfill `key_hash` SHA-256 dari `api_key` plaintext lama lalu mengosongkan plaintext |
+| `php artisan webhooks:process-outbox` | Memproses antrean `outbox_events` yang berstatus `pending` (tambahkan `--retry-failed` untuk me-replay dead-letter) |
+| `php artisan grades:recalculate` | Menghitung ulang nilai akhir & predikat pada leger berdasarkan formula tahun ajaran (`GradeService`) |
+| `php artisan l5-swagger:generate` | Memperbarui berkas spesifikasi OpenAPI untuk `/api/documentation` |
+
+---
+
+## Dokumentasi Terkait
+
+- [Standar API & Integrasi v1 (`docs/PINTU-STANDAR-API.md`)](docs/PINTU-STANDAR-API.md)
+- [Changelog & Kebijakan Deprecation API (`docs/api/CHANGELOG.md`)](docs/api/CHANGELOG.md)
+- [Panduan & Checklist Onboarding Aplikasi Satelit (`docs/api/SATELLITE-ONBOARDING.md`)](docs/api/SATELLITE-ONBOARDING.md)
+- [Panduan Deployment & Rollback Staging/Produksi (`docs/DEPLOYMENT.md`)](docs/DEPLOYMENT.md)
