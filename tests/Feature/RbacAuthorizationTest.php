@@ -97,4 +97,30 @@ class RbacAuthorizationTest extends TestCase
         $this->assertTrue($user2->fresh()->hasRole('operator'));
         $this->assertTrue($user3->fresh()->hasRole('kaur_tu'));
     }
+
+    public function test_permission_gated_routes_follow_spatie_permissions(): void
+    {
+        $kaur = User::factory()->create(['role' => 'kaur_tu']);
+        $kamad = User::factory()->create(['role' => 'kepala_madrasah']);
+
+        // view_audit_logs dimiliki admin & kepala_madrasah, bukan kaur_tu
+        $this->actingAs($kamad)->get('/audit-logs')->assertOk();
+        $this->actingAs($kaur)->get('/audit-logs')->assertForbidden();
+
+        // manage_* hanya admin; role lain 403
+        $this->actingAs($kaur)->get('/users')->assertForbidden();
+        $this->actingAs($kaur)->get('/pengaturan')->assertForbidden();
+        $this->actingAs($kaur)->get('/api-clients')->assertForbidden();
+        $this->actingAs($kaur)->get('/webhooks')->assertForbidden();
+    }
+
+    public function test_granting_permission_grants_route_access_independently_of_role_string(): void
+    {
+        $guru = User::factory()->create(['role' => 'guru']);
+        $this->actingAs($guru)->get('/audit-logs')->assertForbidden();
+
+        $guru->givePermissionTo('view_audit_logs');
+
+        $this->actingAs($guru)->get('/audit-logs')->assertOk();
+    }
 }

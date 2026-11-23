@@ -125,8 +125,8 @@ Route::middleware('auth')->group(function () {
     // ── Dashboard — semua role ─────────────────────────────────────
     Route::get('/', [DashboardController::class, 'index'])->name('dashboard');
 
-    // ── Manajemen Pengguna — admin only ────────────────────────────
-    Route::middleware('checkrole:admin')->prefix('users')->name('users.')->group(function () {
+    // ── Manajemen Pengguna — permission-gated (manage_users; admin by default) ──
+    Route::middleware('permission:manage_users')->prefix('users')->name('users.')->group(function () {
         Route::get('/', [UserController::class, 'index'])->name('index');
         Route::post('/', [UserController::class, 'store'])->name('store');
         Route::put('/{user}', [UserController::class, 'update'])->name('update');
@@ -135,8 +135,8 @@ Route::middleware('auth')->group(function () {
         Route::delete('/{user}', [UserController::class, 'destroy'])->name('destroy');
     });
 
-    // ── Pengaturan — admin only ────────────────────────────────────
-    Route::middleware('checkrole:admin')->prefix('pengaturan')->name('settings.')->group(function () {
+    // ── Pengaturan — permission-gated (manage_settings; admin by default) ──
+    Route::middleware('permission:manage_settings')->prefix('pengaturan')->name('settings.')->group(function () {
         Route::get('/', [SettingController::class, 'index'])->name('index');
         Route::post('/', [SettingController::class, 'update'])->name('update');
         Route::post('/emis-sso-token', [SettingController::class, 'saveEmisSsoToken'])->name('emis-sso-token');
@@ -146,18 +146,18 @@ Route::middleware('auth')->group(function () {
         Route::get('/roles', [RoleController::class, 'index'])->name('roles.index');
         Route::put('/roles/{role}', [RoleController::class, 'update'])->name('roles.update');
     });
-    Route::middleware('checkrole:admin,kepala_madrasah,kaur_tu,operator')->get('/pengaturan/kamus-data', [SettingController::class, 'dataDictionary'])->name('settings.data-dictionary');
+    Route::middleware('role_or_permission:admin,kaur_tu,operator|view_academic_years')->get('/pengaturan/kamus-data', [SettingController::class, 'dataDictionary'])->name('settings.data-dictionary');
 
-    // ── API Clients (Gateway Keys) — admin only ───────────────────
-    Route::middleware('checkrole:admin')->prefix('api-clients')->name('api-clients.')->group(function () {
+    // ── API Clients (Gateway Keys) — permission-gated (manage_api_clients) ──
+    Route::middleware('permission:manage_api_clients')->prefix('api-clients')->name('api-clients.')->group(function () {
         Route::get('/', [ApiClientController::class, 'index'])->name('index');
         Route::post('/', [ApiClientController::class, 'store'])->name('store');
         Route::post('/{apiClient}/toggle-active', [ApiClientController::class, 'toggleActive'])->name('toggle-active');
         Route::post('/{apiClient}/regenerate', [ApiClientController::class, 'regenerate'])->name('regenerate');
         Route::delete('/{apiClient}', [ApiClientController::class, 'destroy'])->name('destroy');
     });
-    // ── Webhooks (Event Subscription) — admin only ───────────────
-    Route::middleware('checkrole:admin')->prefix('webhooks')->name('webhooks.')->group(function () {
+    // ── Webhooks (Event Subscription) — permission-gated (manage_webhooks) ──
+    Route::middleware('permission:manage_webhooks')->prefix('webhooks')->name('webhooks.')->group(function () {
         Route::get('/', [WebhookSubscriptionController::class, 'index'])->name('index');
         Route::post('/', [WebhookSubscriptionController::class, 'store'])->name('store');
         Route::post('/deliveries/{delivery}/retry', [WebhookSubscriptionController::class, 'retryDelivery'])->name('deliveries.retry');
@@ -175,8 +175,8 @@ Route::middleware('auth')->group(function () {
         Route::get('/{bk}/summon', [BkController::class, 'printSummon'])->name('summon');
     });
 
-    // ── Audit Logs — admin only ────────────────────────────────────
-    Route::middleware('checkrole:admin,kepala_madrasah')->prefix('audit-logs')->name('audit-logs.')->group(function () {
+    // ── Audit Logs — permission-gated (view_audit_logs; admin & kamad) ──
+    Route::middleware('permission:view_audit_logs')->prefix('audit-logs')->name('audit-logs.')->group(function () {
         Route::get('/', [AuditLogController::class, 'index'])->name('index');
     });
 
