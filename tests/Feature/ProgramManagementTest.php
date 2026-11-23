@@ -40,10 +40,10 @@ class ProgramManagementTest extends TestCase
             'status' => Program::STATUS_SUBMITTED,
         ])->assertRedirect();
 
-        // Staf tidak boleh langsung menyetujui program (403)
+        // Staf tidak dapat melompati tahap verifikasi.
         $this->actingAs($staf)->post("/program-kerja/{$program->id}/status", [
             'status' => Program::STATUS_APPROVED,
-        ])->assertForbidden();
+        ])->assertStatus(422);
 
         $this->actingAs($kaurTu)->post("/program-kerja/{$program->id}/status", [
             'status' => Program::STATUS_VERIFIED,
@@ -74,7 +74,7 @@ class ProgramManagementTest extends TestCase
 
         // 4. Kirim laporan realisasi kegiatan pertama (capaian 100%) beserta bukti dokumen
         $evidenceFile = UploadedFile::fake()->create('daftar-hadir-workshop.pdf', 100, 'application/pdf');
-        $this->actingAs($staf)->post("/program-kerja/{$program->id}/reports", [
+        $reportResponse = $this->actingAs($staf)->post("/program-kerja/{$program->id}/reports", [
             'program_activity_id' => $firstActivity->id,
             'title' => 'Laporan Pelaksanaan Workshop Kurikulum',
             'report_date' => '2026-02-20',
@@ -84,7 +84,8 @@ class ProgramManagementTest extends TestCase
             'achieved_percent' => 100,
             'evidence_title' => 'Daftar Hadir & Berita Acara Workshop',
             'evidence_file' => $evidenceFile,
-        ])->assertRedirect();
+        ]);
+        $reportResponse->assertSessionHasNoErrors()->assertRedirect();
 
         // Progres program otomatis dihitung rata-rata dari 2 kegiatan (100% dan 0% = 50%)
         $this->assertSame(50, $program->fresh()->progress_percent);
@@ -107,5 +108,84 @@ class ProgramManagementTest extends TestCase
         ])->assertRedirect();
 
         $this->assertSame(ProgramReport::STATUS_APPROVED, $report->fresh()->status);
+    }
+
+    public function test_reports_reject_unrelated_users_and_cross_program_activities(): void
+    {
+        $pic = User::factory()->create(['role' => 'staf']);
+        $outsider = User::factory()->create(['role' => 'staf']);
+        $program = Program::create([
+            'code' => 'PRG/SEC/1', 'title' => 'Program privat',
+            'pic_user_id' => $pic->id, 'status' => Program::STATUS_APPROVED,
+        ]);
+        $otherProgram = Program::create(['code' => 'PRG/SEC/2', 'title' => 'Program lain']);
+        $activity = ProgramActivity::create(['program_id' => $otherProgram->id, 'title' => 'Kegiatan lain']);
+        $payload = [
+            'title' => 'Laporan', 'report_date' => '2026-02-20',
+            'summary' => 'Ringkasan', 'achieved_percent' => 50,
+            'program_activity_id' => $activity->id,
+        ];
+
+        $this->actingAs($outsider)->get("/program-kerja/{$program->id}")->assertForbidden();
+        $this->actingAs($outsider)->postJson("/program-kerja/{$program->id}/reports", $payload)->assertForbidden();
+        $this->actingAs($outsider)->postJson("/program-kerja/{$program->id}/status", ['status' => 'in_progress'])->assertForbidden();
+        $this->actingAs($pic)->postJson("/program-kerja/{$program->id}/reports", $payload)
+            ->assertUnprocessable()->assertJsonValidationErrors('program_activity_id');
+        $this->assertSame(0, $program->reports()->count());
+        $this->assertSame(0, $activity->fresh()->progress_percent);
+    }
+
+    public function test_program_status_cannot_skip_required_approval_stages(): void
+    {
+        $pic = User::factory()->create(['role' => 'staf']);
+        $program = Program::create([
+            'code' => 'PRG/2026/9991',
+            'title' => 'Program uji transisi',
+            'pic_user_id' => $pic->id,
+            'created_by' => $pic->id,
+            'status' => Program::STATUS_DRAFT,
+            'budget_amount' => 0,
+            'progress_percent' => 0,
+        ]);
+
+        $this->actingAs($pic)->post("/program-kerja/{$program->id}/status", [
+            'status' => Program::STATUS_APPROVED,
+        ])->assertStatus(422);
+
+        $this->assertSame(Program::STATUS_DRAFT, $program->fresh()->status);
+    }
+
+    public function test_report_review_must_follow_stage_and_cannot_be_self_reviewed(): void
+    {
+        $pic = User::factory()->create(['role' => 'staf']);
+        $kamad = User::factory()->create(['role' => 'kepala_madrasah']);
+        $program = Program::create([
+            'code' => 'PRG/2026/9992',
+            'title' => 'Program laporan uji',
+            'pic_user_id' => $pic->id,
+            'created_by' => $pic->id,
+            'status' => Program::STATUS_APPROVED,
+            'budget_amount' => 0,
+            'progress_percent' => 0,
+        ]);
+        $report = ProgramReport::create([
+            'program_id' => $program->id,
+            'title' => 'Laporan uji',
+            'report_date' => now()->toDateString(),
+            'summary' => 'Ringkasan',
+            'achieved_percent' => 50,
+            'status' => ProgramReport::STATUS_SUBMITTED,
+            'submitted_by' => $pic->id,
+        ]);
+
+        $this->actingAs($pic)->post("/program-kerja/reports/{$report->id}/review", [
+            'action' => 'verify',
+        ])->assertForbidden();
+
+        $this->actingAs($kamad)->post("/program-kerja/reports/{$report->id}/review", [
+            'action' => 'approve',
+        ])->assertStatus(422);
+
+        $this->assertSame(ProgramReport::STATUS_SUBMITTED, $report->fresh()->status);
     }
 }

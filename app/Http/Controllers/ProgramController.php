@@ -21,6 +21,7 @@ class ProgramController extends Controller
 {
     public function index(Request $request): Response
     {
+        $user = $request->user();
         $query = Program::query()
             ->with([
                 'academicYear:id,year,semester',
@@ -37,6 +38,13 @@ class ProgramController extends Controller
 
         if ($request->filled('unit_id')) {
             $query->where('organization_unit_id', (string) $request->query('unit_id'));
+        }
+
+        if (! in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu', 'operator'], true)) {
+            $query->where(function ($programQuery) use ($user): void {
+                $programQuery->where('pic_user_id', $user->id)
+                    ->orWhereHas('activities', fn ($activityQuery) => $activityQuery->where('pic_user_id', $user->id));
+            });
         }
 
         $programs = $query->limit(100)->get();
@@ -104,8 +112,24 @@ class ProgramController extends Controller
             ->with('success', "Program Kerja {$program->code} berhasil dibuat.");
     }
 
-    public function show(Program $program): Response
+    private function authorizeProgramManager(User $user, Program $program): void
     {
+        $isManager = in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu', 'operator'], true);
+        abort_unless($isManager || $program->pic_user_id === $user->id, 403, 'Akses program tidak diizinkan.');
+    }
+
+    private function authorizeProgramAccess(Request $request, Program $program): void
+    {
+        $user = $request->user();
+        $isManager = in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu', 'operator'], true);
+        $isActivityPic = $program->activities()->where('pic_user_id', $user->id)->exists();
+        abort_unless($isManager || $program->pic_user_id === $user->id || $isActivityPic, 403, 'Akses program tidak diizinkan.');
+    }
+
+    public function show(Request $request, Program $program): Response
+    {
+        $this->authorizeProgramAccess($request, $program);
+
         $program->load([
             'academicYear:id,year,semester',
             'organizationUnit:id,code,name',
@@ -138,7 +162,23 @@ class ProgramController extends Controller
             'approval_notes' => 'nullable|string|max:1000',
         ]);
 
+        $this->authorizeProgramManager($user, $program);
         $targetStatus = $validated['status'];
+        if ($targetStatus === Program::STATUS_SUBMITTED) {
+            abort_unless($user->id === $program->pic_user_id, 403, 'Hanya PIC program yang dapat mengajukan program.');
+        }
+
+        $allowedTransitions = [
+            Program::STATUS_DRAFT => [Program::STATUS_SUBMITTED],
+            Program::STATUS_SUBMITTED => [Program::STATUS_VERIFIED, Program::STATUS_REJECTED],
+            Program::STATUS_VERIFIED => [Program::STATUS_APPROVED, Program::STATUS_REJECTED],
+            Program::STATUS_APPROVED => [Program::STATUS_IN_PROGRESS],
+            Program::STATUS_IN_PROGRESS => [Program::STATUS_COMPLETED],
+        ];
+
+        if (! in_array($targetStatus, $allowedTransitions[$program->status] ?? [], true)) {
+            abort(422, 'Transisi status program tidak valid.');
+        }
 
         if (in_array($targetStatus, [Program::STATUS_APPROVED, Program::STATUS_REJECTED], true)) {
             if (! in_array($user->role, ['admin', 'kepala_madrasah'], true)) {
@@ -172,6 +212,10 @@ class ProgramController extends Controller
      */
     public function storeActivity(Request $request, Program $program): RedirectResponse
     {
+        $user = $request->user();
+        $this->authorizeProgramManager($user, $program);
+        abort_if(in_array($program->status, [Program::STATUS_COMPLETED, Program::STATUS_REJECTED], true), 422, 'Program telah ditutup.');
+
         $validated = $request->validate([
             'title' => 'required|string|max:255',
             'description' => 'nullable|string|max:1000',
@@ -206,9 +250,11 @@ class ProgramController extends Controller
     public function storeReport(Request $request, Program $program): RedirectResponse
     {
         $user = $request->user();
+        $this->authorizeProgramManager($user, $program);
+        abort_unless(in_array($program->status, [Program::STATUS_APPROVED, Program::STATUS_IN_PROGRESS], true), 422, 'Laporan hanya dapat dikirim setelah program disetujui.');
 
         $validated = $request->validate([
-            'program_activity_id' => 'nullable|uuid|exists:program_activities,id',
+            'program_activity_id' => 'nullable|uuid|exists:program_activities,id,program_id,'.$program->id,
             'title' => 'required|string|max:255',
             'report_date' => 'required|date',
             'summary' => 'required|string|max:4000',
@@ -221,6 +267,11 @@ class ProgramController extends Controller
             'evidence_file' => 'nullable|file|max:10240|mimes:pdf,doc,docx,jpg,jpeg,png,zip',
             'evidence_url' => 'nullable|url|max:500',
         ]);
+
+        if (! empty($validated['evidence_archive_id'])) {
+            $archive = Archive::findOrFail($validated['evidence_archive_id']);
+            abort_unless($archive->visibility !== Archive::VISIBILITY_PRIVATE || in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu'], true), 403);
+        }
 
         DB::transaction(function () use ($request, $program, $user, $validated): void {
             $report = ProgramReport::create([
@@ -240,15 +291,13 @@ class ProgramController extends Controller
             if (! empty($validated['program_activity_id'])) {
                 $activity = ProgramActivity::where('program_id', $program->id)
                     ->whereKey($validated['program_activity_id'])
-                    ->first();
+                    ->firstOrFail();
 
-                if ($activity) {
-                    $activity->update([
-                        'progress_percent' => (int) $validated['achieved_percent'],
-                        'budget_realization' => $activity->budget_realization + (int) ($validated['realized_budget'] ?? 0),
-                        'status' => ((int) $validated['achieved_percent']) >= 100 ? 'completed' : 'in_progress',
-                    ]);
-                }
+                $activity->update([
+                    'progress_percent' => (int) $validated['achieved_percent'],
+                    'budget_realization' => $activity->budget_realization + (int) ($validated['realized_budget'] ?? 0),
+                    'status' => ((int) $validated['achieved_percent']) >= 100 ? 'completed' : 'in_progress',
+                ]);
             }
 
             if (
@@ -295,12 +344,17 @@ class ProgramController extends Controller
     public function reviewReport(Request $request, ProgramReport $report): RedirectResponse
     {
         $user = $request->user();
+        $program = $report->program;
+        $this->authorizeProgramManager($user, $program);
+        abort_unless($report->submitted_by !== $user->id, 403, 'Pengirim laporan tidak dapat meninjau laporannya sendiri.');
+
         $validated = $request->validate([
             'action' => 'required|in:verify,approve,revision',
             'review_notes' => 'nullable|string|max:1000',
         ]);
 
         if ($validated['action'] === 'verify') {
+            abort_unless($report->status === ProgramReport::STATUS_SUBMITTED, 422, 'Hanya laporan terkirim yang dapat diverifikasi.');
             if (! in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu'], true)) {
                 abort(403, 'Hanya Kepala TU, Kepala Madrasah, atau Admin yang dapat memverifikasi laporan.');
             }
@@ -312,6 +366,7 @@ class ProgramController extends Controller
                 'review_notes' => $validated['review_notes'] ?? null,
             ]);
         } elseif ($validated['action'] === 'approve') {
+            abort_unless($report->status === ProgramReport::STATUS_VERIFIED, 422, 'Hanya laporan terverifikasi yang dapat disetujui.');
             if (! in_array($user->role, ['admin', 'kepala_madrasah'], true)) {
                 abort(403, 'Hanya Kepala Madrasah atau Admin yang dapat menyetujui laporan kegiatan.');
             }
@@ -323,6 +378,7 @@ class ProgramController extends Controller
                 'review_notes' => $validated['review_notes'] ?? null,
             ]);
         } else {
+            abort_unless(in_array($report->status, [ProgramReport::STATUS_SUBMITTED, ProgramReport::STATUS_VERIFIED], true), 422, 'Tahap laporan tidak dapat diminta revisi.');
             if (! in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu'], true)) {
                 abort(403);
             }
