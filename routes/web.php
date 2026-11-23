@@ -3,6 +3,7 @@
 use App\Http\Controllers\AcademicYearController;
 use App\Http\Controllers\Api\SearchController;
 use App\Http\Controllers\ApiClientController;
+use App\Http\Controllers\ArchiveCategoryController;
 use App\Http\Controllers\ArchiveController;
 use App\Http\Controllers\AuditLogController;
 use App\Http\Controllers\AuthController;
@@ -172,6 +173,23 @@ Route::middleware('auth')->group(function () {
     // ── Audit Logs — admin only ────────────────────────────────────
     Route::middleware('checkrole:admin,kepala_madrasah')->prefix('audit-logs')->name('audit-logs.')->group(function () {
         Route::get('/', [AuditLogController::class, 'index'])->name('index');
+    });
+
+    // ── Arsip Digital Madrasah (WP8.1 - Gelombang 2) ───────────────
+    Route::prefix('arsip-digital')->name('digital-archives.')->group(function () {
+        Route::get('/', [ArchiveController::class, 'index'])->name('index');
+        Route::post('/', [ArchiveController::class, 'store'])->name('store');
+        Route::get('/{archive}/download/{version}', [ArchiveController::class, 'downloadSigned'])->name('download-signed');
+        Route::get('/{archive}', [ArchiveController::class, 'detail'])->name('show');
+        Route::put('/{archive}', [ArchiveController::class, 'update'])->name('update');
+        Route::post('/{archive}/versions', [ArchiveController::class, 'storeVersion'])->name('versions.store');
+        Route::delete('/{archive}', [ArchiveController::class, 'destroy'])->name('destroy');
+
+        Route::middleware('checkrole:admin,kepala_madrasah,kaur_tu,staf,operator')->prefix('kategori')->name('categories.')->group(function () {
+            Route::post('/', [ArchiveCategoryController::class, 'store'])->name('store');
+            Route::put('/{category}', [ArchiveCategoryController::class, 'update'])->name('update');
+            Route::delete('/{category}', [ArchiveCategoryController::class, 'destroy'])->name('destroy');
+        });
     });
 
     // ── Data Siswa, GTK, PPDB — staf, operator, kaur TU, kamad, admin ──

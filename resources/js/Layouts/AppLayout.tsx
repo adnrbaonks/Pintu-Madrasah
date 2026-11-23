@@ -145,10 +145,11 @@ function buildNavItems(role: string) {
         {
             label: 'Administrasi',
             icon: Mail,
-            roles: ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'],
+            roles: ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator', 'guru', 'pegawai'],
             children: [
-                { label: 'Persuratan', href: '/persuratan' },
-                { label: 'Demografi', href: '/statistik/demografi' },
+                { label: 'Arsip Digital', href: '/arsip-digital' },
+                { label: 'Persuratan', href: '/persuratan', roles: ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'] },
+                { label: 'Demografi', href: '/statistik/demografi', roles: ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'] },
             ],
         },
         // ── Integrasi ────────────────────────────────────────────
