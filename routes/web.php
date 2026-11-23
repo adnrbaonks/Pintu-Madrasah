@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AcademicYearController;
+use App\Http\Controllers\AnnouncementController;
 use App\Http\Controllers\Api\SearchController;
 use App\Http\Controllers\ApiClientController;
 use App\Http\Controllers\ArchiveCategoryController;
@@ -8,12 +9,14 @@ use App\Http\Controllers\ArchiveController;
 use App\Http\Controllers\AuditLogController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\BkController;
+use App\Http\Controllers\CalendarController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\EmisGtkController;
 use App\Http\Controllers\FormCetakController;
 use App\Http\Controllers\IntegrationTokenController;
 use App\Http\Controllers\LegerController;
 use App\Http\Controllers\LetterController;
+use App\Http\Controllers\MeetingController;
 use App\Http\Controllers\MutationController;
 use App\Http\Controllers\OrganizationController;
 use App\Http\Controllers\PkkmController;
@@ -214,6 +217,32 @@ Route::middleware('auth')->group(function () {
         Route::post('/{instrument}/finalize', [PkkmController::class, 'finalize'])->name('finalize');
         Route::post('/components/{component}/assess', [PkkmController::class, 'saveAssessment'])->name('components.assess');
         Route::post('/components/{component}/evidence', [PkkmController::class, 'storeEvidence'])->name('components.evidence');
+    });
+
+    // ── Rapat & Notulen Dinas (WP8.4 - Gelombang 2) ────────────────
+    Route::prefix('rapat-dinas')->name('meetings.')->group(function () {
+        Route::get('/', [MeetingController::class, 'index'])->name('index');
+        Route::post('/', [MeetingController::class, 'store'])->name('store');
+        Route::get('/{meeting}', [MeetingController::class, 'show'])->name('show');
+        Route::post('/{meeting}/attendance', [MeetingController::class, 'markAttendance'])->name('attendance');
+        Route::post('/{meeting}/minutes', [MeetingController::class, 'saveMinutes'])->name('minutes.save');
+        Route::post('/{meeting}/minutes/approve', [MeetingController::class, 'approveMinutes'])->name('minutes.approve');
+        Route::post('/{meeting}/actions', [MeetingController::class, 'storeAction'])->name('actions.store');
+        Route::post('/actions/{action}', [MeetingController::class, 'updateAction'])->name('actions.update');
+    });
+
+    // ── Pengumuman Madrasah (WP8.4 - Gelombang 2) ──────────────────
+    Route::prefix('pengumuman')->name('announcements.')->group(function () {
+        Route::get('/', [AnnouncementController::class, 'index'])->name('index');
+        Route::post('/', [AnnouncementController::class, 'store'])->name('store');
+        Route::delete('/{announcement}', [AnnouncementController::class, 'destroy'])->name('destroy');
+    });
+
+    // ── Kalender & Agenda Madrasah (WP8.4 - Gelombang 2) ───────────
+    Route::prefix('kalender')->name('calendar.')->group(function () {
+        Route::get('/', [CalendarController::class, 'index'])->name('index');
+        Route::post('/', [CalendarController::class, 'store'])->name('store');
+        Route::delete('/{event}', [CalendarController::class, 'destroy'])->name('destroy');
     });
 
     // ── Data Siswa, GTK, PPDB — staf, operator, kaur TU, kamad, admin ──
