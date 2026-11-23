@@ -111,6 +111,7 @@ function buildNavItems(role: string) {
             roles: ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'],
             children: [
                 { label: 'Master GTK', href: '/gtk' },
+                { label: 'Struktur & Jabatan', href: '/organisasi' },
                 { label: 'Validasi TPG', href: '/gtk/tpg', roles: ['admin', 'kepala_madrasah', 'operator', 'kaur_tu'] },
             ],
         },

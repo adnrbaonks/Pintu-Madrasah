@@ -13,6 +13,7 @@ use App\Http\Controllers\FormCetakController;
 use App\Http\Controllers\LegerController;
 use App\Http\Controllers\LetterController;
 use App\Http\Controllers\MutationController;
+use App\Http\Controllers\OrganizationController;
 use App\Http\Controllers\PpdbController;
 use App\Http\Controllers\PrintController;
 use App\Http\Controllers\ProfileController;
@@ -218,6 +219,25 @@ Route::middleware('auth')->group(function () {
             Route::delete('/{staff}/documents/{document}', [StaffController::class, 'destroyDocument'])
                 ->middleware('checkrole:admin,kaur_tu,staf,operator')
                 ->name('documents.destroy');
+        });
+
+        // Struktur Organisasi, Unit Kerja, Jabatan & Penugasan (WP3.4)
+        Route::prefix('organisasi')->name('organization.')->group(function () {
+            Route::get('/', [OrganizationController::class, 'index'])->name('index');
+
+            Route::middleware('checkrole:admin,kaur_tu,staf,operator')->group(function () {
+                Route::post('/unit', [OrganizationController::class, 'storeUnit'])->name('units.store');
+                Route::put('/unit/{unit}', [OrganizationController::class, 'updateUnit'])->name('units.update');
+                Route::delete('/unit/{unit}', [OrganizationController::class, 'destroyUnit'])->name('units.destroy');
+
+                Route::post('/jabatan', [OrganizationController::class, 'storePosition'])->name('positions.store');
+                Route::put('/jabatan/{position}', [OrganizationController::class, 'updatePosition'])->name('positions.update');
+                Route::delete('/jabatan/{position}', [OrganizationController::class, 'destroyPosition'])->name('positions.destroy');
+
+                Route::post('/penugasan', [OrganizationController::class, 'storeAssignment'])->name('assignments.store');
+                Route::put('/penugasan/{assignment}', [OrganizationController::class, 'updateAssignment'])->name('assignments.update');
+                Route::delete('/penugasan/{assignment}', [OrganizationController::class, 'destroyAssignment'])->name('assignments.destroy');
+            });
         });
 
         // Statistik

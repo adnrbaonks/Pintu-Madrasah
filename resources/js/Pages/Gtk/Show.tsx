@@ -59,6 +59,27 @@ interface StaffDetail {
         name: string;
         academic_year?: { year: string; semester: string };
     }[];
+    position_assignments?: {
+        id: string;
+        sk_number: string | null;
+        valid_from: string;
+        valid_until: string | null;
+        is_primary: boolean;
+        status: string;
+        position?: {
+            id: string;
+            code: string;
+            name: string;
+            level: number;
+            is_structural: boolean;
+        } | null;
+        unit?: {
+            id: string;
+            code: string;
+            name: string;
+            type: string;
+        } | null;
+    }[];
     documents?: StaffDocumentItem[];
 }
 
@@ -217,6 +238,68 @@ export default function Show({ staff }: Props) {
                             ) : (
                                 <p className="text-xs text-slate-400 py-2">
                                     Pegawai ini belum memiliki akun login di sistem. Anda dapat membuatnya di menu Pengguna & Akses.
+                                </p>
+                            )}
+                        </CardContent>
+                    </Card>
+
+                    {/* Penugasan Jabatan & Unit Kerja */}
+                    <Card>
+                        <CardHeader className="pb-3">
+                            <div className="flex justify-between items-center">
+                                <CardTitle className="text-base flex items-center gap-2">
+                                    <Building className="w-4 h-4 text-teal-600" />
+                                    Penugasan Jabatan & Unit
+                                </CardTitle>
+                                <Link href="/organisasi" className="text-xs font-medium text-teal-700 hover:underline">
+                                    Kelola Struktur
+                                </Link>
+                            </div>
+                        </CardHeader>
+                        <CardContent>
+                            {staff.position_assignments && staff.position_assignments.length > 0 ? (
+                                <ul className="space-y-2.5 text-sm">
+                                    {staff.position_assignments.map(pa => (
+                                        <li key={pa.id} className="p-2.5 bg-slate-50 rounded border space-y-1">
+                                            <div className="flex justify-between items-start gap-2">
+                                                <div>
+                                                    <span className="font-semibold text-slate-800">
+                                                        {pa.position?.name || 'Jabatan'}
+                                                    </span>
+                                                    <p className="text-xs text-slate-500">
+                                                        {pa.unit?.name || 'Unit Kerja'}
+                                                    </p>
+                                                </div>
+                                                <div className="flex gap-1">
+                                                    {pa.is_primary && (
+                                                        <Badge className="bg-teal-100 text-teal-800 border-teal-200 text-[10px]">
+                                                            Utama
+                                                        </Badge>
+                                                    )}
+                                                    <Badge
+                                                        variant="outline"
+                                                        className={
+                                                            pa.status === 'active'
+                                                                ? 'border-emerald-300 bg-emerald-50 text-emerald-700 text-[10px]'
+                                                                : 'text-[10px]'
+                                                        }
+                                                    >
+                                                        {pa.status === 'active' ? 'Aktif' : pa.status}
+                                                    </Badge>
+                                                </div>
+                                            </div>
+                                            <div className="text-[11px] text-slate-500 flex justify-between pt-1 border-t">
+                                                <span>SK: {pa.sk_number || '—'}</span>
+                                                <span>
+                                                    {pa.valid_from?.slice(0, 10)} s/d {pa.valid_until ? pa.valid_until.slice(0, 10) : 'Sekarang'}
+                                                </span>
+                                            </div>
+                                        </li>
+                                    ))}
+                                </ul>
+                            ) : (
+                                <p className="text-xs text-slate-400 py-2">
+                                    Belum ada riwayat penugasan jabatan struktural/fungsional pada organisasi madrasah.
                                 </p>
                             )}
                         </CardContent>

@@ -56,6 +56,11 @@ class StaffController extends Controller
             'homeroomRombels.academicYear',
             'homeroomRombels.schoolClass',
             'documents' => fn ($query) => $query->latest(),
+            'positionAssignments' => fn ($query) => $query
+                ->with(['position:id,code,name,level,is_structural', 'unit:id,code,name,type'])
+                ->orderByRaw("CASE WHEN status = 'active' THEN 0 ELSE 1 END")
+                ->orderByDesc('is_primary')
+                ->orderByDesc('valid_from'),
         ]);
 
         $ownership = config('data_ownership.staff', []);

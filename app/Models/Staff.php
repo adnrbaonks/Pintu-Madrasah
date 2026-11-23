@@ -59,6 +59,11 @@ class Staff extends Model
         return $this->hasMany(StaffDocument::class);
     }
 
+    public function positionAssignments()
+    {
+        return $this->hasMany(PositionAssignment::class);
+    }
+
     // ── Computed Attributes ───────────────────────────────────────────
 
     public function getDisplayNameAttribute(): string

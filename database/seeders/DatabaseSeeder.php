@@ -15,6 +15,7 @@ class DatabaseSeeder extends Seeder
         $this->call([
             RolesAndPermissionsSeeder::class,
             SubjectSeeder::class,
+            OrganizationSeeder::class,
         ]);
 
         // Akun admin awal hanya dibuat di local/testing, atau bila password
