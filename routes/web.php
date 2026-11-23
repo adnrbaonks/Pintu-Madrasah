@@ -19,6 +19,7 @@ use App\Http\Controllers\OrganizationController;
 use App\Http\Controllers\PpdbController;
 use App\Http\Controllers\PrintController;
 use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\ProgramController;
 use App\Http\Controllers\PromotionController;
 use App\Http\Controllers\RoleController;
 use App\Http\Controllers\RombelController;
@@ -190,6 +191,17 @@ Route::middleware('auth')->group(function () {
             Route::put('/{category}', [ArchiveCategoryController::class, 'update'])->name('update');
             Route::delete('/{category}', [ArchiveCategoryController::class, 'destroy'])->name('destroy');
         });
+    });
+
+    // ── Program Kerja & Pelaporan Kegiatan Madrasah (WP8.2 - Gelombang 2) ──
+    Route::prefix('program-kerja')->name('programs.')->group(function () {
+        Route::get('/', [ProgramController::class, 'index'])->name('index');
+        Route::post('/', [ProgramController::class, 'store'])->name('store');
+        Route::get('/{program}', [ProgramController::class, 'show'])->name('show');
+        Route::post('/{program}/status', [ProgramController::class, 'updateStatus'])->name('status');
+        Route::post('/{program}/activities', [ProgramController::class, 'storeActivity'])->name('activities.store');
+        Route::post('/{program}/reports', [ProgramController::class, 'storeReport'])->name('reports.store');
+        Route::post('/reports/{report}/review', [ProgramController::class, 'reviewReport'])->name('reports.review');
     });
 
     // ── Data Siswa, GTK, PPDB — staf, operator, kaur TU, kamad, admin ──
