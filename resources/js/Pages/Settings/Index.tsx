@@ -21,8 +21,8 @@ export default function SettingsIndex({ settings, academicYears }: { settings: a
     });
 
     const { data: integrationData, setData: setIntegrationData, post: postIntegration, processing: processingIntegration, errors: errorsIntegration } = useForm({
-        gemini_api_key: settings.gemini_api_key || '',
-        api_key: settings.api_key || '',
+        gemini_api_key: '',
+        api_key: '',
         madrasah_name: settings.madrasah_name || '', // required by backend update()
     });
 
@@ -306,12 +306,12 @@ export default function SettingsIndex({ settings, academicYears }: { settings: a
                                         <Input 
                                             id="gemini_api_key" 
                                             type="password"
-                                            placeholder="AIzaSyA..."
+                                            placeholder={settings.has_gemini_api_key ? 'Terpasang — isi hanya untuk mengganti' : 'Masukkan API key'}
                                             value={integrationData.gemini_api_key} 
                                             onChange={e => setIntegrationData('gemini_api_key', e.target.value)} 
                                         />
                                         <p className="text-xs text-slate-500">
-                                            Dapatkan API Key secara gratis dari Google AI Studio. Key ini digunakan untuk fitur ekstraksi dokumen otomatis.
+                                            {settings.has_gemini_api_key ? 'Secret sudah dikonfigurasi. Kosongkan untuk mempertahankan nilai saat ini.' : 'Belum dikonfigurasi. Nilai hanya ditampilkan setelah Anda mengetik.'} Dapatkan API Key dari Google AI Studio.
                                         </p>
                                         {errorsIntegration.gemini_api_key && <p className="text-red-500 text-xs">{errorsIntegration.gemini_api_key}</p>}
                                     </div>
@@ -321,12 +321,12 @@ export default function SettingsIndex({ settings, academicYears }: { settings: a
                                         <Input
                                             id="api_key"
                                             type="password"
-                                            placeholder="Isi dengan string acak panjang, mis. pm_live_..."
+                                            placeholder={settings.has_api_key ? 'Terpasang — isi hanya untuk mengganti' : 'Isi string acak atau kosongkan'}
                                             value={(integrationData as any).api_key}
                                             onChange={e => setIntegrationData('api_key' as never, e.target.value as never)}
                                         />
                                         <p className="text-xs text-slate-500">
-                                            Aplikasi satelit wajib mengirim key ini via header X-API-KEY. Kosongkan untuk menonaktifkan API (status 503).
+                                            {settings.has_api_key ? 'Kunci legacy dikonfigurasi. Kosongkan untuk mempertahankan nilai saat ini.' : 'Belum dikonfigurasi.'} Aplikasi satelit wajib mengirim key via header X-API-KEY.
                                         </p>
                                         {(errorsIntegration as any).api_key && <p className="text-red-500 text-xs">{(errorsIntegration as any).api_key}</p>}
                                     </div>

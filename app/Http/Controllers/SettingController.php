@@ -19,8 +19,8 @@ class SettingController extends Controller
             'headmaster_nip' => Setting::get('headmaster_nip', ''),
             'school_address' => Setting::get('school_address', ''),
             'madrasah_photo' => Setting::get('madrasah_photo', null),
-            'gemini_api_key' => Setting::get('gemini_api_key', env('GEMINI_API_KEY', '')),
-            'api_key' => Setting::get('api_key', env('API_GATEWAY_KEY', '')),
+            'has_gemini_api_key' => filled(Setting::get('gemini_api_key', env('GEMINI_API_KEY', ''))),
+            'has_api_key' => filled(Setting::get('api_key', env('API_GATEWAY_KEY', ''))),
         ];
 
         $academicYears = AcademicYear::orderBy('year', 'desc')->orderBy('semester', 'desc')->get();
@@ -49,6 +49,15 @@ class SettingController extends Controller
             $path = $request->file('madrasah_photo')->store('settings', 'public');
             Setting::set('madrasah_photo', '/storage/'.$path);
             unset($validated['madrasah_photo']);
+        }
+
+        // Avoid overwriting secrets with empty string unless intentionally cleared.
+        if (array_key_exists('gemini_api_key', $validated) && $validated['gemini_api_key'] === null) {
+            unset($validated['gemini_api_key']);
+        }
+
+        if (array_key_exists('api_key', $validated) && $validated['api_key'] === null) {
+            unset($validated['api_key']);
         }
 
         foreach ($validated as $key => $value) {

@@ -2,7 +2,6 @@
 
 namespace App\Http\Middleware;
 
-use App\Models\ApiClient;
 use App\Models\Setting;
 use App\Services\ApiKeyService;
 use Closure;
@@ -20,7 +19,6 @@ class CheckApiKey
         $requestId = $request->attributes->get('request_id');
 
         $provided = $request->header('X-API-KEY')
-            ?: $request->query('api_key')
             ?: (str_starts_with((string) $request->header('Authorization'), 'Bearer ')
                 ? trim(substr((string) $request->header('Authorization'), 7))
                 : null);
@@ -67,11 +65,11 @@ class CheckApiKey
             return $next($request);
         }
 
-        // ── Fallback: kunci tunggal legacy (Setting / env) = akses penuh ──
+        // ── Fallback: kunci tunggal legacy (Setting / env) dibatasi scope non-PII dasar ──
         $legacy = Setting::get('api_key', env('API_GATEWAY_KEY', ''));
         if ($legacy && hash_equals((string) $legacy, (string) $provided)) {
             $request->attributes->set('api_client', null);
-            $request->attributes->set('api_scopes', array_keys(ApiClient::SCOPES));
+            $request->attributes->set('api_scopes', ['students:read', 'staff:read', 'classes:read', 'academic-years:read']);
 
             return $next($request);
         }
