@@ -146,7 +146,7 @@ Route::middleware('auth')->group(function () {
         Route::get('/roles', [RoleController::class, 'index'])->name('roles.index');
         Route::put('/roles/{role}', [RoleController::class, 'update'])->name('roles.update');
     });
-    Route::middleware('role_or_permission:admin,kaur_tu,operator|view_academic_years')->get('/pengaturan/kamus-data', [SettingController::class, 'dataDictionary'])->name('settings.data-dictionary');
+    Route::middleware('role_or_permission:admin|kepala_madrasah|kaur_tu|operator')->get('/pengaturan/kamus-data', [SettingController::class, 'dataDictionary'])->name('settings.data-dictionary');
 
     // ── API Clients (Gateway Keys) — permission-gated (manage_api_clients) ──
     Route::middleware('permission:manage_api_clients')->prefix('api-clients')->name('api-clients.')->group(function () {
