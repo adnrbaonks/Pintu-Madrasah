@@ -3,7 +3,6 @@
 namespace App\Services;
 
 use App\Models\ActivityLog;
-use App\Models\OutboxEvent;
 use App\Models\Staff;
 use App\Models\StaffChangeApproval;
 use App\Models\StaffChangeAttachment;
@@ -15,7 +14,6 @@ use App\Notifications\ChangeRequestApproved;
 use App\Notifications\ChangeRequestRejected;
 use App\Notifications\ChangeRequestSubmitted;
 use App\Notifications\RevisionRequested;
-use App\Support\Webhook;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -509,18 +507,12 @@ class StaffChangeRequestService
                     'updated_fields' => array_keys($afterPayload),
                 ];
 
-                OutboxEvent::create([
-                    'aggregate_type' => Staff::class,
-                    'aggregate_id' => $lockedStaff->id,
-                    'event_type' => 'staff.updated',
-                    'payload' => $eventPayload,
-                    'status' => 'pending',
-                    'available_at' => now(),
-                ]);
-
-                DB::afterCommit(function () use ($eventPayload): void {
-                    Webhook::fire('staff.updated', $eventPayload);
-                });
+                app(OutboxService::class)->record(
+                    aggregateType: Staff::class,
+                    aggregateId: $lockedStaff->id,
+                    eventType: 'staff.updated',
+                    payload: $eventPayload,
+                );
             }
 
             $finalStatus = $hasExternalPending

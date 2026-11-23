@@ -8,17 +8,20 @@ use App\Models\Student;
 use App\Models\WebhookSubscription;
 
 /**
- * Webhook — pengirim event ke aplikasi satelit (SIPSMAD, PTSP, WA Gateway).
- *
- * Event: student.created | student.updated | student.mutated | student.promoted
- * Payload selalu: ['event' => ..., 'occurred_at' => ..., 'data' => [...]]
+ * Webhook — pengirim event ke aplikasi satelit (SIPSMAD, PTSP, E-Surat, WA Gateway).
  */
 class Webhook
 {
-    public static function fire(string $event, array $data): void
-    {
-        // Jangan banjiri antrean bila tak ada pelanggan event ini
-        // (commit massal 700 siswa = 700 job sia-sia tanpa guard ini).
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    public static function fire(
+        string $event,
+        array $data,
+        ?string $eventId = null,
+        ?string $outboxEventId = null,
+    ): void {
+        // Jangan banjiri antrean bila tak ada pelanggan aktif untuk event ini
         $hasSub = WebhookSubscription::where('is_active', true)
             ->where('event', $event)
             ->exists();
@@ -27,9 +30,19 @@ class Webhook
             return;
         }
 
-        DispatchWebhookJob::dispatch($event, $data)->onQueue('webhooks');
+        DispatchWebhookJob::dispatch(
+            event: $event,
+            data: $data,
+            onlySubscriptionId: null,
+            eventId: $eventId,
+            outboxEventId: $outboxEventId,
+        )->onQueue('webhooks');
     }
 
+    /**
+     * @param  array<string, mixed>  $extra
+     * @return array<string, mixed>
+     */
     public static function studentPayload(Student $student, array $extra = []): array
     {
         return array_merge([
@@ -44,6 +57,10 @@ class Webhook
         ], $extra);
     }
 
+    /**
+     * @param  array<string, mixed>  $extra
+     * @return array<string, mixed>
+     */
     public static function staffPayload(Staff $staff, array $extra = []): array
     {
         return array_merge([

@@ -4,11 +4,9 @@ namespace App\Services;
 
 use App\Models\ActivityLog;
 use App\Models\OrganizationUnit;
-use App\Models\OutboxEvent;
 use App\Models\Position;
 use App\Models\PositionAssignment;
 use App\Models\Staff;
-use App\Support\Webhook;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
@@ -165,18 +163,12 @@ class OrganizationService
                 'status' => $assignment->status,
             ];
 
-            OutboxEvent::create([
-                'aggregate_type' => Staff::class,
-                'aggregate_id' => $assignment->staff_id,
-                'event_type' => 'staff.position.assigned',
-                'payload' => $eventPayload,
-                'status' => 'pending',
-                'available_at' => now(),
-            ]);
-
-            DB::afterCommit(function () use ($eventPayload): void {
-                Webhook::fire('staff.position.assigned', $eventPayload);
-            });
+            app(OutboxService::class)->record(
+                aggregateType: Staff::class,
+                aggregateId: $assignment->staff_id,
+                eventType: 'staff.position.assigned',
+                payload: $eventPayload,
+            );
 
             return $assignment;
         });

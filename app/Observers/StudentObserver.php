@@ -3,17 +3,35 @@
 namespace App\Observers;
 
 use App\Models\Student;
+use App\Services\OutboxService;
 use App\Support\Webhook;
 
 class StudentObserver
 {
+    public function __construct(
+        private OutboxService $outboxService,
+    ) {}
+
     public function created(Student $student): void
     {
-        Webhook::fire('student.created', Webhook::studentPayload($student));
+        if (OutboxService::isSuppressed()) {
+            return;
+        }
+
+        $this->outboxService->record(
+            aggregateType: Student::class,
+            aggregateId: $student->id,
+            eventType: 'student.created',
+            payload: Webhook::studentPayload($student),
+        );
     }
 
     public function updated(Student $student): void
     {
+        if (OutboxService::isSuppressed()) {
+            return;
+        }
+
         $changes = $student->getChanges();
         unset($changes['updated_at']);
 
@@ -26,22 +44,41 @@ class StudentObserver
             isset($changes['status'])
             && in_array($changes['status'], ['mutated_out', 'dropped', 'graduated'], true)
         ) {
-            Webhook::fire('student.mutated', Webhook::studentPayload($student, [
-                'reason' => $changes['status'],
-            ]));
+            $this->outboxService->record(
+                aggregateType: Student::class,
+                aggregateId: $student->id,
+                eventType: 'student.mutated',
+                payload: Webhook::studentPayload($student, [
+                    'reason' => $changes['status'],
+                ]),
+            );
 
             return;
         }
 
-        Webhook::fire('student.updated', Webhook::studentPayload($student, [
-            'changed_fields' => array_keys($changes),
-        ]));
+        $this->outboxService->record(
+            aggregateType: Student::class,
+            aggregateId: $student->id,
+            eventType: 'student.updated',
+            payload: Webhook::studentPayload($student, [
+                'changed_fields' => array_keys($changes),
+            ]),
+        );
     }
 
     public function deleted(Student $student): void
     {
-        Webhook::fire('student.mutated', Webhook::studentPayload($student, [
-            'reason' => 'deleted',
-        ]));
+        if (OutboxService::isSuppressed()) {
+            return;
+        }
+
+        $this->outboxService->record(
+            aggregateType: Student::class,
+            aggregateId: $student->id,
+            eventType: 'student.mutated',
+            payload: Webhook::studentPayload($student, [
+                'reason' => 'deleted',
+            ]),
+        );
     }
 }

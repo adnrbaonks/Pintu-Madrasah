@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Models\EmisGtkStaging;
 use App\Models\Staff;
+use App\Services\OutboxService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -69,23 +70,33 @@ class CommitEmisGtkStagingJob implements ShouldQueue
                 $staffData = $this->staffData($staging);
 
                 try {
-                    if ($existing) {
-                        if ($existing->trashed()) {
-                            $existing->restore();
+                    OutboxService::withoutObserver(function () use ($existing, $staffData, &$failed, $staging): bool {
+                        if ($existing) {
+                            if ($existing->trashed()) {
+                                $existing->restore();
+                            }
+
+                            $existing->update(array_filter($staffData, fn ($value) => $value !== null));
+
+                            return true;
                         }
 
-                        $existing->update(array_filter($staffData, fn ($value) => $value !== null));
-                    } else {
                         $missing = $this->missingRequiredFields($staffData);
 
                         if ($missing !== []) {
                             $this->markFailed($staging, 'Data wajib belum lengkap: '.implode(', ', $missing));
                             $failed++;
 
-                            continue;
+                            return false;
                         }
 
                         Staff::create($staffData);
+
+                        return true;
+                    });
+
+                    if ($staging->status === 'failed') {
+                        continue;
                     }
 
                     $staging->update(['status' => 'committed', 'error_message' => null]);

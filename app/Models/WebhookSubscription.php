@@ -3,6 +3,8 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
 
 class WebhookSubscription extends Model
@@ -12,6 +14,10 @@ class WebhookSubscription extends Model
         'student.updated' => 'Biodata siswa diperbarui',
         'student.mutated' => 'Siswa mutasi keluar / lulus / dikeluarkan (nonaktifkan presensi)',
         'student.promoted' => 'Kenaikan kelas massal (update pemetaan rombel)',
+        'staff.created' => 'Data guru / tenaga kependidikan baru ditambahkan',
+        'staff.updated' => 'Profil / biodata GTK diperbarui',
+        'staff.deactivated' => 'Status GTK dinonaktifkan',
+        'staff.position.assigned' => 'Penugasan jabatan / SK struktural GTK ditetapkan',
     ];
 
     protected $keyType = 'string';
@@ -19,7 +25,16 @@ class WebhookSubscription extends Model
     public $incrementing = false;
 
     protected $fillable = [
-        'api_client_id', 'event', 'target_url', 'secret', 'is_active',
+        'api_client_id',
+        'event',
+        'target_url',
+        'description',
+        'secret',
+        'is_active',
+        'include_pii',
+        'max_attempts',
+        'last_triggered_at',
+        'last_status',
     ];
 
     protected function casts(): array
@@ -27,6 +42,8 @@ class WebhookSubscription extends Model
         return [
             'id' => 'string',
             'is_active' => 'boolean',
+            'include_pii' => 'boolean',
+            'max_attempts' => 'integer',
             'last_triggered_at' => 'datetime',
         ];
     }
@@ -34,18 +51,18 @@ class WebhookSubscription extends Model
     protected static function boot(): void
     {
         parent::boot();
-        static::creating(function ($m) {
-            $m->id ??= (string) Str::uuid();
-            $m->secret ??= 'whsec_'.Str::random(48);
+        static::creating(function (self $model): void {
+            $model->id ??= (string) Str::uuid();
+            $model->secret ??= 'whsec_'.Str::random(48);
         });
     }
 
-    public function apiClient()
+    public function apiClient(): BelongsTo
     {
         return $this->belongsTo(ApiClient::class);
     }
 
-    public function deliveries()
+    public function deliveries(): HasMany
     {
         return $this->hasMany(WebhookDelivery::class)->latest();
     }

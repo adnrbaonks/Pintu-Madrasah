@@ -7,6 +7,12 @@ use Illuminate\Support\Str;
 
 class OutboxEvent extends Model
 {
+    public const STATUS_PENDING = 'pending';
+
+    public const STATUS_PUBLISHED = 'published';
+
+    public const STATUS_FAILED = 'failed';
+
     protected $keyType = 'string';
 
     public $incrementing = false;
@@ -36,6 +42,8 @@ class OutboxEvent extends Model
     protected static function boot(): void
     {
         parent::boot();
-        static::creating(fn ($m) => $m->id ??= (string) Str::uuid());
+        static::creating(function (self $model): void {
+            $model->id ??= (string) Str::uuid();
+        });
     }
 }

@@ -154,6 +154,7 @@ Route::middleware('auth')->group(function () {
     Route::middleware('checkrole:admin')->prefix('webhooks')->name('webhooks.')->group(function () {
         Route::get('/', [WebhookSubscriptionController::class, 'index'])->name('index');
         Route::post('/', [WebhookSubscriptionController::class, 'store'])->name('store');
+        Route::post('/deliveries/{delivery}/retry', [WebhookSubscriptionController::class, 'retryDelivery'])->name('deliveries.retry');
         Route::post('/{webhook}/toggle-active', [WebhookSubscriptionController::class, 'toggleActive'])->name('toggle-active');
         Route::post('/{webhook}/regenerate-secret', [WebhookSubscriptionController::class, 'regenerateSecret'])->name('regenerate-secret');
         Route::post('/{webhook}/test', [WebhookSubscriptionController::class, 'test'])->name('test');

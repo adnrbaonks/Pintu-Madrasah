@@ -2,8 +2,10 @@
 
 namespace App\Jobs;
 
+use App\Models\OutboxEvent;
 use App\Models\WebhookDelivery;
 use App\Models\WebhookSubscription;
+use App\Services\WebhookPublisher;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -11,23 +13,50 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class DispatchWebhookJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public int $tries = 1;
+    public int $tries = 5;
 
     public int $timeout = 300;
 
+    /**
+     * @param  array<string, mixed>  $data
+     */
     public function __construct(
         public string $event,
         public array $data,
         public ?string $onlySubscriptionId = null,
-    ) {}
+        public ?string $eventId = null,
+        public ?string $outboxEventId = null,
+    ) {
+        $this->eventId ??= (string) Str::uuid();
+    }
 
-    public function handle(): void
+    /**
+     * Jadwal backoff eksponensial (detik) antar percobaan pengiriman.
+     *
+     * @return array<int, int>
+     */
+    public function backoff(): array
     {
+        return [10, 30, 120, 300, 900];
+    }
+
+    public function backoffSecondsForAttempt(int $attempt): int
+    {
+        $schedule = $this->backoff();
+
+        return $schedule[max(0, min($attempt - 1, count($schedule) - 1))];
+    }
+
+    public function handle(?WebhookPublisher $publisher = null): void
+    {
+        $publisher ??= app(WebhookPublisher::class);
+
         $query = WebhookSubscription::where('is_active', true)
             ->where('event', $this->event);
 
@@ -38,67 +67,208 @@ class DispatchWebhookJob implements ShouldQueue
         $subs = $query->get();
 
         if ($subs->isEmpty()) {
+            $this->markOutboxPublished();
+
             return;
         }
 
-        $body = json_encode([
-            'event' => $this->event,
-            'occurred_at' => now()->toIso8601String(),
-            'data' => $this->data,
-        ], JSON_UNESCAPED_UNICODE);
+        $failures = [];
 
         foreach ($subs as $sub) {
-            $this->deliver($sub, $body);
+            $error = $this->deliver($sub, $publisher);
+            if ($error !== null) {
+                $failures[] = $error;
+            }
+        }
+
+        $this->updateOutboxAfterAttempt($failures);
+
+        if ($failures !== [] && $this->job && $this->job->getConnectionName() !== 'sync') {
+            $this->release($this->backoffSecondsForAttempt($this->attempts()));
         }
     }
 
-    private function deliver(WebhookSubscription $sub, string $body): void
+    public function failed(\Throwable $e): void
     {
-        $signature = 'sha256='.hash_hmac('sha256', $body, $sub->secret);
+        if ($this->outboxEventId) {
+            OutboxEvent::whereKey($this->outboxEventId)->update([
+                'status' => OutboxEvent::STATUS_FAILED,
+                'last_error' => mb_substr($e->getMessage(), 0, 1000),
+            ]);
+        }
+
+        if ($this->eventId) {
+            WebhookDelivery::where('event_id', $this->eventId)
+                ->where('delivered', false)
+                ->update(['next_retry_at' => null]);
+        }
+    }
+
+    private function deliver(WebhookSubscription $sub, WebhookPublisher $publisher): ?string
+    {
+        $existing = WebhookDelivery::query()
+            ->where('webhook_subscription_id', $sub->id)
+            ->where('event_id', $this->eventId)
+            ->first();
+
+        // Deduplikasi: bila event_id ini sudah pernah berhasil dikirim ke subscription ini, lewati
+        if ($existing && $existing->delivered) {
+            return null;
+        }
+
+        $maxAttempts = max((int) ($sub->max_attempts ?: 5), 1);
+        $attempt = $existing ? ($existing->attempt + 1) : 1;
+
+        if ($attempt > $maxAttempts) {
+            return "Max attempts ({$maxAttempts}) reached for subscription {$sub->id}";
+        }
+
+        $payload = $publisher->buildPayload(
+            event: $this->event,
+            eventId: (string) $this->eventId,
+            data: $this->data,
+            subscription: $sub,
+        );
+
+        $body = (string) json_encode($payload, JSON_UNESCAPED_UNICODE);
+        $timestamp = time();
+        $sigV1 = $publisher->signatureV1($body, $sub->secret);
+        $sigV2 = $publisher->signatureV2($timestamp, $body, $sub->secret);
 
         try {
             $response = Http::timeout(15)
                 ->withHeaders([
                     'Content-Type' => 'application/json',
+                    'X-Webhook-Id' => (string) $this->eventId,
                     'X-Webhook-Event' => $this->event,
-                    'X-Webhook-Signature' => $signature,
+                    'X-Webhook-Timestamp' => (string) $timestamp,
+                    'X-Webhook-Signature' => $sigV1,
+                    'X-Webhook-Signature-V2' => $sigV2,
                     'User-Agent' => 'PintuMadrasah-Webhook/1.0',
                 ])
                 ->withBody($body, 'application/json')
                 ->post($sub->target_url);
 
             $ok = $response->successful();
+            $errorMsg = $ok ? null : 'HTTP '.$response->status();
+            $nextRetryAt = (! $ok && $attempt < $maxAttempts)
+                ? now()->addSeconds($this->backoffSecondsForAttempt($attempt))
+                : null;
 
-            WebhookDelivery::create([
-                'webhook_subscription_id' => $sub->id,
-                'event' => $this->event,
-                'payload' => json_decode($body, true),
-                'status_code' => $response->status(),
-                'response_body' => mb_substr($response->body(), 0, 2000),
-                'delivered' => $ok,
-                'error' => $ok ? null : 'HTTP '.$response->status(),
-            ]);
+            WebhookDelivery::updateOrCreate(
+                [
+                    'webhook_subscription_id' => $sub->id,
+                    'event_id' => $this->eventId,
+                ],
+                [
+                    'outbox_event_id' => $this->outboxEventId,
+                    'event' => $this->event,
+                    'payload' => $payload,
+                    'status_code' => $response->status(),
+                    'response_body' => mb_substr($response->body(), 0, 2000),
+                    'response_headers' => $publisher->redactHeaders($response->headers()),
+                    'delivered' => $ok,
+                    'attempt' => $attempt,
+                    'next_retry_at' => $nextRetryAt,
+                    'delivered_at' => $ok ? now() : null,
+                    'error' => $errorMsg,
+                ]
+            );
 
             $sub->update([
                 'last_triggered_at' => now(),
                 'last_status' => $response->status(),
             ]);
+
+            return $errorMsg;
         } catch (\Throwable $e) {
+            $errorMsg = mb_substr($e->getMessage(), 0, 1000);
+            $nextRetryAt = ($attempt < $maxAttempts)
+                ? now()->addSeconds($this->backoffSecondsForAttempt($attempt))
+                : null;
+
             Log::warning('[WEBHOOK] Gagal kirim', [
                 'event' => $this->event,
+                'event_id' => $this->eventId,
+                'attempt' => $attempt,
                 'url' => $sub->target_url,
-                'error' => $e->getMessage(),
+                'error' => $errorMsg,
             ]);
 
-            WebhookDelivery::create([
-                'webhook_subscription_id' => $sub->id,
-                'event' => $this->event,
-                'payload' => json_decode($body, true),
-                'delivered' => false,
-                'error' => mb_substr($e->getMessage(), 0, 1000),
+            WebhookDelivery::updateOrCreate(
+                [
+                    'webhook_subscription_id' => $sub->id,
+                    'event_id' => $this->eventId,
+                ],
+                [
+                    'outbox_event_id' => $this->outboxEventId,
+                    'event' => $this->event,
+                    'payload' => $payload,
+                    'status_code' => null,
+                    'delivered' => false,
+                    'attempt' => $attempt,
+                    'next_retry_at' => $nextRetryAt,
+                    'delivered_at' => null,
+                    'error' => $errorMsg,
+                ]
+            );
+
+            $sub->update([
+                'last_triggered_at' => now(),
+                'last_status' => null,
             ]);
 
-            $sub->update(['last_triggered_at' => now(), 'last_status' => null]);
+            return $errorMsg;
         }
+    }
+
+    private function markOutboxPublished(): void
+    {
+        if (! $this->outboxEventId) {
+            return;
+        }
+
+        OutboxEvent::whereKey($this->outboxEventId)->update([
+            'status' => OutboxEvent::STATUS_PUBLISHED,
+            'last_error' => null,
+        ]);
+    }
+
+    /**
+     * @param  array<int, string>  $failures
+     */
+    private function updateOutboxAfterAttempt(array $failures): void
+    {
+        if (! $this->outboxEventId) {
+            return;
+        }
+
+        $outbox = OutboxEvent::find($this->outboxEventId);
+        if (! $outbox) {
+            return;
+        }
+
+        $newAttempts = $outbox->attempts + 1;
+
+        if ($failures === []) {
+            $outbox->update([
+                'status' => OutboxEvent::STATUS_PUBLISHED,
+                'attempts' => $newAttempts,
+                'last_error' => null,
+            ]);
+
+            return;
+        }
+
+        $isDeadLetter = $newAttempts >= $this->tries;
+
+        $outbox->update([
+            'status' => $isDeadLetter ? OutboxEvent::STATUS_FAILED : OutboxEvent::STATUS_PENDING,
+            'attempts' => $newAttempts,
+            'last_error' => mb_substr(implode('; ', $failures), 0, 1000),
+            'available_at' => $isDeadLetter
+                ? null
+                : now()->addSeconds($this->backoffSecondsForAttempt($newAttempts)),
+        ]);
     }
 }
