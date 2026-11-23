@@ -10,11 +10,16 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
+import { IntegrationTokenCard, IntegrationTokenItem } from '@/components/IntegrationTokenCard';
 import { toast } from 'sonner';
 
 type Step = 'idle' | 'pulling' | 'pull_done' | 'review' | 'committing' | 'commit_done' | 'error';
 
-export default function EmisSiswaSync() {
+export default function EmisSiswaSync({
+    integrationTokens = [],
+}: {
+    integrationTokens?: IntegrationTokenItem[];
+}) {
     const [step, setStep] = useState<Step>('idle');
     const [tokenActive, setTokenActive] = useState(false);
     const [loading, setLoading] = useState(true);
@@ -158,6 +163,12 @@ export default function EmisSiswaSync() {
                     <h1 className="text-2xl font-bold tracking-tight text-slate-900">Sinkronisasi Data Siswa (EMIS)</h1>
                     <p className="text-sm text-slate-500 mt-1">Integrasi langsung dengan sistem EMIS Kemenag menggunakan Bookmarklet.</p>
                 </div>
+
+                <IntegrationTokenCard
+                    purpose="emis_siswa"
+                    title="Token Kredensial Bookmarklet EMIS Siswa"
+                    tokens={integrationTokens}
+                />
 
                 <div className="grid gap-6 md:grid-cols-2">
                     {/* ── Kartu Utama ───────────────────────────── */}

@@ -15,12 +15,10 @@ use Illuminate\Support\Facades\Route;
 
 // ── Health Check ──────────────────────────────────────────────────────
 Route::get('/health', fn () => response()->json(['status' => 'ok', 'app' => config('app.name')]));
+Route::get('/v1/health', fn () => response()->json(['status' => 'ok', 'version' => 'v1', 'app' => config('app.name')]));
 
-// ── EMIS Integration — Token Reception dari Bookmarklet ───────────────
-// Endpoint ini dipanggil oleh bookmarklet di browser staf
-// Tidak perlu auth karena token-nya yang menjadi credential,
-// tapi dibatasi throttle agar tidak disalahgunakan dari internet.
-Route::prefix('emis')->middleware('throttle:60,1')->group(function () {
+// ── EMIS Integration — Token Reception & Sync (Protected by Integration Token / Operator Session) ──
+Route::prefix('emis')->middleware(['throttle:60,1', 'integration.token:emis_siswa'])->group(function () {
     Route::post('/token', [EmisController::class, 'receiveToken']);
     Route::post('/pull', [EmisController::class, 'triggerPull']);
     Route::post('/cancel-sync', [EmisController::class, 'cancelSync']);
@@ -31,9 +29,9 @@ Route::prefix('emis')->middleware('throttle:60,1')->group(function () {
     Route::post('/commit', [EmisController::class, 'commitStaging']);
 });
 
-Route::prefix('emis-gtk')->middleware('throttle:60,1')->group(function () {
+Route::prefix('emis-gtk')->middleware(['throttle:60,1', 'integration.token:emis_gtk'])->group(function () {
     Route::post('/token', [EmisController::class, 'receiveGtkToken']);
-    Route::post('/import', [EmisController::class, 'importGtkData']); // Terima data langsung dari bookmarklet
+    Route::post('/import', [EmisController::class, 'importGtkData']);
     Route::post('/pull', [EmisController::class, 'triggerGtkPull']);
     Route::get('/staging', [EmisController::class, 'gtkStagingList']);
     Route::post('/commit', [EmisController::class, 'commitGtkStaging']);
@@ -42,16 +40,17 @@ Route::prefix('emis-gtk')->middleware('throttle:60,1')->group(function () {
 
 // Endpoint debugging HTML mentah — hanya aktif saat APP_DEBUG=true
 if (config('app.debug')) {
-    Route::prefix('emis-gtk')->middleware('throttle:30,1')->group(function () {
+    Route::prefix('emis-gtk')->middleware(['throttle:30,1', 'integration.token:emis_gtk'])->group(function () {
         Route::post('/import-raw', [EmisController::class, 'importGtkRaw']);
     });
 }
 
 // ── Open API Gateway — Protected by API Key ───────────────
 // Konsumen (SIPSMAD, PTSP, E-Surat) wajib kirim X-API-KEY / ?api_key / Bearer.
-// Key dikelola di Pengaturan (Setting api_key) atau env API_GATEWAY_KEY.
-Route::prefix('v1')->middleware(['throttle:120,1', 'api.key'])->group(function () {
+Route::prefix('v1')->middleware(['throttle:120,1', 'api.key', 'api.idempotent'])->group(function () {
     Route::get('/students', [StudentApiController::class, 'index'])
+        ->middleware('api.scope:students:read');
+    Route::get('/students/by-id/{uuid}', [StudentApiController::class, 'showById'])
         ->middleware('api.scope:students:read');
     Route::get('/students/{nisn}', [StudentApiController::class, 'show'])
         ->middleware('api.scope:students:read');

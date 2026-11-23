@@ -10,6 +10,7 @@ use App\Jobs\PullEmisStudentDataJob;
 use App\Models\AcademicYear;
 use App\Models\EmisGtkStaging;
 use App\Models\EmisStaging;
+use App\Models\IntegrationLog;
 use App\Models\Staff;
 use App\Models\Student;
 use App\Services\EmisService;
@@ -40,16 +41,48 @@ class EmisController extends Controller
 
         // Validasi format JWT (3 bagian dipisah titik)
         if (substr_count($token, '.') !== 2) {
+            IntegrationLog::record('emis_siswa', 'emis_token.rejected', 'failed', [
+                'reason' => 'invalid_jwt_segments',
+            ]);
+
             return response()->json([
                 'success' => false,
                 'message' => 'Format token tidak valid. Pastikan sudah login ke EMIS.',
+                'error' => ['code' => 'INVALID_JWT_FORMAT'],
+                'request_id' => $request->attributes->get('request_id'),
             ], 422);
+        }
+
+        // Decode klaim payload JWT (tanpa klaim verifikasi signature) untuk cek masa berlaku exp
+        $segments = explode('.', $token);
+        $payloadJson = base64_decode(strtr($segments[1], '-_', '+/'), true);
+        $payload = is_string($payloadJson) ? json_decode($payloadJson, true) : null;
+
+        if (is_array($payload) && isset($payload['exp']) && is_numeric($payload['exp'])) {
+            if ((int) $payload['exp'] < time()) {
+                IntegrationLog::record('emis_siswa', 'emis_token.rejected', 'failed', [
+                    'reason' => 'jwt_expired',
+                    'exp' => (int) $payload['exp'],
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Token JWT EMIS sudah kedaluwarsa. Silakan muat ulang halaman EMIS dan kirim kembali.',
+                    'error' => ['code' => 'EXPIRED_JWT_TOKEN'],
+                    'request_id' => $request->attributes->get('request_id'),
+                ], 422);
+            }
         }
 
         $this->emis->storeEmisToken($token);
 
         Log::info('[API] Token EMIS siswa diterima dari bookmarklet', [
             'ip' => $request->ip(),
+        ]);
+
+        IntegrationLog::record('emis_siswa', 'emis_token.received', 'success', [
+            'source' => $request->input('source', 'bookmarklet'),
+            'has_exp' => is_array($payload) && isset($payload['exp']),
         ]);
 
         return response()->json([
@@ -95,6 +128,11 @@ class EmisController extends Controller
 
             Log::info('[API] Cookie EMIS GTK diterima dari bookmarklet', [
                 'ip' => $request->ip(),
+                'has_csrf' => ! empty($cookies['csrftoken']),
+                'has_session' => ! empty($cookies['sessionid']),
+            ]);
+
+            IntegrationLog::record('emis_gtk', 'emis_gtk_cookies.received', 'success', [
                 'has_csrf' => ! empty($cookies['csrftoken']),
                 'has_session' => ! empty($cookies['sessionid']),
             ]);
@@ -175,6 +213,10 @@ class EmisController extends Controller
 
         PullEmisStudentDataJob::dispatch()->onQueue('emis');
 
+        IntegrationLog::record('emis_siswa', 'emis_siswa.pull_triggered', 'success', [
+            'clear_staging' => $clearStaging,
+        ]);
+
         return response()->json([
             'success' => true,
             'message' => 'Penarikan data siswa dimulai. Silakan tunggu hingga selesai.',
@@ -250,6 +292,10 @@ class EmisController extends Controller
         Cache::forget('emis:commit:progress');
 
         CommitEmisStagingJob::dispatch()->onQueue('emis');
+
+        IntegrationLog::record('emis_siswa', 'emis_siswa.commit_triggered', 'success', [
+            'academic_year_id' => $activeYear->id,
+        ]);
 
         return response()->json([
             'success' => true,
@@ -347,6 +393,8 @@ class EmisController extends Controller
         Cache::forget('emis_gtk:commit:progress');
 
         CommitEmisGtkStagingJob::dispatch()->onQueue('emis');
+
+        IntegrationLog::record('emis_gtk', 'emis_gtk.commit_triggered', 'success');
 
         return response()->json([
             'success' => true,

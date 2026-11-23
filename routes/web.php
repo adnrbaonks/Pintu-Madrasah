@@ -10,6 +10,7 @@ use App\Http\Controllers\BkController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\EmisGtkController;
 use App\Http\Controllers\FormCetakController;
+use App\Http\Controllers\IntegrationTokenController;
 use App\Http\Controllers\LegerController;
 use App\Http\Controllers\LetterController;
 use App\Http\Controllers\MutationController;
@@ -34,6 +35,7 @@ use App\Http\Controllers\SubjectController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\VerifyController;
 use App\Http\Controllers\WebhookSubscriptionController;
+use App\Models\IntegrationToken;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
@@ -295,10 +297,17 @@ Route::middleware('auth')->group(function () {
         });
 
         // Integrasi EMIS
-        Route::get('/emis/siswa', fn () => Inertia::render('Emis/Siswa'))->name('emis.siswa');
+        Route::get('/emis/siswa', fn () => Inertia::render('Emis/Siswa', [
+            'integrationTokens' => IntegrationToken::where('purpose', IntegrationToken::PURPOSE_EMIS_SISWA)
+                ->orderByDesc('created_at')
+                ->get()
+                ->append('masked_token'),
+        ]))->name('emis.siswa');
         Route::get('/emis/gtk', [EmisGtkController::class, 'index'])->name('emis.gtk');
         Route::post('/emis/gtk/sync', [EmisGtkController::class, 'sync'])->name('emis.gtk.sync');
         Route::get('/emis/gtk/sync-status', [EmisGtkController::class, 'syncStatus'])->name('emis.gtk.sync-status');
+        Route::post('/emis/tokens', [IntegrationTokenController::class, 'store'])->name('emis.tokens.store');
+        Route::post('/emis/tokens/{integrationToken}/revoke', [IntegrationTokenController::class, 'revoke'])->name('emis.tokens.revoke');
 
         // Leger Nilai
         Route::get('/kelas/leger', [LegerController::class, 'index'])->name('leger.index');

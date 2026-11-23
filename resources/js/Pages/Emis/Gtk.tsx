@@ -15,6 +15,7 @@ import {
 import { toast } from 'sonner';
 import { router } from '@inertiajs/react';
 import { cn } from '@/lib/utils';
+import { IntegrationTokenCard, IntegrationTokenItem } from '@/components/IntegrationTokenCard';
 
 interface GtkStaging {
     id: number;
@@ -43,10 +44,11 @@ interface SyncStatus {
 interface Props {
     stagings: { data: GtkStaging[]; total: number; from: number; to: number };
     summary: { total: number; pending: number; sertifikasi: number; aktif: number; last_sync: string | null; has_sso: boolean };
+    integrationTokens?: IntegrationTokenItem[];
     flash: { success?: string; error?: string };
 }
 
-export default function EmisGtkPage({ stagings, summary, flash }: Props) {
+export default function EmisGtkPage({ stagings, summary, integrationTokens = [], flash }: Props) {
     const [syncStatus, setSyncStatus] = useState<SyncStatus>({ running: false, started_at: null, progress: '', result: null });
     const [ssoToken, setSsoToken] = useState('');
     const [savingToken, setSavingToken] = useState(false);
@@ -145,6 +147,14 @@ export default function EmisGtkPage({ stagings, summary, flash }: Props) {
             </div>
 
             {/* Summary Cards */}
+            <div className="mb-5">
+                <IntegrationTokenCard
+                    purpose="emis_gtk"
+                    title="Token Kredensial Bookmarklet EMIS GTK"
+                    tokens={integrationTokens}
+                />
+            </div>
+
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-5">
                 {[
                     { label: 'Total PTK', value: summary.total, icon: Users, bg: 'bg-blue-500/10', color: 'text-blue-500' },

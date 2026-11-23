@@ -41,7 +41,9 @@ class EmisGtkStagingTest extends TestCase
 
     public function test_bookmarklet_import_maps_columns_without_duplicate_name_column(): void
     {
-        $response = $this->postJson('/api/emis-gtk/import', [
+        $operator = User::factory()->create(['role' => 'operator']);
+
+        $response = $this->actingAs($operator)->postJson('/api/emis-gtk/import', [
             'page' => 1,
             'total_pages' => 1,
             'total_count' => 1,

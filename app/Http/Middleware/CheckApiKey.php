@@ -4,14 +4,21 @@ namespace App\Http\Middleware;
 
 use App\Models\ApiClient;
 use App\Models\Setting;
+use App\Services\ApiKeyService;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
 class CheckApiKey
 {
+    public function __construct(
+        private ApiKeyService $apiKeyService,
+    ) {}
+
     public function handle(Request $request, Closure $next): Response
     {
+        $requestId = $request->attributes->get('request_id');
+
         $provided = $request->header('X-API-KEY')
             ?: $request->query('api_key')
             ?: (str_starts_with((string) $request->header('Authorization'), 'Bearer ')
@@ -22,16 +29,38 @@ class CheckApiKey
             return response()->json([
                 'success' => false,
                 'message' => 'API Key wajib dikirim via header X-API-KEY.',
+                'error' => ['code' => 'MISSING_API_KEY'],
+                'request_id' => $requestId,
             ], 401);
         }
 
-        // ── Prioritas 1: kunci per-klien di database ──
-        $client = ApiClient::where('api_key', $provided)
-            ->where('is_active', true)
-            ->first();
+        // ── Prioritas 1: kunci per-klien di database (hash SHA-256 + dual-read transisi) ──
+        $client = $this->apiKeyService->findMatchingClient((string) $provided);
 
         if ($client) {
-            $client->update(['last_used_at' => now()]);
+            if ($client->isRevoked()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'API Key telah dinonaktifkan. Hubungi operator TU.',
+                    'error' => ['code' => 'API_KEY_REVOKED'],
+                    'request_id' => $requestId,
+                ], 403);
+            }
+
+            if ($client->isExpired()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Masa berlaku API Key telah kedaluwarsa. Silakan lakukan rotasi key.',
+                    'error' => ['code' => 'API_KEY_EXPIRED'],
+                    'request_id' => $requestId,
+                ], 403);
+            }
+
+            // Throttle update last_used_at (maks 1x per menit)
+            if ($client->last_used_at === null || $client->last_used_at->lt(now()->subMinute())) {
+                $client->update(['last_used_at' => now()]);
+            }
+
             $request->attributes->set('api_client', $client);
             $request->attributes->set('api_scopes', $client->scopes ?? []);
 
@@ -47,18 +76,11 @@ class CheckApiKey
             return $next($request);
         }
 
-        // Nonaktifkan key yang dicabut / tidak dikenal tanpa membocorkan daftar
-        $revoked = ApiClient::where('api_key', $provided)->first();
-        if ($revoked && ! $revoked->is_active) {
-            return response()->json([
-                'success' => false,
-                'message' => 'API Key telah dinonaktifkan. Hubungi operator TU.',
-            ], 403);
-        }
-
         return response()->json([
             'success' => false,
             'message' => 'API Key tidak valid.',
+            'error' => ['code' => 'INVALID_API_KEY'],
+            'request_id' => $requestId,
         ], 401);
     }
 }

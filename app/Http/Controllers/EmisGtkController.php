@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Jobs\RunEmisGtkSyncJob;
 use App\Models\EmisGtkStaging;
+use App\Models\IntegrationToken;
 use App\Models\Setting;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -34,9 +35,15 @@ class EmisGtkController extends Controller
             'has_sso' => $hasSsoToken,
         ];
 
+        $tokens = IntegrationToken::where('purpose', IntegrationToken::PURPOSE_EMIS_GTK)
+            ->orderByDesc('created_at')
+            ->get()
+            ->append('masked_token');
+
         return Inertia::render('Emis/Gtk', [
             'stagings' => $stagings,
             'summary' => $summary,
+            'integrationTokens' => $tokens,
         ]);
     }
 

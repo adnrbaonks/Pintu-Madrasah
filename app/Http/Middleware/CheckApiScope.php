@@ -20,6 +20,8 @@ class CheckApiScope
             return response()->json([
                 'success' => false,
                 'message' => "Scope '{$scope}' tidak dimiliki API Key ini.",
+                'error' => ['code' => 'FORBIDDEN_SCOPE'],
+                'request_id' => $request->attributes->get('request_id'),
             ], 403);
         }
 
