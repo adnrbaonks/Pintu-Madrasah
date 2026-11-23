@@ -149,6 +149,7 @@ function buildNavItems(role: string) {
             children: [
                 { label: 'Arsip Digital', href: '/arsip-digital' },
                 { label: 'Program Kerja', href: '/program-kerja' },
+                { label: 'PKKM', href: '/pkkm', roles: ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'] },
                 { label: 'Persuratan', href: '/persuratan', roles: ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'] },
                 { label: 'Demografi', href: '/statistik/demografi', roles: ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'] },
             ],

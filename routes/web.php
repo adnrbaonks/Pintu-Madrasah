@@ -16,6 +16,7 @@ use App\Http\Controllers\LegerController;
 use App\Http\Controllers\LetterController;
 use App\Http\Controllers\MutationController;
 use App\Http\Controllers\OrganizationController;
+use App\Http\Controllers\PkkmController;
 use App\Http\Controllers\PpdbController;
 use App\Http\Controllers\PrintController;
 use App\Http\Controllers\ProfileController;
@@ -202,6 +203,17 @@ Route::middleware('auth')->group(function () {
         Route::post('/{program}/activities', [ProgramController::class, 'storeActivity'])->name('activities.store');
         Route::post('/{program}/reports', [ProgramController::class, 'storeReport'])->name('reports.store');
         Route::post('/reports/{report}/review', [ProgramController::class, 'reviewReport'])->name('reports.review');
+    });
+
+    // ── PKKM — Penilaian Kinerja Kepala Madrasah Dinamis (WP8.3 - Gelombang 2) ──
+    Route::prefix('pkkm')->name('pkkm.')->group(function () {
+        Route::get('/', [PkkmController::class, 'index'])->name('index');
+        Route::post('/', [PkkmController::class, 'store'])->name('store');
+        Route::get('/{instrument}', [PkkmController::class, 'show'])->name('show');
+        Route::post('/{instrument}/components', [PkkmController::class, 'storeComponent'])->name('components.store');
+        Route::post('/{instrument}/finalize', [PkkmController::class, 'finalize'])->name('finalize');
+        Route::post('/components/{component}/assess', [PkkmController::class, 'saveAssessment'])->name('components.assess');
+        Route::post('/components/{component}/evidence', [PkkmController::class, 'storeEvidence'])->name('components.evidence');
     });
 
     // ── Data Siswa, GTK, PPDB — staf, operator, kaur TU, kamad, admin ──
