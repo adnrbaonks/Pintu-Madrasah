@@ -69,6 +69,11 @@ class DispatchWebhookJob implements ShouldQueue
 
                 $owned = OutboxEvent::whereKey($this->outboxEventId)
                     ->where('status', OutboxEvent::STATUS_PENDING)
+                    ->when($this->onlySubscriptionId === null, function ($query) {
+                        $query->where(function ($avail) {
+                            $avail->whereNull('available_at')->orWhere('available_at', '<=', now());
+                        });
+                    })
                     ->update([
                         'status' => OutboxEvent::STATUS_PROCESSING,
                         'reserved_at' => now(),
@@ -136,7 +141,7 @@ class DispatchWebhookJob implements ShouldQueue
 
         $this->updateOutboxAfterAttempt($failures);
 
-        if ($failures !== [] && $this->job && $this->job->getConnectionName() !== 'sync') {
+        if ($failures !== [] && $this->outboxEventId === null && $this->job && $this->job->getConnectionName() !== 'sync') {
             $this->release($this->backoffSecondsForAttempt($this->attempts()));
         }
     }

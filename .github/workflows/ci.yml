@@ -138,6 +138,11 @@ jobs:
       - name: Run tests on MySQL 8
         run: php artisan test
 
+      - name: Run Redis queue & outbox integration tests (QUEUE_CONNECTION=redis)
+        env:
+          QUEUE_CONNECTION: redis
+        run: ./vendor/bin/phpunit tests/Feature/RedisQueueOutboxIntegrationTest.php
+
   build-assets:
     name: Build frontend assets
     runs-on: ubuntu-latest
