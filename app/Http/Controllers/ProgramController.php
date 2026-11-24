@@ -45,7 +45,7 @@ class ProgramController extends Controller
             $query->where('organization_unit_id', (string) $request->query('unit_id'));
         }
 
-        if (! $user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'operator'])) {
+        if (! $user->can('view_programs')) {
             $query->where(function ($programQuery) use ($user): void {
                 $programQuery->where('pic_user_id', $user->id)
                     ->orWhereHas('activities', fn ($activityQuery) => $activityQuery->where('pic_user_id', $user->id));
@@ -74,7 +74,7 @@ class ProgramController extends Controller
     public function store(Request $request): RedirectResponse
     {
         $user = $request->user();
-        if (! $user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'])) {
+        if (! $user->can('create_programs')) {
             abort(403, 'Anda tidak memiliki izin untuk membuat program kerja.');
         }
 
@@ -119,14 +119,14 @@ class ProgramController extends Controller
 
     private function authorizeProgramManager(User $user, Program $program): void
     {
-        $isManager = $user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'operator']);
+        $isManager = $user->can('manage_programs');
         abort_unless($isManager || $program->pic_user_id === $user->id, 403, 'Akses program tidak diizinkan.');
     }
 
     private function authorizeProgramAccess(Request $request, Program $program): void
     {
         $user = $request->user();
-        $isManager = $user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'operator']);
+        $isManager = $user->can('manage_programs');
         $isActivityPic = $program->activities()->where('pic_user_id', $user->id)->exists();
         abort_unless($isManager || $program->pic_user_id === $user->id || $isActivityPic, 403, 'Akses program tidak diizinkan.');
     }
@@ -199,25 +199,25 @@ class ProgramController extends Controller
         }
 
         if (in_array($targetStatus, [Program::STATUS_APPROVED, Program::STATUS_REJECTED], true)) {
-            if (! $user->hasAnyRole(['admin', 'kepala_madrasah'])) {
+            if (! $user->can('approve_programs')) {
                 abort(403, 'Hanya Kepala Madrasah atau Admin yang dapat menyetujui/menolak program kerja.');
             }
         }
 
         if ($targetStatus === Program::STATUS_VERIFIED) {
-            if (! $user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu'])) {
+            if (! $user->can('verify_programs')) {
                 abort(403, 'Hanya Kepala TU, Kepala Madrasah, atau Admin yang dapat memverifikasi program kerja.');
             }
         }
 
         if ($targetStatus === Program::STATUS_IN_PROGRESS) {
-            if (! $user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu']) && $user->id !== $program->pic_user_id) {
+            if (! $user->can('manage_programs') && $user->id !== $program->pic_user_id) {
                 abort(403, 'Hanya PIC program atau pengelola yang dapat memulai pelaksanaan program kerja.');
             }
         }
 
         if ($targetStatus === Program::STATUS_COMPLETED) {
-            if (! $user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu']) && $user->id !== $program->pic_user_id) {
+            if (! $user->can('manage_programs') && $user->id !== $program->pic_user_id) {
                 abort(403, 'Anda tidak berwenang untuk menyelesaikan program kerja ini.');
             }
 
@@ -421,7 +421,7 @@ class ProgramController extends Controller
 
         if ($validated['action'] === 'verify') {
             abort_unless($report->status === ProgramReport::STATUS_SUBMITTED, 422, 'Hanya laporan terkirim yang dapat diverifikasi.');
-            if (! $user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu'])) {
+            if (! $user->can('verify_programs')) {
                 abort(403, 'Hanya Kepala TU, Kepala Madrasah, atau Admin yang dapat memverifikasi laporan.');
             }
 
@@ -433,7 +433,7 @@ class ProgramController extends Controller
             ]);
         } elseif ($validated['action'] === 'approve') {
             abort_unless($report->status === ProgramReport::STATUS_VERIFIED, 422, 'Hanya laporan terverifikasi yang dapat disetujui.');
-            if (! $user->hasAnyRole(['admin', 'kepala_madrasah'])) {
+            if (! $user->can('approve_programs')) {
                 abort(403, 'Hanya Kepala Madrasah atau Admin yang dapat menyetujui laporan kegiatan.');
             }
 
@@ -445,7 +445,7 @@ class ProgramController extends Controller
             ]);
         } else {
             abort_unless(in_array($report->status, [ProgramReport::STATUS_SUBMITTED, ProgramReport::STATUS_VERIFIED], true), 422, 'Tahap laporan tidak dapat diminta revisi.');
-            if (! $user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu'])) {
+            if (! $user->can('verify_programs')) {
                 abort(403);
             }
 

@@ -293,8 +293,8 @@ class ArchiveController extends Controller
     public function destroy(Request $request, Archive $archive): RedirectResponse
     {
         $user = $request->user();
-        if (! $user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu'])) {
-            abort(403, 'Hanya Admin, Kepala Madrasah, atau Kepala TU yang dapat menghapus arsip.');
+        if (! $user->can('delete_archives')) {
+            abort(403, 'Anda tidak memiliki izin untuk menghapus arsip.');
         }
 
         $this->archiveService->logAccess(

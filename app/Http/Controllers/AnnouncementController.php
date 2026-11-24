@@ -30,7 +30,7 @@ class AnnouncementController extends Controller
                     ->orWhereDate('expires_at', '>=', now()->toDateString());
             });
 
-        $isAdmin = $user && $user->hasRole('admin');
+        $isAdmin = $user && $user->can('view_all_announcements');
 
         if (! $isAdmin) {
             $userRoles = $user ? $user->roles()->pluck('name')->all() : [];
@@ -60,7 +60,7 @@ class AnnouncementController extends Controller
             ->orderByDesc('created_at')
             ->get();
 
-        $canManage = $user && ($user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator']));
+        $canManage = $user && $user->can('manage_announcements');
 
         if ($user) {
             $announcements->each(function (Announcement $announcement) use ($user): void {
@@ -83,7 +83,7 @@ class AnnouncementController extends Controller
     public function store(Request $request): RedirectResponse
     {
         $user = $request->user();
-        $canManage = $user && ($user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator']));
+        $canManage = $user && $user->can('manage_announcements');
         if (! $canManage) {
             abort(403, 'Anda tidak memiliki hak akses untuk mempublikasikan pengumuman.');
         }
@@ -134,7 +134,7 @@ class AnnouncementController extends Controller
     public function destroy(Request $request, Announcement $announcement): RedirectResponse
     {
         $user = $request->user();
-        $canDelete = $user && ($user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu']));
+        $canDelete = $user && $user->can('delete_announcements');
         if (! $canDelete) {
             abort(403);
         }

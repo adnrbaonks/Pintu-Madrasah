@@ -49,7 +49,7 @@ class PkkmController extends Controller
     public function store(Request $request): RedirectResponse
     {
         $user = $request->user();
-        $canManage = $user && $user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu']);
+        $canManage = $user && $user->can('manage_pkkm');
         if (! $canManage) {
             abort(403, 'Hanya Admin, Kepala Madrasah, atau Kepala TU yang dapat membuat instrumen PKKM.');
         }
@@ -133,7 +133,7 @@ class PkkmController extends Controller
     public function storeComponent(Request $request, PkkmInstrument $instrument): RedirectResponse
     {
         $user = $request->user();
-        $canManage = $user && $user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu']);
+        $canManage = $user && $user->can('manage_pkkm');
         if (! $canManage) {
             abort(403, 'Anda tidak memiliki izin untuk menambah komponen PKKM.');
         }
@@ -187,8 +187,7 @@ class PkkmController extends Controller
         $user = $request->user();
         $instrument = $component->instrument;
 
-        $isAdmin = $user && $user->hasRole('admin');
-        $isEvaluatorRole = $user && $user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu']);
+        $isEvaluatorRole = $user && $user->can('assess_pkkm');
         $isHeadmaster = $instrument->headmaster_user_id === $user?->id;
         $isComponentPic = $component->pic_user_id === $user?->id;
 
@@ -254,7 +253,7 @@ class PkkmController extends Controller
     {
         $user = $request->user();
         $instrument = $component->instrument;
-        $isManager = $user && $user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu']);
+        $isManager = $user && $user->can('manage_pkkm');
         abort_unless(
             $isManager || $component->pic_user_id === $user->id,
             403,
@@ -316,7 +315,7 @@ class PkkmController extends Controller
     {
         $user = $request->user();
         $instrument = $evidence->component->instrument;
-        $canReviewRole = $user && $user->hasAnyRole(['admin', 'kepala_madrasah']);
+        $canReviewRole = $user && $user->can('review_pkkm');
         $isUploader = $user->id === $evidence->uploaded_by;
         $isComponentPic = $user->id === $evidence->component->pic_user_id;
 
@@ -344,7 +343,7 @@ class PkkmController extends Controller
     public function finalize(Request $request, PkkmInstrument $instrument): RedirectResponse
     {
         $user = $request->user();
-        $canFinalize = $user && $user->hasAnyRole(['admin', 'kepala_madrasah']);
+        $canFinalize = $user && $user->can('finalize_pkkm');
         if (! $canFinalize) {
             abort(403, 'Hanya Kepala Madrasah atau Admin yang dapat memfinalisasi instrumen PKKM.');
         }
@@ -362,7 +361,7 @@ class PkkmController extends Controller
     private function authorizeInstrumentAccess(Request $request, PkkmInstrument $instrument): void
     {
         $user = $request->user();
-        $isManager = $user && $user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator']);
+        $isManager = $user && $user->can('view_pkkm');
         $isHeadmaster = $instrument->headmaster_user_id === $user?->id;
         $isPic = $instrument->components()->where('pic_user_id', $user?->id)->exists();
 

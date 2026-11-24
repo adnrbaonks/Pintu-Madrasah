@@ -25,8 +25,16 @@ class RolesAndPermissionsSeeder extends Seeder
             // GTK
             'view_staff', 'create_staff', 'edit_staff', 'delete_staff', 'validate_tpg',
             'verify_staff_changes', 'approve_staff_changes',
-            'manage_archives', 'manage_organization',
+            'manage_archives', 'delete_archives', 'manage_organization',
             'view_ppdb_documents', 'view_mutation_documents',
+            // Rapat & Notulen
+            'view_meetings', 'manage_meetings', 'approve_meeting_minutes',
+            // Program Kerja
+            'view_programs', 'create_programs', 'manage_programs', 'verify_programs', 'approve_programs',
+            // PKKM
+            'view_pkkm', 'manage_pkkm', 'assess_pkkm', 'review_pkkm', 'finalize_pkkm',
+            // Pengumuman
+            'view_all_announcements', 'manage_announcements', 'delete_announcements',
             // Akademik & Rombel
             'view_rombels', 'manage_rombels',
             'view_academic_years', 'manage_academic_years',
@@ -82,6 +90,8 @@ class RolesAndPermissionsSeeder extends Seeder
             'view_students', 'create_students', 'edit_students', 'export_students',
             'view_student_documents',
             'manage_archives', 'manage_organization', 'manage_bk',
+            'view_meetings', 'manage_meetings', 'create_programs', 'view_pkkm',
+            'manage_announcements',
             'view_staff', 'edit_staff',
             'view_rombels', 'manage_rombels',
             'view_academic_years',
@@ -101,6 +111,8 @@ class RolesAndPermissionsSeeder extends Seeder
             'view_students', 'create_students', 'edit_students', 'export_students',
             'view_student_documents',
             'manage_archives', 'manage_organization',
+            'view_meetings', 'manage_meetings', 'view_programs', 'create_programs', 'manage_programs', 'view_pkkm',
+            'manage_announcements',
             'view_staff', 'create_staff', 'edit_staff',
             'view_rombels', 'manage_rombels',
             'view_academic_years', 'manage_academic_years',
@@ -120,7 +132,10 @@ class RolesAndPermissionsSeeder extends Seeder
         $kaurTu->syncPermissions([
             'view_students', 'create_students', 'edit_students', 'export_students',
             'view_student_documents',
-            'manage_archives', 'manage_organization',
+            'manage_archives', 'delete_archives', 'manage_organization',
+            'view_meetings', 'manage_meetings', 'view_programs', 'create_programs', 'manage_programs', 'verify_programs',
+            'view_pkkm', 'manage_pkkm', 'assess_pkkm',
+            'manage_announcements', 'delete_announcements',
             'view_staff', 'edit_staff', 'verify_staff_changes',
             'view_rombels', 'manage_rombels',
             'view_academic_years',
@@ -139,7 +154,11 @@ class RolesAndPermissionsSeeder extends Seeder
         $kamad->syncPermissions([
             'view_students', 'export_students',
             'view_student_documents', 'view_ppdb_documents', 'view_mutation_documents',
-            'manage_archives',
+            'manage_archives', 'delete_archives',
+            'view_meetings', 'manage_meetings', 'approve_meeting_minutes',
+            'view_programs', 'create_programs', 'manage_programs', 'verify_programs', 'approve_programs',
+            'view_pkkm', 'manage_pkkm', 'assess_pkkm', 'review_pkkm', 'finalize_pkkm',
+            'manage_announcements', 'delete_announcements',
             'view_staff', 'approve_staff_changes',
             'view_rombels',
             'view_academic_years',

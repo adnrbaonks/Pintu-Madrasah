@@ -22,7 +22,7 @@ class MeetingController extends Controller
     public function index(Request $request): Response
     {
         $user = $request->user();
-        $isManager = $user && $user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator']);
+        $isManager = $user && $user->can('view_meetings');
 
         $query = Meeting::query()
             ->with([
@@ -70,7 +70,7 @@ class MeetingController extends Controller
     public function store(Request $request): RedirectResponse
     {
         $user = $request->user();
-        $canManage = $user && $user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator']);
+        $canManage = $user && $user->can('manage_meetings');
         if (! $canManage) {
             abort(403, 'Anda tidak memiliki hak akses untuk menjadwalkan rapat dinas.');
         }
@@ -154,7 +154,7 @@ class MeetingController extends Controller
     public function show(Request $request, Meeting $meeting): Response
     {
         $user = $request->user();
-        $isManager = $user && $user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator']);
+        $isManager = $user && $user->can('view_meetings');
         abort_unless(
             $meeting->participants()->where('user_id', $user->id)->exists()
                 || $meeting->leader_user_id === $user->id
@@ -188,7 +188,7 @@ class MeetingController extends Controller
     public function markAttendance(Request $request, Meeting $meeting): RedirectResponse
     {
         $user = $request->user();
-        $isMeetingManager = $user && $user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator']);
+        $isMeetingManager = $user && $user->can('manage_meetings');
         $isLeader = $meeting->leader_user_id === $user->id;
 
         if (! $isMeetingManager && ! $isLeader) {
@@ -221,7 +221,7 @@ class MeetingController extends Controller
     public function saveMinutes(Request $request, Meeting $meeting): RedirectResponse
     {
         $user = $request->user();
-        $isManager = $user && $user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator']);
+        $isManager = $user && $user->can('manage_meetings');
         if (! $isManager && $meeting->notetaker_user_id !== $user->id) {
             abort(403, 'Hanya notulis atau pengelola rapat yang dapat menyimpan notulen.');
         }
@@ -251,7 +251,7 @@ class MeetingController extends Controller
     public function approveMinutes(Request $request, Meeting $meeting): RedirectResponse
     {
         $user = $request->user();
-        $canApprove = ($user && $user->hasAnyRole(['admin', 'kepala_madrasah']))
+        $canApprove = ($user && $user->can('approve_meeting_minutes'))
             || $user->id === $meeting->leader_user_id;
 
         if (! $canApprove) {
@@ -275,7 +275,7 @@ class MeetingController extends Controller
     public function storeAction(Request $request, Meeting $meeting): RedirectResponse
     {
         $user = $request->user();
-        $isManager = $user && $user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator']);
+        $isManager = $user && $user->can('manage_meetings');
         if (! $isManager && $meeting->leader_user_id !== $user->id) {
             abort(403, 'Hanya pimpinan atau pengelola rapat yang dapat menetapkan tindak lanjut.');
         }
@@ -316,7 +316,7 @@ class MeetingController extends Controller
     public function updateAction(Request $request, MeetingAction $action): RedirectResponse
     {
         $user = $request->user();
-        $isManager = $user && $user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator']);
+        $isManager = $user && $user->can('manage_meetings');
         $isLeader = $action->meeting && $action->meeting->leader_user_id === $user->id;
         $isAssignee = $action->assigned_to_user_id === $user->id;
 
