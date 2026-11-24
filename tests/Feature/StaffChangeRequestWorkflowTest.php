@@ -632,6 +632,67 @@ class StaffChangeRequestWorkflowTest extends TestCase
         $this->assertStringContainsString('Batas waktu sinkronisasi EMIS', (string) $reqTimeout->items()->first()->apply_error);
     }
 
+    public function test_commit_emis_gtk_staging_job_applies_and_reconciles_explicit_null_for_emis_owned_field(): void
+    {
+        $staff = Staff::factory()->create([
+            'nik' => '3201000000000099',
+            'civil_rank' => 'III/a',
+            'phone' => '081122334455',
+        ]);
+        $guru = User::factory()->create(['role' => 'guru', 'staff_id' => $staff->id]);
+        $kaurTu = User::factory()->create(['role' => 'kaur_tu']);
+        $kamad = User::factory()->create(['role' => 'kepala_madrasah']);
+
+        // Mengajukan pengosongan field lokal (phone) dan field otoritas EMIS (civil_rank) sekaligus
+        $this->actingAs($guru)->post('/profil-gtk/pengajuan', [
+            'reason' => 'Koreksi status non-PNS tanpa golongan dan hapus telepon lama',
+            'changes' => [
+                'phone' => null,
+                'civil_rank' => null,
+            ],
+            'submit_now' => true,
+        ])->assertRedirect();
+
+        $changeRequest = StaffChangeRequest::where('staff_id', $staff->id)->firstOrFail();
+        $this->actingAs($kaurTu)->post("/verifikasi-gtk/{$changeRequest->id}/verify")->assertRedirect();
+        $this->actingAs($kamad)->post("/persetujuan-gtk/{$changeRequest->id}/approve")->assertRedirect();
+
+        // Field lokal langsung menjadi null, sedangkan field EMIS menunggu sinkronisasi eksternal
+        $staff->refresh();
+        $changeRequest->refresh();
+        $this->assertNull($staff->phone);
+        $this->assertSame('III/a', $staff->civil_rank);
+        $this->assertSame(StaffChangeRequest::STATUS_PENDING_EXTERNAL_SYNC, $changeRequest->status);
+
+        // Staging EMIS masuk dengan civil_rank = null
+        EmisGtkStaging::create([
+            'nik' => '3201000000000099',
+            'full_name_with_titles' => $staff->full_name_with_titles,
+            'gender' => $staff->gender,
+            'birth_place' => $staff->birth_place,
+            'birth_date' => $staff->birth_date,
+            'employment_status' => $staff->employment_status,
+            'civil_rank' => null,
+            'raw_data' => [
+                'nik' => '3201000000000099',
+                'civil_rank' => null,
+            ],
+            'status' => 'pending',
+        ]);
+
+        (new CommitEmisGtkStagingJob)->handle();
+
+        $staff->refresh();
+        $changeRequest->refresh();
+
+        $this->assertNull($staff->civil_rank);
+        $this->assertSame(StaffChangeRequest::STATUS_COMPLETED, $changeRequest->status);
+        $this->assertSame(
+            'applied',
+            $changeRequest->items()->where('field', 'civil_rank')->firstOrFail()->apply_status
+        );
+    }
+
     public function test_revision_authority_cross_stage_and_dual_role_enforcement(): void
     {
         $staff = Staff::factory()->create(['phone' => '0812340000']);

@@ -172,4 +172,42 @@ class EmisGtkStagingTest extends TestCase
         $this->assertSame('08123456789', $staff->phone);
         $this->assertSame('pns', $staff->employment_status);
     }
+
+    public function test_commit_applies_explicit_null_from_raw_payload_only_for_allowed_clearable_fields(): void
+    {
+        $staff = Staff::factory()->create([
+            'nik' => '3211250703820005',
+            'phone' => '08123456789',
+            'civil_rank' => 'III/a',
+            'last_title' => 'S.Pd.',
+            'gender' => 'P',
+            'birth_place' => 'Bandung',
+        ]);
+
+        EmisGtkStaging::factory()->incomplete()->create([
+            'nik' => '3211250703820005',
+            'phone' => null,
+            'civil_rank' => null,
+            'last_title' => null,
+            'gender' => null,
+            'raw_data' => [
+                'nik' => '3211250703820005',
+                'civil_rank' => null,
+                'phone' => '',
+                // last_title tidak dikirim di raw_data -> tidak boleh ikut dikosongkan
+                // gender dikirim null, tetapi kolom NOT NULL -> tidak boleh dikosongkan
+                'gender' => null,
+            ],
+        ]);
+
+        (new CommitEmisGtkStagingJob)->handle();
+
+        $staff->refresh();
+
+        $this->assertNull($staff->civil_rank);
+        $this->assertNull($staff->phone);
+        $this->assertSame('S.Pd.', $staff->last_title);
+        $this->assertSame('P', $staff->gender);
+        $this->assertSame('Bandung', $staff->birth_place);
+    }
 }

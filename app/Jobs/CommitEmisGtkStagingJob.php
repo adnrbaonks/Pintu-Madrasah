@@ -12,6 +12,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -38,6 +39,32 @@ class CommitEmisGtkStagingJob implements ShouldQueue
         'birth_place',
         'birth_date',
         'employment_status',
+    ];
+
+    /**
+     * Field nullable pada tabel `staff` yang boleh dikosongkan secara eksplisit oleh EMIS.
+     *
+     * Kunci adalah kolom `staff`, nilai adalah daftar kunci mentah pada payload EMIS (`raw_data`).
+     * Kolom NOT NULL (`full_name_with_titles`, `gender`, `birth_place`, `birth_date`,
+     * `employment_status`, `tpg_status`, `is_active`) tidak dimasukkan agar tidak melanggar skema.
+     *
+     * @var array<string, array<int, string>>
+     */
+    private const CLEARABLE_FIELDS = [
+        'nip' => ['nip'],
+        'npk' => ['npk'],
+        'nuptk' => ['nuptk'],
+        'first_title' => ['first_title'],
+        'last_title' => ['last_title'],
+        'phone' => ['phone', 'telepon', 'no_hp'],
+        'email' => ['email'],
+        'civil_rank' => ['civil_rank', 'pangkat', 'golongan'],
+        'civil_rank_tmt' => ['civil_rank_tmt', 'tmt_pangkat', 'tmt_golongan'],
+        'functional_position' => ['fungsi', 'function_role', 'functional_position'],
+        'highest_education' => ['highest_education', 'pendidikan_terakhir'],
+        'university_name' => ['university_name', 'perguruan_tinggi'],
+        'study_program' => ['study_program', 'prodi', 'program_studi'],
+        'graduation_year' => ['graduation_year', 'tahun_lulus'],
     ];
 
     public $timeout = 600;
@@ -82,13 +109,23 @@ class CommitEmisGtkStagingJob implements ShouldQueue
                                     $lockedStaff->restore();
                                 }
 
-                                $lockedStaff->update(array_filter($staffData, fn ($value) => $value !== null));
-
                                 // Rekonsiliasi pengajuan perubahan GTK yang berstatus pending_external_sync
-                                $pendingRequests = StaffChangeRequest::where('staff_id', $lockedStaff->id)
+                                $pendingRequests = StaffChangeRequest::with('items')
+                                    ->where('staff_id', $lockedStaff->id)
                                     ->where('status', StaffChangeRequest::STATUS_PENDING_EXTERNAL_SYNC)
                                     ->lockForUpdate()
                                     ->get();
+
+                                $updatePayload = $this->buildStaffUpdatePayload(
+                                    $staging,
+                                    $staffData,
+                                    $pendingRequests,
+                                );
+
+                                if ($updatePayload !== []) {
+                                    $lockedStaff->update($updatePayload);
+                                }
+
                                 foreach ($pendingRequests as $pendingReq) {
                                     app(StaffChangeRequestService::class)->reconcileExternalSync($pendingReq);
                                 }
@@ -218,6 +255,89 @@ class CommitEmisGtkStagingJob implements ShouldQueue
         }
 
         return $data;
+    }
+
+    /**
+     * Bedakan field yang tidak dikirim dalam staging parsial vs field yang sengaja dikosongkan.
+     *
+     * @param  array<string, mixed>  $staffData
+     * @param  Collection<int, StaffChangeRequest>  $pendingRequests
+     * @return array<string, mixed>
+     */
+    private function buildStaffUpdatePayload(
+        EmisGtkStaging $staging,
+        array $staffData,
+        $pendingRequests,
+    ): array {
+        $payload = [];
+
+        foreach ($staffData as $field => $value) {
+            if ($value !== null) {
+                $payload[$field] = $value;
+
+                continue;
+            }
+
+            if ($this->shouldApplyExplicitNull($staging, $field, $pendingRequests)) {
+                $payload[$field] = null;
+            }
+        }
+
+        return $payload;
+    }
+
+    /**
+     * @param  Collection<int, StaffChangeRequest>  $pendingRequests
+     */
+    private function shouldApplyExplicitNull(
+        EmisGtkStaging $staging,
+        string $field,
+        $pendingRequests,
+    ): bool {
+        if (! array_key_exists($field, self::CLEARABLE_FIELDS)) {
+            return false;
+        }
+
+        // Jangan kosongkan kunci identitas jika akan menyisakan staf tanpa identitas sama sekali.
+        if (in_array($field, self::IDENTITY_KEYS, true) && ! $this->hasOtherIdentityOnStaging($staging, $field)) {
+            return false;
+        }
+
+        $rawData = is_array($staging->raw_data) ? $staging->raw_data : [];
+        foreach (self::CLEARABLE_FIELDS[$field] as $rawKey) {
+            if (array_key_exists($rawKey, $rawData) && ($rawData[$rawKey] === null || trim((string) $rawData[$rawKey]) === '')) {
+                return true;
+            }
+        }
+
+        foreach ($pendingRequests as $request) {
+            foreach ($request->items as $item) {
+                if (
+                    $item->field === $field
+                    && $item->apply_status === 'pending_external_sync'
+                    && ($item->proposed_value === null || $item->proposed_value === '')
+                ) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private function hasOtherIdentityOnStaging(EmisGtkStaging $staging, string $excludingField): bool
+    {
+        foreach (self::IDENTITY_KEYS as $column) {
+            if ($column === $excludingField) {
+                continue;
+            }
+
+            if (filled($staging->{$column})) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
