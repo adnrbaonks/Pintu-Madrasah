@@ -32,6 +32,7 @@ class DispatchWebhookJob implements ShouldQueue
         public ?string $onlySubscriptionId = null,
         public ?string $eventId = null,
         public ?string $outboxEventId = null,
+        public ?string $leaseToken = null,
     ) {
         $this->eventId ??= (string) Str::uuid();
     }
@@ -58,14 +59,49 @@ class DispatchWebhookJob implements ShouldQueue
         $publisher ??= app(WebhookPublisher::class);
 
         if ($this->outboxEventId) {
-            OutboxEvent::whereKey($this->outboxEventId)
-                ->whereIn('status', [OutboxEvent::STATUS_PENDING, OutboxEvent::STATUS_PROCESSING])
-                ->update([
-                    'status' => OutboxEvent::STATUS_PROCESSING,
-                    'reserved_at' => now(),
-                    'lease_until' => now()->addSeconds(300),
-                    'leased_by' => 'job:'.($this->job?->getJobId() ?? Str::random(8)),
+            if ($this->leaseToken === null) {
+                $current = OutboxEvent::find($this->outboxEventId);
+                if ($current && $current->status === OutboxEvent::STATUS_PUBLISHED) {
+                    return;
+                }
+
+                $this->leaseToken = 'job:'.($this->job?->getJobId() ?? Str::random(8));
+
+                $owned = OutboxEvent::whereKey($this->outboxEventId)
+                    ->where('status', OutboxEvent::STATUS_PENDING)
+                    ->update([
+                        'status' => OutboxEvent::STATUS_PROCESSING,
+                        'reserved_at' => now(),
+                        'lease_until' => now()->addSeconds(300),
+                        'leased_by' => $this->leaseToken,
+                    ]);
+
+                if (! $owned && $this->onlySubscriptionId === null) {
+                    Log::notice('[OUTBOX] Direct webhook job skipped because event is already claimed or completed', [
+                        'outbox_id' => $this->outboxEventId,
+                    ]);
+
+                    return;
+                }
+            } else {
+                $owned = OutboxEvent::whereKey($this->outboxEventId)
+                    ->where('status', OutboxEvent::STATUS_PROCESSING)
+                    ->where('leased_by', $this->leaseToken)
+                    ->where('lease_until', '>', now())
+                    ->update([
+                        'reserved_at' => now(),
+                        'lease_until' => now()->addSeconds(300),
+                    ]);
+            }
+
+            if (! $owned) {
+                Log::notice('[OUTBOX] Dropping stale webhook job without current lease', [
+                    'outbox_id' => $this->outboxEventId,
+                    'lease_token' => $this->leaseToken,
                 ]);
+
+                return;
+            }
         }
 
         $query = WebhookSubscription::where('is_active', true)
@@ -102,13 +138,15 @@ class DispatchWebhookJob implements ShouldQueue
     public function failed(\Throwable $e): void
     {
         if ($this->outboxEventId) {
-            OutboxEvent::whereKey($this->outboxEventId)->update([
-                'status' => OutboxEvent::STATUS_FAILED,
-                'last_error' => mb_substr($e->getMessage(), 0, 1000),
-                'reserved_at' => null,
-                'lease_until' => null,
-                'leased_by' => null,
-            ]);
+            OutboxEvent::whereKey($this->outboxEventId)
+                ->where('leased_by', $this->leaseToken)
+                ->update([
+                    'status' => OutboxEvent::STATUS_FAILED,
+                        'last_error' => mb_substr($e->getMessage(), 0, 1000),
+                    'reserved_at' => null,
+                    'lease_until' => null,
+                    'leased_by' => null,
+                ]);
         }
 
         if ($this->eventId) {
@@ -242,13 +280,16 @@ class DispatchWebhookJob implements ShouldQueue
             return;
         }
 
-        OutboxEvent::whereKey($this->outboxEventId)->update([
-            'status' => OutboxEvent::STATUS_PUBLISHED,
-            'last_error' => null,
-            'reserved_at' => null,
-            'lease_until' => null,
-            'leased_by' => null,
-        ]);
+        OutboxEvent::whereKey($this->outboxEventId)
+            ->where('leased_by', $this->leaseToken)
+            ->where('lease_until', '>', now())
+            ->update([
+                'status' => OutboxEvent::STATUS_PUBLISHED,
+                'last_error' => null,
+                'reserved_at' => null,
+                'lease_until' => null,
+                'leased_by' => null,
+            ]);
     }
 
     /**
@@ -260,7 +301,11 @@ class DispatchWebhookJob implements ShouldQueue
             return;
         }
 
-        $outbox = OutboxEvent::find($this->outboxEventId);
+        $outbox = OutboxEvent::query()
+            ->whereKey($this->outboxEventId)
+            ->where('leased_by', $this->leaseToken)
+            ->where('lease_until', '>', now())
+            ->first();
         if (! $outbox) {
             return;
         }

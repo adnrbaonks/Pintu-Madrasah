@@ -399,12 +399,80 @@ class WebhookOutboxAndReliabilityTest extends TestCase
         ]);
         $this->assertSame(0, $code);
 
-        // Verifikasi command terjadwal di routes/console.php
+        // Verifikasi command terjadwal di routes/console.php dengan TTL withoutOverlapping eksplisit (5 menit)
         $schedule = app(Schedule::class);
-        $hasScheduledOutbox = collect($schedule->events())->contains(function ($event) {
+        $scheduledEvent = collect($schedule->events())->first(function ($event) {
             return str_contains($event->command ?? '', 'webhooks:process-outbox');
         });
 
-        $this->assertTrue($hasScheduledOutbox, 'Command webhooks:process-outbox harus terdaftar di scheduler.');
+        $this->assertNotNull($scheduledEvent, 'Command webhooks:process-outbox harus terdaftar di scheduler.');
+        $this->assertTrue($scheduledEvent->withoutOverlapping);
+        $this->assertSame(5, $scheduledEvent->expiresAt);
+    }
+
+    public function test_outbox_lease_fencing_prevents_slow_worker_from_overwriting_stolen_lease(): void
+    {
+        Http::fake([
+            'https://satelit.example.com/*' => Http::response(['ok' => true], 200),
+        ]);
+
+        WebhookSubscription::create([
+            'event' => 'staff.updated',
+            'target_url' => 'https://satelit.example.com/lease-fence',
+            'secret' => 'whsec_fence_secret',
+            'is_active' => true,
+        ]);
+
+        $outbox = OutboxEvent::create([
+            'aggregate_type' => Staff::class,
+            'aggregate_id' => (string) Str::uuid(),
+            'event_type' => 'staff.updated',
+            'payload' => ['name' => 'Guru Lease Fence'],
+            'status' => OutboxEvent::STATUS_PROCESSING,
+            'reserved_at' => now()->subMinutes(10),
+            'lease_until' => now()->subSeconds(5), // Lease worker-1 sudah expired (> 300 detik)
+            'leased_by' => 'worker-1-slow',
+            'attempts' => 1,
+        ]);
+
+        // Worker-2 mengklaim event yang lease-nya sudah expired
+        $service = app(OutboxService::class);
+        $claimedByWorker2 = $service->claimNextBatch(limit: 5, leaseSeconds: 300, workerId: 'worker-2-fast');
+        $this->assertCount(1, $claimedByWorker2);
+        $this->assertSame('worker-2-fast', $outbox->fresh()->leased_by);
+
+        // Worker-1 yang lambat baru mencoba mengeksekusi job atau gagal dengan token lamanya ('worker-1-slow')
+        $staleJob = new DispatchWebhookJob(
+            event: 'staff.updated',
+            data: $outbox->payload,
+            onlySubscriptionId: null,
+            eventId: $outbox->id,
+            outboxEventId: $outbox->id,
+            leaseToken: 'worker-1-slow',
+        );
+        $staleJob->handle();
+        $staleJob->failed(new \RuntimeException('Worker 1 timeout'));
+
+        // Pastikan status dan lease Worker-2 TIDAK tertimpa oleh Worker-1, dan tidak ada HTTP terkirim dari staleJob
+        Http::assertNothingSent();
+        $outbox->refresh();
+        $this->assertSame(OutboxEvent::STATUS_PROCESSING, $outbox->status);
+        $this->assertSame('worker-2-fast', $outbox->leased_by);
+
+        // Sekarang Worker-2 mengeksekusi job dengan lease token yang sah ('worker-2-fast')
+        $validJob = new DispatchWebhookJob(
+            event: 'staff.updated',
+            data: $outbox->payload,
+            onlySubscriptionId: null,
+            eventId: $outbox->id,
+            outboxEventId: $outbox->id,
+            leaseToken: 'worker-2-fast',
+        );
+        $validJob->handle();
+
+        Http::assertSentCount(1);
+        $outbox->refresh();
+        $this->assertSame(OutboxEvent::STATUS_PUBLISHED, $outbox->status);
+        $this->assertNull($outbox->leased_by);
     }
 }

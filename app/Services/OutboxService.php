@@ -182,41 +182,38 @@ class OutboxService
      */
     public function recoverStalled(int $maxAttempts = 5): int
     {
-        $stalledEvents = OutboxEvent::query()
-            ->where('status', OutboxEvent::STATUS_PROCESSING)
-            ->whereNotNull('lease_until')
-            ->where('lease_until', '<=', now())
-            ->get();
+        return DB::transaction(function () use ($maxAttempts): int {
+            $events = OutboxEvent::query()
+                ->where('status', OutboxEvent::STATUS_PROCESSING)
+                ->whereNotNull('lease_until')
+                ->where('lease_until', '<=', now())
+                ->lockForUpdate()
+                ->get();
 
-        $recovered = 0;
+            foreach ($events as $event) {
+                $newAttempts = $event->attempts + 1;
+                $isDeadLetter = $newAttempts >= $maxAttempts;
+                $event->update([
+                    'status' => $isDeadLetter ? OutboxEvent::STATUS_FAILED : OutboxEvent::STATUS_PENDING,
+                    'attempts' => $newAttempts,
+                    'available_at' => $isDeadLetter ? null : now()->addSeconds(self::backoffSeconds($newAttempts)),
+                    'reserved_at' => null,
+                    'lease_until' => null,
+                    'leased_by' => null,
+                    'last_error' => $isDeadLetter
+                        ? 'Lease expired; batas maksimum percobaan terlampaui (dead-letter).'
+                        : 'Lease expired; dikembalikan ke antrean pending dengan backoff.',
+                ]);
+                Log::warning('[OUTBOX] Recovered stalled event', [
+                    'outbox_id' => $event->id,
+                    'event_type' => $event->event_type,
+                    'attempts' => $newAttempts,
+                    'dead_letter' => $isDeadLetter,
+                ]);
+            }
 
-        foreach ($stalledEvents as $event) {
-            $newAttempts = $event->attempts + 1;
-            $isDeadLetter = $newAttempts >= $maxAttempts;
-
-            $event->update([
-                'status' => $isDeadLetter ? OutboxEvent::STATUS_FAILED : OutboxEvent::STATUS_PENDING,
-                'attempts' => $newAttempts,
-                'available_at' => $isDeadLetter ? null : now()->addSeconds(self::backoffSeconds($newAttempts)),
-                'reserved_at' => null,
-                'lease_until' => null,
-                'leased_by' => null,
-                'last_error' => $isDeadLetter
-                    ? 'Lease expired; batas maksimum percobaan terlampaui (dead-letter).'
-                    : 'Lease expired; dikembalikan ke antrean pending dengan backoff.',
-            ]);
-
-            Log::warning('[OUTBOX] Recovered stalled event', [
-                'outbox_id' => $event->id,
-                'event_type' => $event->event_type,
-                'attempts' => $newAttempts,
-                'dead_letter' => $isDeadLetter,
-            ]);
-
-            $recovered++;
-        }
-
-        return $recovered;
+            return $events->count();
+        });
     }
 
     /**
@@ -228,10 +225,7 @@ class OutboxService
         int $leaseSeconds = 300,
         ?string $workerId = null,
     ): int {
-        // 1. Pulihkan event yang lease-nya kedaluwarsa sebelum memulai klaim baru
-        $this->recoverStalled();
-
-        // 2. Klaim batch secara atomik
+        // 1. Klaim batch secara atomik
         $events = $this->claimNextBatch(
             limit: $limit,
             leaseSeconds: $leaseSeconds,
@@ -248,13 +242,16 @@ class OutboxService
                 ->exists();
 
             if (! $hasActiveSubscriber) {
-                $outbox->update([
-                    'status' => OutboxEvent::STATUS_PUBLISHED,
-                    'reserved_at' => null,
-                    'lease_until' => null,
-                    'leased_by' => null,
-                    'last_error' => null,
-                ]);
+                OutboxEvent::whereKey($outbox->id)
+                    ->where('leased_by', $outbox->leased_by)
+                    ->where('lease_until', '>', now())
+                    ->update([
+                        'status' => OutboxEvent::STATUS_PUBLISHED,
+                        'reserved_at' => null,
+                        'lease_until' => null,
+                        'leased_by' => null,
+                        'last_error' => null,
+                    ]);
                 $processed++;
 
                 continue;
@@ -266,6 +263,7 @@ class OutboxService
                 onlySubscriptionId: null,
                 eventId: $outbox->id,
                 outboxEventId: $outbox->id,
+                leaseToken: $outbox->leased_by,
             )->onQueue('webhooks');
 
             $processed++;

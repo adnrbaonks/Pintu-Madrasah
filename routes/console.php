@@ -12,4 +12,4 @@ Artisan::command('inspire', function () {
 Schedule::command('backup:run --keep=7')->dailyAt('00:00')->timezone('Asia/Jakarta');
 
 // Pemrosesan transactional outbox & pemulihan lease berkala setiap menit tanpa tumpang tindih
-Schedule::command('webhooks:process-outbox')->everyMinute()->withoutOverlapping();
+Schedule::command('webhooks:process-outbox')->everyMinute()->withoutOverlapping(5);

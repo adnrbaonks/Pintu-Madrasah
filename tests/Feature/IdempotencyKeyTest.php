@@ -213,4 +213,94 @@ class IdempotencyKeyTest extends TestCase
             ->assertStatus(200)
             ->assertHeaderMissing('X-Idempotent-Replay');
     }
+
+    public function test_json_key_ordering_canonicalization_treats_different_key_order_as_identical_replay(): void
+    {
+        ApiClient::create([
+            'name' => 'Sistem Klien A',
+            'api_key' => 'pm_live_11111111_client_a_secret_key_12345678901234',
+            'scopes' => ['students:read'],
+            'is_active' => true,
+        ]);
+
+        $key = 'idempotent-canonical-json-key';
+
+        $res1 = $this->withHeaders([
+            'X-API-KEY' => 'pm_live_11111111_client_a_secret_key_12345678901234',
+            'Idempotency-Key' => $key,
+        ])->postJson('/api/v1/test-idempotent-write?z=2&a=1', [
+            'b' => 2,
+            'a' => 1,
+            'nested' => ['y' => 'two', 'x' => 'one'],
+        ]);
+
+        $res1->assertStatus(201)->assertHeaderMissing('X-Idempotent-Replay');
+        $firstCallCount = $res1->json('call_count');
+
+        // Kirim ulang dengan urutan key JSON dan urutan query parameter terbalik
+        $res2 = $this->withHeaders([
+            'X-API-KEY' => 'pm_live_11111111_client_a_secret_key_12345678901234',
+            'Idempotency-Key' => $key,
+        ])->postJson('/api/v1/test-idempotent-write?a=1&z=2', [
+            'nested' => ['x' => 'one', 'y' => 'two'],
+            'a' => 1,
+            'b' => 2,
+        ]);
+
+        $res2->assertStatus(201)
+            ->assertHeader('X-Idempotent-Replay', 'true')
+            ->assertJson([
+                'call_count' => $firstCallCount,
+            ]);
+    }
+
+    public function test_concurrent_request_with_same_key_inside_handler_is_serialized_by_lock(): void
+    {
+        ApiClient::create([
+            'name' => 'Sistem Klien A',
+            'api_key' => 'pm_live_11111111_client_a_secret_key_12345678901234',
+            'scopes' => ['students:read'],
+            'is_active' => true,
+        ]);
+
+        $executionCount = 0;
+
+        Route::post('/api/v1/test-idempotent-concurrent', function (Request $request) use (&$executionCount) {
+            $executionCount++;
+
+            // Verifikasi bahwa lock aktif selama handler sedang berjalan
+            $client = $request->attributes->get('api_client');
+            $key = trim((string) $request->header('Idempotency-Key'));
+            $cacheKey = 'idempotency:client:'.$client->id.':'.hash('sha256', "POST|/api/v1/test-idempotent-concurrent|{$key}");
+
+            // Percobaan mengambil lock yang sama oleh worker konkuren harus gagal (false) karena sedang dipegang
+            $acquiredBySecondWorker = Cache::lock("{$cacheKey}:lock", 30)->get();
+            $this->assertFalse($acquiredBySecondWorker, 'Concurrency lock harus mencegah worker kedua mengeksekusi handler secara paralel.');
+
+            return response()->json([
+                'success' => true,
+                'execution_count' => $executionCount,
+            ], 201);
+        })->middleware(['api.key', 'api.idempotent']);
+
+        $key = 'idempotent-concurrent-lock-001';
+
+        $res1 = $this->withHeaders([
+            'X-API-KEY' => 'pm_live_11111111_client_a_secret_key_12345678901234',
+            'Idempotency-Key' => $key,
+        ])->postJson('/api/v1/test-idempotent-concurrent', ['op' => 'transfer']);
+
+        $res1->assertStatus(201)->assertJson(['execution_count' => 1]);
+
+        // Setelah request pertama selesai, lock dilepas dan request kedua menerima replay dari cache
+        $res2 = $this->withHeaders([
+            'X-API-KEY' => 'pm_live_11111111_client_a_secret_key_12345678901234',
+            'Idempotency-Key' => $key,
+        ])->postJson('/api/v1/test-idempotent-concurrent', ['op' => 'transfer']);
+
+        $res2->assertStatus(201)
+            ->assertHeader('X-Idempotent-Replay', 'true')
+            ->assertJson(['execution_count' => 1]);
+        $this->assertSame(1, $executionCount);
+    }
 }

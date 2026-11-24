@@ -28,6 +28,11 @@ class IdempotencyKey
         $fingerprint = $this->calculateFingerprint($request, $method, $endpoint);
         $cacheKey = "idempotency:{$clientNamespace}:".hash('sha256', "{$method}|{$endpoint}|{$key}");
 
+        return Cache::lock("{$cacheKey}:lock", 30)->block(30, fn () => $this->processLocked($request, $next, $cacheKey, $fingerprint, $key));
+    }
+
+    private function processLocked(Request $request, Closure $next, string $cacheKey, string $fingerprint, string $key): Response
+    {
         $cached = Cache::get($cacheKey);
 
         if (is_array($cached)) {
@@ -107,11 +112,29 @@ class IdempotencyKey
      */
     private function calculateFingerprint(Request $request, string $method, string $endpoint): string
     {
-        $query = $request->query();
-        ksort($query);
+        $query = $this->sortRecursively($request->query());
+        $rawPayload = $request->getContent();
+        $decoded = json_decode($rawPayload, true);
+        $payload = json_last_error() === JSON_ERROR_NONE && is_array($decoded)
+            ? json_encode($this->sortRecursively($decoded), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+            : $rawPayload;
 
-        $payload = (string) $request->getContent();
+        return hash('sha256', "{$method}|{$endpoint}|{$payload}|".json_encode($query, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+    }
 
-        return hash('sha256', "{$method}|{$endpoint}|{$payload}|".json_encode($query));
+    /** @param array<mixed> $value */
+    private function sortRecursively(array $value): array
+    {
+        if (! array_is_list($value)) {
+            ksort($value);
+        }
+
+        foreach ($value as &$item) {
+            if (is_array($item)) {
+                $item = $this->sortRecursively($item);
+            }
+        }
+
+        return $value;
     }
 }
