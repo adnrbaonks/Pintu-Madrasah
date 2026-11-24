@@ -23,8 +23,21 @@ use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class ArchiveController extends Controller
 {
+    /**
+     * Permission granular per jenis dokumen privat.
+     *
+     * @var array<string, string>
+     */
+    private const DOCUMENT_VIEW_PERMISSIONS = [
+        'student_document' => 'view_student_documents',
+        'photo' => 'view_student_documents',
+        'ppdb' => 'view_ppdb_documents',
+        'mutation' => 'view_mutation_documents',
+        'staff_document' => 'view_staff',
+    ];
+
     public function __construct(
-        public ArchiveService $archiveService,
+        private ArchiveService $archiveService,
     ) {}
 
     /**
@@ -318,7 +331,6 @@ class ArchiveController extends Controller
             abort(403, 'Akses tidak diizinkan.');
         }
 
-        $isPrivileged = $user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator']);
         $isOwner = false;
 
         if ($type === 'staff_document') {
@@ -329,8 +341,13 @@ class ArchiveController extends Controller
             $isOwner = $attachment?->changeRequest?->requester_user_id === $user->id;
         }
 
-        // Otorisasi granular berdasarkan kepemilikan dokumen jika bukan staf/admin.
-        if (! $isPrivileged && ! $isOwner) {
+        $permission = self::DOCUMENT_VIEW_PERMISSIONS[$type] ?? null;
+        $canViewByPermission = $permission !== null && $user->can($permission);
+        $isChangeReviewer = $type === 'staff_change_attachment'
+            && ($user->can('verify_staff_changes') || $user->can('approve_staff_changes'));
+
+        // Otorisasi object-level: pemilik dokumen atau pemegang permission jenis dokumen terkait.
+        if (! $isOwner && ! $canViewByPermission && ! $isChangeReviewer) {
             abort(403, 'Anda tidak memiliki hak akses untuk membuka dokumen ini.');
         }
 
@@ -346,8 +363,17 @@ class ArchiveController extends Controller
     /**
      * Retry uploading a document to Google Drive.
      */
-    public function retry($type, $id)
+    public function retry(Request $request, $type, $id)
     {
+        $user = $request->user();
+        $permission = self::DOCUMENT_VIEW_PERMISSIONS[$type] ?? null;
+
+        abort_unless(
+            $user !== null && $permission !== null && $user->can($permission),
+            403,
+            'Anda tidak memiliki hak akses untuk memproses ulang dokumen ini.'
+        );
+
         if ($type === 'ppdb') {
             $model = PpdbDocument::findOrFail($id);
             $model->update(['status' => 'pending', 'upload_retries' => 0]);

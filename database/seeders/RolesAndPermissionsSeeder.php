@@ -21,10 +21,12 @@ class RolesAndPermissionsSeeder extends Seeder
         $permissions = [
             // Siswa
             'view_students', 'create_students', 'edit_students', 'delete_students', 'export_students',
+            'view_student_documents',
             // GTK
             'view_staff', 'create_staff', 'edit_staff', 'delete_staff', 'validate_tpg',
             'verify_staff_changes', 'approve_staff_changes',
             'manage_archives', 'manage_organization',
+            'view_ppdb_documents', 'view_mutation_documents',
             // Akademik & Rombel
             'view_rombels', 'manage_rombels',
             'view_academic_years', 'manage_academic_years',
@@ -78,6 +80,7 @@ class RolesAndPermissionsSeeder extends Seeder
         $staf = Role::findOrCreate('staf');
         $staf->syncPermissions([
             'view_students', 'create_students', 'edit_students', 'export_students',
+            'view_student_documents',
             'manage_archives', 'manage_organization', 'manage_bk',
             'view_staff', 'edit_staff',
             'view_rombels', 'manage_rombels',
@@ -85,7 +88,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'view_grades',
             'view_exam_cards',
             'manage_mutations', 'manage_placements', 'manage_promotions',
-            'view_ppdb',
+            'view_ppdb', 'view_ppdb_documents', 'view_mutation_documents',
             'view_letters', 'manage_letters',
             'manage_bk',
             'print_documents',
@@ -96,6 +99,7 @@ class RolesAndPermissionsSeeder extends Seeder
         $operator = Role::findOrCreate('operator');
         $operator->syncPermissions([
             'view_students', 'create_students', 'edit_students', 'export_students',
+            'view_student_documents',
             'manage_archives', 'manage_organization',
             'view_staff', 'create_staff', 'edit_staff',
             'view_rombels', 'manage_rombels',
@@ -104,7 +108,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'view_exam_cards',
             'manage_mutations', 'manage_placements', 'manage_promotions',
             'manage_bk',
-            'view_ppdb', 'manage_ppdb',
+            'view_ppdb', 'manage_ppdb', 'view_ppdb_documents', 'view_mutation_documents',
             'view_letters',
             'print_documents',
             'view_emis', 'sync_emis',
@@ -115,6 +119,7 @@ class RolesAndPermissionsSeeder extends Seeder
         $kaurTu = Role::findOrCreate('kaur_tu');
         $kaurTu->syncPermissions([
             'view_students', 'create_students', 'edit_students', 'export_students',
+            'view_student_documents',
             'manage_archives', 'manage_organization',
             'view_staff', 'edit_staff', 'verify_staff_changes',
             'view_rombels', 'manage_rombels',
@@ -122,7 +127,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'view_grades',
             'manage_mutations', 'manage_placements', 'manage_promotions',
             'manage_bk',
-            'view_ppdb',
+            'view_ppdb', 'view_ppdb_documents', 'view_mutation_documents',
             'view_letters', 'manage_letters',
             'print_documents',
             'view_emis',
@@ -133,6 +138,7 @@ class RolesAndPermissionsSeeder extends Seeder
         $kamad = Role::findOrCreate('kepala_madrasah');
         $kamad->syncPermissions([
             'view_students', 'export_students',
+            'view_student_documents', 'view_ppdb_documents', 'view_mutation_documents',
             'manage_archives',
             'view_staff', 'approve_staff_changes',
             'view_rombels',

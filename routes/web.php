@@ -265,7 +265,9 @@ Route::middleware('auth')->group(function () {
             Route::post('/{student}/commit-emis-detail', [StudentController::class, 'commitEmisDetail'])->name('commit-emis-detail');
             Route::post('/{student}/status', [StudentController::class, 'updateStatus'])->name('status.update');
             Route::get('/{student}/print-biodata', [StudentController::class, 'printBiodata'])->name('print-biodata');
-            Route::post('/{student}/documents', [StudentDocumentController::class, 'upload'])->name('documents.upload');
+            Route::post('/{student}/documents', [StudentDocumentController::class, 'upload'])
+                ->middleware('permission:edit_students')
+                ->name('documents.upload');
         });
         Route::get('/export-students', [StudentController::class, 'exportData'])->name('students.export');
         Route::get('/export-students/pdf', [StudentController::class, 'exportPdf'])->name('students.export-pdf');
@@ -275,7 +277,9 @@ Route::middleware('auth')->group(function () {
         Route::post('/siswa/mutasi', [MutationController::class, 'store'])->name('mutations.store');
         Route::put('/siswa/mutasi/{mutation}', [MutationController::class, 'update'])->name('mutations.update');
         Route::delete('/siswa/mutasi/{mutation}', [MutationController::class, 'destroy'])->name('mutations.destroy');
-        Route::post('/siswa/mutasi/{mutation}/upload', [MutationController::class, 'uploadDocument'])->name('mutations.upload');
+        Route::post('/siswa/mutasi/{mutation}/upload', [MutationController::class, 'uploadDocument'])
+            ->middleware('permission:manage_mutations')
+            ->name('mutations.upload');
         Route::post('/siswa/mutasi/sync', [MutationController::class, 'sync'])->name('mutations.sync');
         Route::get('/siswa/mutasi/progress', [MutationController::class, 'progress'])->name('mutations.progress');
 
@@ -304,7 +308,9 @@ Route::middleware('auth')->group(function () {
             Route::post('/periods', [PpdbController::class, 'storePeriod'])->name('periods.store');
             Route::put('/periods/{period}/toggle-active', [PpdbController::class, 'togglePeriodActive'])->name('periods.toggle-active');
             Route::get('/registrations', [PpdbController::class, 'registrations'])->name('registrations');
-            Route::post('/registrations/{registration}/scan', [PpdbController::class, 'scanDocument'])->name('registrations.scan');
+            Route::post('/registrations/{registration}/scan', [PpdbController::class, 'scanDocument'])
+                ->middleware('permission:manage_ppdb')
+                ->name('registrations.scan');
             Route::get('/registrations/create', [PpdbController::class, 'create'])->name('create');
             Route::post('/registrations', [PpdbController::class, 'storeRegistration'])->name('store');
             Route::get('/registrations/{registration}', [PpdbController::class, 'show'])->name('show');
@@ -425,7 +431,7 @@ Route::middleware('auth')->group(function () {
             Route::get('/absen-harian', [PrintController::class, 'absenHarian'])->name('absen-harian');
         });
 
-        // ── Document Retry — role-gated ─────────────────────────────
+        // ── Document Retry — permission-gated per jenis dokumen di controller ──
         Route::post('/documents/{type}/{id}/retry', [ArchiveController::class, 'retry'])->name('documents.retry');
 
     });

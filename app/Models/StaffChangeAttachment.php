@@ -13,6 +13,7 @@ class StaffChangeAttachment extends Model
     public $incrementing = false;
 
     protected $fillable = [
+        'id',
         'request_id',
         'item_id',
         'path',

@@ -13,6 +13,7 @@ class StaffDocument extends Model
     public $incrementing = false;
 
     protected $fillable = [
+        'id',
         'staff_id',
         'document_type',
         'title',

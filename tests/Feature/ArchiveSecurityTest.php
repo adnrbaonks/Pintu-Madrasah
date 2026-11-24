@@ -69,6 +69,7 @@ class ArchiveSecurityTest extends TestCase
     public function test_authorized_staff_can_view_documents_and_change_attachments(): void
     {
         $operator = User::factory()->create(['role' => 'operator']);
+        $kaurTu = User::factory()->create(['role' => 'kaur_tu']);
         $guruStaff = Staff::factory()->create();
         $guru = User::factory()->create(['role' => 'guru', 'staff_id' => $guruStaff->id]);
 
@@ -96,8 +97,13 @@ class ArchiveSecurityTest extends TestCase
             ->get("/archives/staff_change_attachment/{$att->id}.pdf")
             ->assertOk();
 
-        // Operator dapat melihat lampiran untuk verifikasi
+        // Operator tidak lagi memiliki bypass universal untuk lampiran perubahan GTK.
         $this->actingAs($operator)
+            ->get("/archives/staff_change_attachment/{$att->id}.pdf")
+            ->assertForbidden();
+
+        // Verifikator TU yang memegang permission dapat melihat lampiran untuk verifikasi.
+        $this->actingAs($kaurTu)
             ->get("/archives/staff_change_attachment/{$att->id}.pdf")
             ->assertOk();
     }
