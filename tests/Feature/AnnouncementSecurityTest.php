@@ -120,4 +120,38 @@ class AnnouncementSecurityTest extends TestCase
                 ->has('announcements', 4)
             );
     }
+
+    public function test_role_specific_announcement_requires_valid_target_roles_and_prohibits_on_other_scopes(): void
+    {
+        $kaurTu = User::factory()->create(['role' => 'kaur_tu']);
+
+        // 1. target_scope = role_specific tanpa target_roles harus ditolak (422)
+        $this->actingAs($kaurTu)->post('/pengumuman', [
+            'title' => 'Pengumuman Tanpa Role Target',
+            'content' => 'Konten',
+            'target_scope' => 'role_specific',
+            'priority' => 'normal',
+            'publish_date' => now()->toDateString(),
+        ])->assertSessionHasErrors(['target_roles']);
+
+        // 2. target_scope = role_specific dengan role tidak valid harus ditolak (422)
+        $this->actingAs($kaurTu)->post('/pengumuman', [
+            'title' => 'Pengumuman Role Palsu',
+            'content' => 'Konten',
+            'target_scope' => 'role_specific',
+            'target_roles' => ['role_tidak_dikenal'],
+            'priority' => 'normal',
+            'publish_date' => now()->toDateString(),
+        ])->assertSessionHasErrors(['target_roles.0']);
+
+        // 3. target_scope = all tetapi menyertakan target_roles harus ditolak (422)
+        $this->actingAs($kaurTu)->post('/pengumuman', [
+            'title' => 'Pengumuman Umum dengan Target Roles',
+            'content' => 'Konten',
+            'target_scope' => 'all',
+            'target_roles' => ['guru'],
+            'priority' => 'normal',
+            'publish_date' => now()->toDateString(),
+        ])->assertSessionHasErrors(['target_roles']);
+    }
 }

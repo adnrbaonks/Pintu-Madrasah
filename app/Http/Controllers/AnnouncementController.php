@@ -6,6 +6,7 @@ use App\Models\Announcement;
 use App\Models\Archive;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -28,7 +29,7 @@ class AnnouncementController extends Controller
 
         if (! $isAdmin) {
             $userRoles = $user ? $user->roles()->pluck('name')->all() : [];
-            $isGtk = ! empty($user->staff_id) || ($user && ($user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator', 'guru', 'pegawai'])));
+            $isGtk = ! empty($user->staff_id) || ($user && ($user->hasAnyRole(['kepala_madrasah', 'kaur_tu', 'staf', 'operator', 'guru', 'pegawai'])));
 
             $query->where(function ($scopeQuery) use ($user, $userRoles, $isGtk): void {
                 $scopeQuery->where('author_user_id', $user->id)
@@ -75,7 +76,12 @@ class AnnouncementController extends Controller
             'title' => 'required|string|max:255',
             'content' => 'required|string|max:10000',
             'target_scope' => 'required|in:all,gtk_only,role_specific',
-            'target_roles' => 'nullable|array',
+            'target_roles' => [
+                'array',
+                Rule::requiredIf(fn (): bool => $request->input('target_scope') === 'role_specific'),
+                Rule::prohibitedIf(fn (): bool => $request->input('target_scope') !== 'role_specific'),
+            ],
+            'target_roles.*' => ['string', Rule::in(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator', 'guru', 'pegawai'])],
             'priority' => 'required|in:low,normal,urgent',
             'is_pinned' => 'sometimes|boolean',
             'publish_date' => 'required|date',

@@ -13,6 +13,7 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class CommitEmisGtkStagingJob implements ShouldQueue
@@ -72,37 +73,40 @@ class CommitEmisGtkStagingJob implements ShouldQueue
                 $staffData = $this->staffData($staging);
 
                 try {
-                    OutboxService::withoutObserver(function () use ($existing, $staffData, &$failed, $staging): bool {
-                        if ($existing) {
-                            if ($existing->trashed()) {
-                                $existing->restore();
+                    DB::transaction(function () use ($existing, $staffData, &$failed, $staging): void {
+                        OutboxService::withoutObserver(function () use ($existing, $staffData, &$failed, $staging): void {
+                            if ($existing) {
+                                $lockedStaff = Staff::withTrashed()->lockForUpdate()->findOrFail($existing->id);
+
+                                if ($lockedStaff->trashed()) {
+                                    $lockedStaff->restore();
+                                }
+
+                                $lockedStaff->update(array_filter($staffData, fn ($value) => $value !== null));
+
+                                // Rekonsiliasi pengajuan perubahan GTK yang berstatus pending_external_sync
+                                $pendingRequests = StaffChangeRequest::where('staff_id', $lockedStaff->id)
+                                    ->where('status', StaffChangeRequest::STATUS_PENDING_EXTERNAL_SYNC)
+                                    ->lockForUpdate()
+                                    ->get();
+                                foreach ($pendingRequests as $pendingReq) {
+                                    app(StaffChangeRequestService::class)->reconcileExternalSync($pendingReq);
+                                }
+
+                                return;
                             }
 
-                            $existing->update(array_filter($staffData, fn ($value) => $value !== null));
+                            $missing = $this->missingRequiredFields($staffData);
 
-                            // Rekonsiliasi pengajuan perubahan GTK yang berstatus pending_external_sync
-                            $pendingRequests = StaffChangeRequest::where('staff_id', $existing->id)
-                                ->where('status', StaffChangeRequest::STATUS_PENDING_EXTERNAL_SYNC)
-                                ->get();
-                            foreach ($pendingRequests as $pendingReq) {
-                                app(StaffChangeRequestService::class)->reconcileExternalSync($pendingReq);
+                            if ($missing !== []) {
+                                $this->markFailed($staging, 'Data wajib belum lengkap: '.implode(', ', $missing));
+                                $failed++;
+
+                                return;
                             }
 
-                            return true;
-                        }
-
-                        $missing = $this->missingRequiredFields($staffData);
-
-                        if ($missing !== []) {
-                            $this->markFailed($staging, 'Data wajib belum lengkap: '.implode(', ', $missing));
-                            $failed++;
-
-                            return false;
-                        }
-
-                        Staff::create($staffData);
-
-                        return true;
+                            Staff::create($staffData);
+                        });
                     });
 
                     if ($staging->status === 'failed') {

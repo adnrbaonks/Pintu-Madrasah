@@ -192,15 +192,16 @@ class PkkmManagementTest extends TestCase
             'verified_score' => 90,
         ])->assertForbidden();
 
-        // 2. Evaluator sah (Kaur TU) dapat mengisi verified_score
+        // 2. Evaluator sah (Kaur TU) dapat mengisi verified_score dan assessor_notes
         $this->actingAs($kaurTu)->post("/pkkm/components/{$component->id}/assess", [
             'verified_score' => 90,
-            'evaluator_notes' => 'Telah diverifikasi sesuai bukti fisik',
+            'assessor_notes' => 'Telah diverifikasi sesuai bukti fisik',
         ])->assertRedirect();
 
         $this->assertDatabaseHas('pkkm_assessments', [
             'pkkm_component_id' => $component->id,
             'verified_score' => 90,
+            'assessor_notes' => 'Telah diverifikasi sesuai bukti fisik',
         ]);
 
         // 3. Upload bukti oleh PIC

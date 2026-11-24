@@ -117,18 +117,6 @@ class StaffVerificationController extends Controller
 
     private function authorizeVerifier(Request $request): void
     {
-        $user = $request->user();
-
-        if (! $user) {
-            abort(401);
-        }
-
-        if ($user->hasRole('admin') && ! $user->hasRole('kaur_tu')) {
-            abort(403, 'Admin teknis tidak berwenang memverifikasi pengajuan perubahan data GTK.');
-        }
-
-        if (! $user->hasRole('kaur_tu') && ! $user->can('verify_staff_changes')) {
-            abort(403, 'Hanya Kaur TU yang memiliki kewenangan memverifikasi perubahan data GTK.');
-        }
+        $this->changeRequestService->authorizeTuReviewer($request->user());
     }
 }

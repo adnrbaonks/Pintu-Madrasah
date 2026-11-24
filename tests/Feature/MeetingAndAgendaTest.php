@@ -246,5 +246,9 @@ class MeetingAndAgendaTest extends TestCase
             ->component('Meetings/Index', false)
             ->where('meetings', fn ($data) => collect($data)->where('id', $meeting->id)->isNotEmpty())
         );
+
+        // 5. Guru luar rapat ditolak (403) ketika mengakses detail rapat secara langsung (show)
+        $this->actingAs($guruLuar)->get("/rapat-dinas/{$meeting->id}")->assertForbidden();
+        $this->actingAs($guruPeserta)->get("/rapat-dinas/{$meeting->id}")->assertOk();
     }
 }

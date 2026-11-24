@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\CommitEmisGtkStagingJob;
+use App\Models\EmisGtkStaging;
 use App\Models\OutboxEvent;
 use App\Models\Staff;
 use App\Models\StaffChangeRequest;
@@ -11,6 +13,7 @@ use App\Services\StaffChangeRequestService;
 use Illuminate\Foundation\Testing\LazilyRefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
 
@@ -539,5 +542,144 @@ class StaffChangeRequestWorkflowTest extends TestCase
 
         $item = $changeRequest->items()->where('field', 'civil_rank')->first();
         $this->assertSame('applied', $item->apply_status);
+    }
+
+    public function test_commit_emis_gtk_staging_job_reconciles_matching_and_conflicting_pending_external_sync_requests(): void
+    {
+        $staffMatch = Staff::factory()->create([
+            'nik' => '3201000000000001',
+            'civil_rank' => 'III/a',
+        ]);
+        $staffConflict = Staff::factory()->create([
+            'nik' => '3201000000000002',
+            'civil_rank' => 'III/a',
+        ]);
+        $staffTimeout = Staff::factory()->create([
+            'nik' => '3201000000000003',
+            'civil_rank' => 'III/a',
+        ]);
+
+        $guru1 = User::factory()->create(['role' => 'guru', 'staff_id' => $staffMatch->id]);
+        $guru2 = User::factory()->create(['role' => 'guru', 'staff_id' => $staffConflict->id]);
+        $guru3 = User::factory()->create(['role' => 'guru', 'staff_id' => $staffTimeout->id]);
+        $kaurTu = User::factory()->create(['role' => 'kaur_tu']);
+        $kamad = User::factory()->create(['role' => 'kepala_madrasah']);
+
+        foreach ([[$guru1, $staffMatch, 'III/b'], [$guru2, $staffConflict, 'III/b'], [$guru3, $staffTimeout, 'III/b']] as [$guru, $staff, $proposed]) {
+            $this->actingAs($guru)->post('/profil-gtk/pengajuan', [
+                'reason' => 'Pengajuan pangkat EMIS',
+                'changes' => ['civil_rank' => $proposed],
+                'submit_now' => true,
+            ])->assertRedirect();
+
+            $req = StaffChangeRequest::where('staff_id', $staff->id)->firstOrFail();
+            $this->actingAs($kaurTu)->post("/verifikasi-gtk/{$req->id}/verify")->assertRedirect();
+            $this->actingAs($kamad)->post("/persetujuan-gtk/{$req->id}/approve")->assertRedirect();
+        }
+
+        $reqMatch = StaffChangeRequest::where('staff_id', $staffMatch->id)->firstOrFail();
+        $reqConflict = StaffChangeRequest::where('staff_id', $staffConflict->id)->firstOrFail();
+        $reqTimeout = StaffChangeRequest::where('staff_id', $staffTimeout->id)->firstOrFail();
+        $reqTimeout->update(['decided_at' => now()->subDays(20)]);
+
+        // Staging 1: sesuai nilai yang diajukan (III/b) -> harus completed
+        EmisGtkStaging::create([
+            'nik' => '3201000000000001',
+            'full_name_with_titles' => $staffMatch->full_name_with_titles,
+            'gender' => $staffMatch->gender,
+            'birth_place' => $staffMatch->birth_place,
+            'birth_date' => $staffMatch->birth_date,
+            'employment_status' => $staffMatch->employment_status,
+            'civil_rank' => 'III/b',
+            'status' => 'pending',
+        ]);
+
+        // Staging 2: berbeda dengan old_value (III/a) maupun proposed_value (III/b), yaitu III/c -> harus failed karena konflik
+        EmisGtkStaging::create([
+            'nik' => '3201000000000002',
+            'full_name_with_titles' => $staffConflict->full_name_with_titles,
+            'gender' => $staffConflict->gender,
+            'birth_place' => $staffConflict->birth_place,
+            'birth_date' => $staffConflict->birth_date,
+            'employment_status' => $staffConflict->employment_status,
+            'civil_rank' => 'III/c',
+            'status' => 'pending',
+        ]);
+
+        // Staging 3: nilai masih sama dengan old_value (III/a) dan sudah lewat 14 hari -> harus failed karena timeout
+        EmisGtkStaging::create([
+            'nik' => '3201000000000003',
+            'full_name_with_titles' => $staffTimeout->full_name_with_titles,
+            'gender' => $staffTimeout->gender,
+            'birth_place' => $staffTimeout->birth_place,
+            'birth_date' => $staffTimeout->birth_date,
+            'employment_status' => $staffTimeout->employment_status,
+            'civil_rank' => 'III/a',
+            'status' => 'pending',
+        ]);
+
+        (new CommitEmisGtkStagingJob)->handle();
+
+        $this->assertSame(StaffChangeRequest::STATUS_COMPLETED, $reqMatch->fresh()->status);
+        $this->assertSame('applied', $reqMatch->items()->first()->apply_status);
+
+        $this->assertSame(StaffChangeRequest::STATUS_FAILED, $reqConflict->fresh()->status);
+        $this->assertSame('failed', $reqConflict->items()->first()->apply_status);
+        $this->assertStringContainsString('Konflik sinkronisasi EMIS', (string) $reqConflict->items()->first()->apply_error);
+
+        $this->assertSame(StaffChangeRequest::STATUS_FAILED, $reqTimeout->fresh()->status);
+        $this->assertSame('failed', $reqTimeout->items()->first()->apply_status);
+        $this->assertStringContainsString('Batas waktu sinkronisasi EMIS', (string) $reqTimeout->items()->first()->apply_error);
+    }
+
+    public function test_revision_authority_cross_stage_and_dual_role_enforcement(): void
+    {
+        $staff = Staff::factory()->create(['phone' => '0812340000']);
+        $guru = User::factory()->create(['role' => 'guru', 'staff_id' => $staff->id]);
+        $kaurTu = User::factory()->create(['role' => 'kaur_tu']);
+        $kamad = User::factory()->create(['role' => 'kepala_madrasah']);
+
+        $this->actingAs($guru)->post('/profil-gtk/pengajuan', [
+            'reason' => 'Uji revisi lintas tahap',
+            'changes' => ['phone' => '0812349999'],
+            'submit_now' => true,
+        ])->assertRedirect();
+
+        $changeRequest = StaffChangeRequest::where('staff_id', $staff->id)->firstOrFail();
+        $service = app(StaffChangeRequestService::class);
+
+        // 1. Saat masih di tahap TU (under_tu_review), Kamad tidak boleh meminta revisi
+        $this->expectException(ValidationException::class);
+        try {
+            $service->requestRevision($changeRequest, $kamad, 'Kamad coba revisi di tahap TU');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('actor', $e->errors());
+
+            // 2. Majukan ke tahap Kamad oleh Kaur TU
+            $service->verifyByTu($changeRequest, $kaurTu, 'Diverifikasi TU');
+            $changeRequest->refresh();
+
+            // 3. Saat di tahap Kamad (pending_head_approval), Kaur TU tidak boleh meminta revisi
+            try {
+                $service->requestRevision($changeRequest, $kaurTu, 'Kaur TU coba revisi di tahap Kamad');
+                $this->fail('Kaur TU seharusnya ditolak meminta revisi pada tahap Kamad.');
+            } catch (ValidationException $e2) {
+                $this->assertArrayHasKey('actor', $e2->errors());
+            }
+
+            // 4. Dual-role: User dengan role admin + kaur_tu (dan bukan pemohon) DIIZINKAN memverifikasi pengajuan baru
+            $dualAdminKaur = User::factory()->create(['role' => 'admin']);
+            $dualAdminKaur->assignRole('kaur_tu');
+
+            $staff2 = Staff::factory()->create(['phone' => '0855551111']);
+            $guru2 = User::factory()->create(['role' => 'guru', 'staff_id' => $staff2->id]);
+            $req2 = $service->createDraft($staff2, $guru2, ['phone' => '0855552222'], 'Uji dual role');
+            $service->submit($req2, $guru2);
+
+            $verifiedReq = $service->verifyByTu($req2->fresh(), $dualAdminKaur, 'Diverifikasi oleh Kaur TU yang juga Admin');
+            $this->assertSame(StaffChangeRequest::STATUS_PENDING_HEAD_APPROVAL, $verifiedReq->status);
+
+            throw $e;
+        }
     }
 }

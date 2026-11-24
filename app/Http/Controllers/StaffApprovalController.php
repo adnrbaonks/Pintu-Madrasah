@@ -125,18 +125,6 @@ class StaffApprovalController extends Controller
 
     private function authorizeApprover(Request $request): void
     {
-        $user = $request->user();
-
-        if (! $user) {
-            abort(401);
-        }
-
-        if ($user->hasRole('admin') && ! $user->hasRole('kepala_madrasah')) {
-            abort(403, 'Admin teknis tidak berwenang menyetujui pengajuan perubahan data GTK.');
-        }
-
-        if (! $user->hasRole('kepala_madrasah') && ! $user->can('approve_staff_changes')) {
-            abort(403, 'Hanya Kepala Madrasah atau pemegang kewenangan substantif yang dapat menyetujui perubahan data GTK.');
-        }
+        $this->changeRequestService->authorizeHeadApprover($request->user());
     }
 }

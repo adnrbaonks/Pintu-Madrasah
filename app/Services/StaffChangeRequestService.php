@@ -596,24 +596,32 @@ class StaffChangeRequestService
     /**
      * Rekonsiliasi item pengajuan berstatus pending_external_sync saat sinkronisasi EMIS terjadi.
      */
-    public function reconcileExternalSync(StaffChangeRequest $changeRequest, ?User $actor = null): StaffChangeRequest
-    {
+    public function reconcileExternalSync(
+        StaffChangeRequest $changeRequest,
+        ?User $actor = null,
+        int $timeoutDays = 14,
+    ): StaffChangeRequest {
         $this->ensureStatusIn($changeRequest, [
             StaffChangeRequest::STATUS_PENDING_EXTERNAL_SYNC,
         ], 'Hanya pengajuan berstatus pending_external_sync yang dapat direkonsiliasi.');
 
-        return DB::transaction(function () use ($changeRequest, $actor): StaffChangeRequest {
-            $staff = $changeRequest->staff()->lockForUpdate()->firstOrFail();
+        return DB::transaction(function () use ($changeRequest, $actor, $timeoutDays): StaffChangeRequest {
+            $lockedRequest = StaffChangeRequest::whereKey($changeRequest->id)->lockForUpdate()->firstOrFail();
+            $staff = $lockedRequest->staff()->lockForUpdate()->firstOrFail();
             $actorId = $actor?->id ?? auth()->id();
 
-            $pendingItems = $changeRequest->items()
+            $pendingItems = $lockedRequest->items()
                 ->where('apply_status', 'pending_external_sync')
                 ->get();
+
+            $referenceTime = $lockedRequest->decided_at ?? $lockedRequest->updated_at ?? $lockedRequest->created_at;
+            $isTimedOut = $timeoutDays > 0 && $referenceTime && $referenceTime->lte(now()->subDays($timeoutDays));
 
             foreach ($pendingItems as $item) {
                 $currentVal = $staff->getAttribute($item->field);
                 $currentNormalized = ($currentVal === null || $currentVal === '') ? null : (string) $currentVal;
                 $proposedNormalized = ($item->proposed_value === null || $item->proposed_value === '') ? null : (string) $item->proposed_value;
+                $oldNormalized = ($item->old_value === null || $item->old_value === '') ? null : (string) $item->old_value;
 
                 if ($currentNormalized === $proposedNormalized) {
                     $item->update([
@@ -622,32 +630,68 @@ class StaffChangeRequestService
                     ]);
 
                     StaffChangeHistory::create([
-                        'request_id' => $changeRequest->id,
+                        'request_id' => $lockedRequest->id,
                         'item_id' => $item->id,
                         'applied_value' => $proposedNormalized,
                         'applied_by' => $actorId,
                         'applied_at' => now(),
                         'source' => 'emis_sync',
                     ]);
+
+                    continue;
+                }
+
+                if ($currentNormalized !== $oldNormalized) {
+                    $item->update([
+                        'apply_status' => 'failed',
+                        'apply_error' => sprintf(
+                            'Konflik sinkronisasi EMIS: nilai eksternal (%s) berbeda dengan nilai pengajuan (%s).',
+                            $currentNormalized ?? 'NULL',
+                            $proposedNormalized ?? 'NULL',
+                        ),
+                    ]);
+
+                    continue;
+                }
+
+                if ($isTimedOut) {
+                    $item->update([
+                        'apply_status' => 'failed',
+                        'apply_error' => sprintf(
+                            'Batas waktu sinkronisasi EMIS (%d hari) telah terlampaui tanpa perubahan dari sistem eksternal.',
+                            $timeoutDays,
+                        ),
+                    ]);
                 }
             }
 
-            $remainingPending = $changeRequest->items()
-                ->where('apply_status', '!=', 'applied')
+            $stillPendingCount = $lockedRequest->items()
+                ->where('apply_status', 'pending_external_sync')
                 ->count();
 
-            if ($remainingPending === 0) {
-                $changeRequest->update([
-                    'status' => StaffChangeRequest::STATUS_COMPLETED,
-                    'current_stage' => 'completed',
-                ]);
+            $failedCount = $lockedRequest->items()
+                ->where('apply_status', 'failed')
+                ->count();
 
-                if ($changeRequest->requester) {
-                    $changeRequest->requester->notify(new ChangeRequestApplied($changeRequest));
+            if ($stillPendingCount === 0) {
+                if ($failedCount > 0) {
+                    $lockedRequest->update([
+                        'status' => StaffChangeRequest::STATUS_FAILED,
+                        'current_stage' => 'failed',
+                    ]);
+                } else {
+                    $lockedRequest->update([
+                        'status' => StaffChangeRequest::STATUS_COMPLETED,
+                        'current_stage' => 'completed',
+                    ]);
+
+                    if ($lockedRequest->requester) {
+                        $lockedRequest->requester->notify(new ChangeRequestApplied($lockedRequest));
+                    }
                 }
             }
 
-            return $changeRequest->fresh(['items', 'histories']);
+            return $lockedRequest->fresh(['items', 'histories']);
         });
     }
 
@@ -732,6 +776,32 @@ class StaffChangeRequestService
         }
     }
 
+    public function authorizeTuReviewer(?User $actor): void
+    {
+        if (! $actor) {
+            abort(401);
+        }
+
+        try {
+            $this->ensureTuReviewerAuthority($actor);
+        } catch (ValidationException $exception) {
+            abort(403, $exception->getMessage());
+        }
+    }
+
+    public function authorizeHeadApprover(?User $actor): void
+    {
+        if (! $actor) {
+            abort(401);
+        }
+
+        try {
+            $this->ensureHeadApproverAuthority($actor);
+        } catch (ValidationException $exception) {
+            abort(403, $exception->getMessage());
+        }
+    }
+
     private function ensureTuReviewerAuthority(User $actor): void
     {
         if ($actor->hasRole('admin') && ! $actor->hasRole('kaur_tu')) {
@@ -740,7 +810,7 @@ class StaffChangeRequestService
             ]);
         }
 
-        if (! $actor->hasRole('kaur_tu') && ! $actor->can('verify_staff_changes')) {
+        if (! $actor->hasRole('kaur_tu') || ! $actor->can('verify_staff_changes')) {
             throw ValidationException::withMessages([
                 'actor' => 'Hanya Kaur TU yang memiliki kewenangan memverifikasi perubahan data GTK.',
             ]);
@@ -755,9 +825,9 @@ class StaffChangeRequestService
             ]);
         }
 
-        if (! $actor->hasRole('kepala_madrasah') && ! $actor->can('approve_staff_changes')) {
+        if (! $actor->hasRole('kepala_madrasah') || ! $actor->can('approve_staff_changes')) {
             throw ValidationException::withMessages([
-                'actor' => 'Hanya Kepala Madrasah atau pemegang kewenangan substantif yang dapat menyetujui perubahan data GTK.',
+                'actor' => 'Hanya Kepala Madrasah yang memiliki kewenangan menyetujui perubahan data GTK.',
             ]);
         }
     }
