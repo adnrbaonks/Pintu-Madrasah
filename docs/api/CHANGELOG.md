@@ -20,6 +20,17 @@ Dokumen ini mencatat riwayat perubahan kontrak API v1 dan Webhook pada **PINTU M
 
 ## Riwayat Rilis
 
+### v1.1.1 — 2026-11-24 (Hardening Audit WP0.5 Lanjutan)
+#### Diperketat & Diperbaiki (Non-Breaking bagi Konsumen Sesuai Kontrak)
+- **Allowlist Ketat pada Nested API Resource (`/api/v1/students`, `/api/v1/staff`, `/api/v1/classes`):**
+  - Penambahan `SchoolClassResource`, `StudentCohortResource`, `StudentDocumentResource`, dan `PositionAssignmentResource`.
+  - `ClassResource` pada `GET /api/v1/classes` kini menyaring relasi `homeroom_teacher` melalui `StaffResource` sehingga atribut PII wali kelas (`nik`, `nip`, `nuptk`, `npk`, `phone`, `email`, tempat/tanggal lahir, pendidikan, kepangkatan) tidak lagi bocor tanpa scope `staff:pii` dan parameter `?fields=`.
+  - `StudentDocumentResource` menyembunyikan hasil OCR mentah (`ai_verification_result`) serta metadata internal storage (`gdrive_file_id`, `upload_retries`).
+- **Idempotency-Key & Kanonikalisasi Payload:**
+  - Middleware `IdempotencyKey` menggunakan atomic cache lock (`409 IDEMPOTENCY_KEY_IN_PROGRESS` bila request paralel masih berjalan) dan kanonikalisasi JSON rekursif untuk mendeteksi konflik payload (`422 IDEMPOTENCY_KEY_PAYLOAD_MISMATCH`) secara akurat tanpa bergantung pada urutan key JSON.
+- **Transactional Outbox Lease Fencing & Integrasi Redis Queue Worker:**
+  - Klaim `outbox_events` menggunakan `lease_token`, `reserved_at`, dan `lease_expires_at` sehingga eksekusi beririsan antara `DispatchWebhookJob` di antrean Redis dan `webhooks:process-outbox` tidak menghasilkan pengiriman ganda maupun *lost update*.
+
 ### v1.1.0 — 2026-11-23 (WP4, WP6, WP7)
 #### Ditambahkan (Aditif & Non-Breaking)
 - **Envelope `meta` Standar:** Seluruh endpoint `/api/v1/*` kini menyertakan objek `meta` (`request_id`, `generated_at`, serta `pagination` pada endpoint daftar) tanpa menghapus key paginator top-level Laravel (`current_page`, `data`, `total`, `per_page`).

@@ -66,9 +66,15 @@ pm_live_<prefix8>_<secret40>
 | `classes:read` | Akademik | Membaca daftar rombongan belajar, kelas, dan wali kelas |
 | `academic-years:read` | Akademik | Membaca informasi tahun ajaran aktif |
 
-> **Catatan Keamanan PII:**
-> - Terapkan prinsip *deny by default*. Tanpa parameter `?fields=...`, respons API hanya mengembalikan atribut non-PII yang aman.
-> - Atribut PII hanya dapat diakses apabila API client memiliki scope PII terkait (`students:pii` atau `staff:pii`) dan secara eksplisit dicantumkan pada parameter `?fields=...`.
+> **Catatan Keamanan PII & Relasi Bertingkat (*Nested Resource Allowlist*):**
+> - Terapkan prinsip *deny by default*. Tanpa parameter `?fields=...`, respons API hanya mengembalikan atribut non-PII yang aman:
+>   - **Siswa (`StudentResource` non-PII):** `id`, `emis_student_id`, `nisn`, `nis_local`, `name`, `gender`, `status`, `entry_date`, `exit_date`, `created_at`, `updated_at`, serta relasi `current_cohort` dan `cohorts` bila dimuat. (`nisn` dan `nis_local` diklasifikasikan sebagai nomor induk akademik operasional untuk integrasi RDM/SIPSMAD/E-Learning, sedangkan `nik`, `kk_number`, data orang tua/wali, tempat/tanggal lahir, alamat, dan `documents` wajib menggunakan scope `students:pii`).
+>   - **GTK (`StaffResource` non-PII):** `id`, `full_name_with_titles`, `first_title`, `last_title`, `gender`, `employment_status`, `functional_position`, `is_active`, `created_at`, `updated_at`, serta relasi `position_assignments` bila dimuat. Seluruh identitas kepegawaian/kependudukan (`nik`, `nip`, `nuptk`, `npk`), kontak (`phone`, `email`), tempat/tanggal lahir, riwayat pendidikan, dan kepangkatan wajib menggunakan scope `staff:pii` + `?fields=...`.
+> - Seluruh relasi bertingkat (*nested relations*) diserialisasi menggunakan Resource khusus ber-allowlist ketat:
+>   - `ClassResource` (`GET /api/v1/classes`): membatasi atribut rombel (`id`, `academic_year_id`, `class_id`, `name`, `homeroom_teacher_id`, `capacity`) dan membungkus `homeroom_teacher` melalui `StaffResource` sehingga wali kelas tunduk pada aturan `staff:pii`.
+>   - `StudentCohortResource` & `SchoolClassResource`: hanya mengekspos atribut akademik rombel dan tingkatan kelas.
+>   - `StudentDocumentResource`: hanya mengekspos metadata aman dokumen (`id`, `student_id`, `document_type`, `status`, `gdrive_link`, `verified_by`, `verified_at`) dan memblokir hasil ekstraksi mentah OCR (`ai_verification_result`) maupun field internal storage (`gdrive_file_id`, `upload_retries`).
+>   - `PositionAssignmentResource`: hanya mengekspos data penugasan jabatan, unit organisasi (`id`, `code`, `name`, `unit_type`), dan jabatan (`id`, `code`, `name`, `category`).
 > - Permintaan atribut PII tanpa kepemilikan scope yang sesuai akan diabaikan secara aman (*silent drop*) sehingga respons tetap valid tanpa membocorkan data pribadi.
 
 ---
@@ -197,9 +203,12 @@ Seluruh kegagalan autentikasi, otorisasi scope, validasi, maupun `404` mengembal
 | `staff.deactivated` | Status keaktifan GTK dinonaktifkan (`is_active = false`) |
 | `staff.position.assigned` | Penugasan jabatan struktural / SK baru ditetapkan |
 
-### 7.2 Jaminan Transactional Outbox, Retry & Deduplikasi
+### 7.2 Jaminan Transactional Outbox, Lease Fencing, Retry & Deduplikasi
 - Setiap perubahan data siswa/GTK dicatat secara atomik ke tabel `outbox_events` di dalam transaksi database yang sama dan dijadwalkan melalui `DB::afterCommit()`. Apabila transaksi database batal (*rollback*), tidak ada webhook yang dikirim.
-- **Retry Eksponensial:** Kegagalan pengiriman diulang otomatis hingga 5 kali (`max_attempts`) dengan jadwal backoff `[10, 30, 120, 300, 900]` detik menggunakan `event_id` yang sama.
+- **Lease Fencing & Klaim Konkuren (`lease_token`):**
+  - Baik `DispatchWebhookJob` (yang di-dispatch saat `afterCommit`) maupun scheduler `php artisan webhooks:process-outbox` mengklaim baris `outbox_events` menggunakan penguncian baris (`lockForUpdate`) dan menerbitkan `lease_token` unik dengan masa sewa (`lease_expires_at`, default 120 detik).
+  - Selama pengiriman berlangsung, worker hanya dapat memperpanjang lease atau menyelesaikan status event (`delivered`, `pending` dengan `available_at`, atau `failed`) apabila `lease_token` pada database masih cocok dengan token milik worker tersebut. Job antrean lama (*stale job*) yang baru dieksekusi setelah lease-nya kedaluwarsa dan diambil alih worker lain akan langsung berhenti tanpa mengirim HTTP request ganda atau menimpa klaim baru.
+- **Retry Eksponensial:** Kegagalan pengiriman diulang otomatis hingga 5 kali (`max_attempts`) dengan jadwal backoff `[10, 30, 120, 300, 900]` detik pada kolom `outbox_events.available_at` menggunakan `event_id` yang sama.
 - **Deduplikasi:** PINTU menjamin satu `(webhook_subscription_id, event_id)` yang sudah berhasil (`delivered = true`) tidak akan dikirim ulang. Aplikasi satelit wajib menyimpan `event_id` (`X-Webhook-Id`) untuk idempotensi di sisi penerima.
 - **Perlindungan PII Default:** Secara default (`include_pii = false`), atribut PII (`nik`, `family_card_number`, penghasilan orang tua) disensor otomatis dari payload `data`.
 

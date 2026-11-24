@@ -159,9 +159,9 @@ Tambahkan cron:
 * * * * * cd /var/www/pintu-madrasah && php artisan schedule:run >> /dev/null 2>&1
 ```
 
-Scheduler saat ini menjalankan backup harian pukul 00.00 WIB
-(`backup:run --keep=7`), dengan penyimpanan lokal dan upload Google Drive
-best-effort bila dikonfigurasi.
+Scheduler saat ini menjalankan:
+- Backup harian pukul 00.00 WIB (`backup:run --keep=7`), dengan penyimpanan lokal dan upload Google Drive best-effort bila dikonfigurasi.
+- Pemrosesan Transactional Outbox setiap menit (`webhooks:process-outbox --limit=100` dengan `withoutOverlapping(5)`) untuk memastikan event tertunda atau *expired lease* dipulihkan secara otomatis.
 
 ## 7. Zona waktu
 
@@ -256,6 +256,7 @@ dari backup yang sudah diverifikasi, bukan memaksa `migrate:rollback`.
 - `pint --test`
 - `php artisan test` di SQLite
 - `migrate:fresh --seed` + test di MySQL 8 dengan Redis
+- Integration test antrean Redis nyata (`QUEUE_CONNECTION=redis` pada `tests/Feature/RedisQueueOutboxIntegrationTest.php`)
 - `npm ci` + `npm run build`
 
 CI harus hijau sebelum merge. Untuk menjalankan pemeriksaan yang sama lokal:

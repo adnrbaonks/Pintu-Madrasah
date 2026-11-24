@@ -15,15 +15,17 @@ Aplikasi ini menjadi sumber kebenaran tunggal (*Single Source of Truth*) bagi ek
    - Hirarki Unit Kerja, Jabatan Struktural/Fungsional/Tambahan, SK Penugasan Pegawai dengan validasi anti-tumpang-tindih jabatan utama, dan resolusi otomatis Pejabat Penyetuju Level 1 (Kepala Madrasah) & Level 2 (Kepala TU / Waka).
 3. **Layanan Mandiri GTK & Workflow Persetujuan Berjenjang (`/profil-gtk*`, `/verifikasi-gtk*`, `/persetujuan-gtk*`):**
    - Portal mandiri guru/pegawai untuk melihat profil, mengunggah dokumen kepegawaian privat, dan mengajukan perubahan data beserta bukti lampiran.
-   - State machine persetujuan 2 tingkat (**Verifikasi TU → Persetujuan Kepala Madrasah**) dengan pencegahan *self-approval*, penguncian baris (`lockForUpdate`), pemisahan field lokal vs `pending_external_sync` (EMIS), riwayat perubahan per-field, dan notifikasi in-app.
-4. **RBAC Terpadu (`/pengaturan/roles`):**
-   - Otorisasi berbasis `spatie/laravel-permission` dengan 7 role resmi madrasah (`admin`, `kepala_madrasah`, `kaur_tu`, `staf`, `operator`, `guru`, `pegawai`) dan 28 permission granular.
+   - State machine persetujuan 2 tingkat (**Verifikasi TU (`verify_staff_changes`) → Persetujuan Kepala Madrasah (`approve_staff_changes`)** atau pejabat organisasi berwenang via `OrganizationApprovalService`) dengan pencegahan *self-approval*, penguncian baris (`lockForUpdate`), pemisahan field lokal vs `pending_external_sync` (EMIS), rekonsiliasi otomatis dengan deteksi konflik/timeout & dukungan pengosongan nilai (`null`) eksplisit pada field EMIS opsional, riwayat perubahan per-field, serta notifikasi in-app.
+4. **RBAC Terpadu & Otorisasi Dokumen Object-Level (`/pengaturan/roles`, `/arsip-digital`, `/archives/{type}/{filename}`):**
+   - Otorisasi berbasis `spatie/laravel-permission` sebagai sumber kebenaran tunggal dengan 7 role resmi madrasah (`admin`, `kepala_madrasah`, `kaur_tu`, `staf`, `operator`, `guru`, `pegawai`) dan **50 permission granular** yang dapat dicabut (*revoke*) secara *real-time*.
+   - Pemisahan kewenangan per jenis dokumen privat (`view_student_documents`, `view_ppdb_documents`, `view_mutation_documents`, `view_staff`, serta kepemilikan objek/`verify_staff_changes`/`approve_staff_changes` untuk `StaffChangeAttachment`) dan penyaringan metadata arsip digital (`ArchiveService::canView()`) di seluruh modul (Pengumuman, Program Kerja, PKKM, Rapat).
 5. **Open API Gateway v1, Keamanan Key SHA-256 & Transactional Outbox Webhook (`/api-clients`, `/webhooks`):**
-   - Endpoint `/api/v1/*` dengan kunci `pm_live_<prefix8>_<secret40>` ter-hash SHA-256, kontrol scope granular (termasuk `students:pii` & `staff:pii`), header `X-Request-Id`, `Idempotency-Key`, seleksi kolom `?fields=`, dan sinkronisasi inkremental `?updated_since=`.
-   - Transactional Outbox (`outbox_events`) dengan pengiriman webhook ber-signature HMAC-SHA256 v2 (`X-Webhook-Signature-V2`), retry eksponensial 5x, deduplikasi `event_id`, dan replay dari UI.
+   - Endpoint `/api/v1/*` dengan kunci `pm_live_<prefix8>_<secret40>` ter-hash SHA-256, kontrol scope granular (termasuk `students:pii` & `staff:pii`), allowlist eksplisit pada Resource utama maupun relasi bertingkat (`SchoolClassResource`, `StudentCohortResource`, `StudentDocumentResource`, `PositionAssignmentResource`), header `X-Request-Id`, `Idempotency-Key` (kanonikalisasi JSON rekursif + atomic lock), seleksi kolom `?fields=`, dan sinkronisasi inkremental `?updated_since=`.
+   - Transactional Outbox (`outbox_events`) dengan *lease fencing* (`lease_token`, `reserved_at`, `lease_expires_at`), pengiriman webhook ber-signature HMAC-SHA256 v2 (`X-Webhook-Signature-V2`), retry eksponensial 5x (`available_at`), deduplikasi `event_id`, dan replay dari UI.
 6. **Sinkronisasi EMIS Siswa & EMIS GTK Terproteksi (`/emis/siswa`, `/emis/gtk`):**
-   - Penarikan dan staging data EMIS menggunakan token kredensial integrasi terkelola (`pm_int_<prefix8>_<secret40>`), validasi masa berlaku JWT, dan audit `integration_logs`.
-7. **Operasional Akademik & Kesiswaan:**
+   - Penarikan dan staging data EMIS menggunakan token kredensial integrasi terkelola (`pm_int_<prefix8>_<secret40>`), validasi masa berlaku JWT, pembedaan field staging yang tidak dikirim vs sengaja dikosongkan (`null`), dan audit `integration_logs`.
+7. **Tata Kelola Madrasah, Operasional Akademik & Kesiswaan:**
+   - Arsip Digital Berversi (`/arsip-digital`), Rapat & Notulen (`/rapat`), Program Kerja & Realisasi (`/program-kerja`), Instrumen Penilaian PKKM (`/pkkm`), Pengumuman Internal (`/pengumuman`), dan Kalender Akademik (`/kalender`).
    - PPDB Online & Penempatan Kelas (`/ppdb`), Mutasi Masuk/Keluar (`/mutasi`), Kenaikan Kelas (`/kenaikan-kelas`), Bimbingan Konseling (`/bk`), Leger Nilai dengan Formula Dinamis per Tahun Ajaran (`/leger`), serta Cetak Dokumen & Verifikasi QR (`/verify/{token}`).
 
 ---
@@ -72,6 +74,10 @@ php artisan test
 # Jalankan seluruh test suite terhadap MySQL 8
 DB_CONNECTION=mysql DB_HOST=127.0.0.1 DB_PORT=3306 DB_DATABASE=pintu_test \
 DB_USERNAME=root DB_PASSWORD=root php artisan test
+
+# Jalankan integration test antrean Redis nyata (Transactional Outbox & Worker)
+QUEUE_CONNECTION=redis REDIS_CLIENT=phpredis REDIS_HOST=127.0.0.1 REDIS_PORT=6379 \
+php artisan test tests/Feature/RedisQueueOutboxIntegrationTest.php
 
 # Format kode PHP dengan Laravel Pint
 ./vendor/bin/pint
