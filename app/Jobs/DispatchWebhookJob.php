@@ -88,10 +88,16 @@ class DispatchWebhookJob implements ShouldQueue
                     ->where('status', OutboxEvent::STATUS_PROCESSING)
                     ->where('leased_by', $this->leaseToken)
                     ->where('lease_until', '>', now())
-                    ->update([
-                        'reserved_at' => now(),
-                        'lease_until' => now()->addSeconds(300),
-                    ]);
+                    ->exists();
+
+                if ($owned) {
+                    OutboxEvent::whereKey($this->outboxEventId)
+                        ->where('leased_by', $this->leaseToken)
+                        ->update([
+                            'reserved_at' => now(),
+                            'lease_until' => now()->addSeconds(300),
+                        ]);
+                }
             }
 
             if (! $owned) {
@@ -142,7 +148,7 @@ class DispatchWebhookJob implements ShouldQueue
                 ->where('leased_by', $this->leaseToken)
                 ->update([
                     'status' => OutboxEvent::STATUS_FAILED,
-                        'last_error' => mb_substr($e->getMessage(), 0, 1000),
+                    'last_error' => mb_substr($e->getMessage(), 0, 1000),
                     'reserved_at' => null,
                     'lease_until' => null,
                     'leased_by' => null,
