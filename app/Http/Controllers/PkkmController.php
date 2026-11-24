@@ -9,6 +9,7 @@ use App\Models\PkkmComponent;
 use App\Models\PkkmEvidence;
 use App\Models\PkkmInstrument;
 use App\Models\User;
+use App\Services\ArchiveService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -18,6 +19,10 @@ use Inertia\Response;
 
 class PkkmController extends Controller
 {
+    public function __construct(
+        private ArchiveService $archiveService,
+    ) {}
+
     public function index(): Response
     {
         $instruments = PkkmInstrument::query()
@@ -100,6 +105,7 @@ class PkkmController extends Controller
     public function show(Request $request, PkkmInstrument $instrument): Response
     {
         $this->authorizeInstrumentAccess($request, $instrument);
+        $user = $request->user();
 
         $instrument->load([
             'academicYear:id,year,semester',
@@ -112,9 +118,12 @@ class PkkmController extends Controller
         ]);
 
         return Inertia::render('Pkkm/Show', [
-            'instrument' => $instrument,
+            'instrument' => $this->filterInstrumentArchives($instrument, $user),
             'users' => User::where('is_active', true)->orderBy('name')->get(['id', 'name', 'role']),
-            'archives' => Archive::orderByDesc('created_at')->limit(50)->get(['id', 'archive_number', 'title']),
+            'archives' => $this->archiveService->filterViewable(
+                $user,
+                Archive::orderByDesc('created_at')->limit(50)->get(['id', 'archive_number', 'title', 'visibility', 'allowed_roles', 'created_by', 'owner_user_id', 'owner_staff_id'])
+            ),
         ]);
     }
 
@@ -279,7 +288,11 @@ class PkkmController extends Controller
 
         if (isset($validated['archive_id'])) {
             $archive = Archive::findOrFail($validated['archive_id']);
-            abort_unless($archive->visibility !== Archive::VISIBILITY_PRIVATE || $isManager, 403);
+            abort_unless(
+                $this->archiveService->canView($user, $archive),
+                403,
+                'Anda tidak berhak menautkan arsip yang tidak dapat Anda akses.'
+            );
         }
 
         PkkmEvidence::create([
@@ -354,6 +367,17 @@ class PkkmController extends Controller
         $isPic = $instrument->components()->where('pic_user_id', $user?->id)->exists();
 
         abort_unless($isManager || $isHeadmaster || $isPic, 403, 'Anda tidak memiliki hak akses untuk melihat instrumen PKKM ini.');
+    }
+
+    private function filterInstrumentArchives(PkkmInstrument $instrument, User $user): PkkmInstrument
+    {
+        $instrument->components->each(function (PkkmComponent $component) use ($user): void {
+            $component->evidence->each(function (PkkmEvidence $evidence) use ($user): void {
+                $this->archiveService->hideUnviewableRelation($user, $evidence);
+            });
+        });
+
+        return $instrument;
     }
 
     private function seedConfigurableBaselineComponents(PkkmInstrument $instrument, User $actor): void

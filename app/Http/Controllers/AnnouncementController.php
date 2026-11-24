@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Announcement;
 use App\Models\Archive;
+use App\Services\ArchiveService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -12,6 +13,10 @@ use Inertia\Response;
 
 class AnnouncementController extends Controller
 {
+    public function __construct(
+        private ArchiveService $archiveService,
+    ) {}
+
     public function index(Request $request): Response
     {
         $user = $request->user();
@@ -57,10 +62,21 @@ class AnnouncementController extends Controller
 
         $canManage = $user && ($user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator']));
 
+        if ($user) {
+            $announcements->each(function (Announcement $announcement) use ($user): void {
+                $this->archiveService->hideUnviewableRelation($user, $announcement);
+            });
+        }
+
         return Inertia::render('Announcements/Index', [
             'announcements' => $announcements,
             'canManage' => $canManage,
-            'archives' => Archive::orderByDesc('created_at')->limit(50)->get(['id', 'archive_number', 'title']),
+            'archives' => $user
+                ? $this->archiveService->filterViewable(
+                    $user,
+                    Archive::orderByDesc('created_at')->limit(50)->get(['id', 'archive_number', 'title', 'visibility', 'allowed_roles', 'created_by', 'owner_user_id', 'owner_staff_id'])
+                )
+                : [],
         ]);
     }
 
@@ -88,6 +104,15 @@ class AnnouncementController extends Controller
             'expires_at' => 'nullable|date|after_or_equal:publish_date',
             'archive_id' => 'nullable|uuid|exists:archives,id',
         ]);
+
+        if (! empty($validated['archive_id'])) {
+            $archive = Archive::findOrFail($validated['archive_id']);
+            abort_unless(
+                $this->archiveService->canView($user, $archive),
+                403,
+                'Anda tidak berhak menautkan arsip yang tidak dapat Anda akses.'
+            );
+        }
 
         Announcement::create([
             'title' => $validated['title'],

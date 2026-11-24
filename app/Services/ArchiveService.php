@@ -10,6 +10,7 @@ use App\Models\ArchiveVersion;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\URL;
@@ -100,6 +101,41 @@ class ArchiveService
 
         // Privat: hanya pemilik dokumen dan admin (sudah ditangani di atas)
         return false;
+    }
+
+    /**
+     * Saring daftar arsip sehingga hanya metadata yang boleh dilihat pengguna yang tersisa.
+     *
+     * @param  iterable<int, Archive>  $archives
+     * @return Collection<int, Archive>
+     */
+    public function filterViewable(User $user, iterable $archives): Collection
+    {
+        return collect($archives)
+            ->filter(fn (Archive $archive): bool => $this->canView($user, $archive))
+            ->values();
+    }
+
+    /**
+     * Hapus relasi arsip pada model turunan bila pengguna tidak berhak melihatnya.
+     */
+    public function hideUnviewableRelation(User $user, mixed $model, string $relation = 'archive'): void
+    {
+        if ($model instanceof Collection) {
+            $model->each(fn ($item): mixed => $this->hideUnviewableRelation($user, $item, $relation));
+
+            return;
+        }
+
+        if (! is_object($model) || ! method_exists($model, 'relationLoaded') || ! $model->relationLoaded($relation)) {
+            return;
+        }
+
+        $archive = $model->getRelation($relation);
+
+        if ($archive instanceof Archive && ! $this->canView($user, $archive)) {
+            $model->setRelation($relation, null);
+        }
     }
 
     /**

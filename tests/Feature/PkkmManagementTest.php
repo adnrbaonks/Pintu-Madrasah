@@ -5,12 +5,14 @@ namespace Tests\Feature;
 use App\Models\Archive;
 use App\Models\ArchiveCategory;
 use App\Models\PkkmComponent;
+use App\Models\PkkmEvidence;
 use App\Models\PkkmInstrument;
 use App\Models\User;
 use App\Services\ArchiveService;
 use Illuminate\Foundation\Testing\LazilyRefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
 
 class PkkmManagementTest extends TestCase
@@ -224,5 +226,68 @@ class PkkmManagementTest extends TestCase
         ])->assertRedirect();
 
         $this->assertSame('verified', $evidence->fresh()->verification_status);
+    }
+
+    public function test_pkkm_show_filters_private_archive_metadata_and_blocks_linking(): void
+    {
+        app(ArchiveService::class)->ensureDefaultCategories();
+        $category = ArchiveCategory::firstOrFail();
+
+        $owner = User::factory()->create(['role' => 'admin']);
+        $kamad = User::factory()->create(['role' => 'kepala_madrasah']);
+        $picGuru = User::factory()->create(['role' => 'guru']);
+
+        $private = Archive::create([
+            'archive_category_id' => $category->id,
+            'archive_number' => 'ARS/PKKM/PRIVATE',
+            'title' => 'Arsip privat pemilik lain',
+            'visibility' => Archive::VISIBILITY_PRIVATE,
+            'created_by' => $owner->id,
+        ]);
+
+        $instrument = PkkmInstrument::create([
+            'code' => 'PKKM/2026/ARCHIVE',
+            'title' => 'PKKM dengan arsip privat',
+            'period_year' => '2026',
+            'assessment_type' => 'annual',
+            'headmaster_user_id' => $kamad->id,
+            'status' => PkkmInstrument::STATUS_IN_PROGRESS,
+            'overall_score' => 0,
+            'created_by' => $kamad->id,
+        ]);
+
+        $component = PkkmComponent::create([
+            'pkkm_instrument_id' => $instrument->id,
+            'category_code' => 'A',
+            'category_name' => 'A',
+            'code' => 'A1',
+            'title' => 'Komponen',
+            'weight' => 1,
+            'max_score' => 100,
+            'sort_order' => 1,
+            'pic_user_id' => $picGuru->id,
+        ]);
+
+        PkkmEvidence::create([
+            'pkkm_component_id' => $component->id,
+            'archive_id' => $private->id,
+            'title' => 'Bukti privat',
+            'verification_status' => 'pending',
+            'uploaded_by' => $owner->id,
+        ]);
+
+        $this->actingAs($picGuru)
+            ->get("/pkkm/{$instrument->id}")
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Pkkm/Show', false)
+                ->where('archives', [])
+                ->where('instrument.components.0.evidence.0.archive', null)
+            );
+
+        $this->actingAs($picGuru)->post("/pkkm/components/{$component->id}/evidence", [
+            'title' => 'Bukti dengan arsip terlarang',
+            'archive_id' => $private->id,
+        ])->assertForbidden();
     }
 }

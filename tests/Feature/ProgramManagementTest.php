@@ -2,13 +2,18 @@
 
 namespace Tests\Feature;
 
+use App\Models\Archive;
+use App\Models\ArchiveCategory;
 use App\Models\Program;
 use App\Models\ProgramActivity;
+use App\Models\ProgramEvidence;
 use App\Models\ProgramReport;
 use App\Models\User;
+use App\Services\ArchiveService;
 use Illuminate\Foundation\Testing\LazilyRefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
 
 class ProgramManagementTest extends TestCase
@@ -267,5 +272,72 @@ class ProgramManagementTest extends TestCase
         $this->actingAs($pic)->post("/program-kerja/{$program->id}/activities", [
             'title' => 'Kegiatan Terlambat',
         ])->assertStatus(422);
+    }
+
+    public function test_program_show_filters_private_archive_metadata_and_blocks_linking(): void
+    {
+        app(ArchiveService::class)->ensureDefaultCategories();
+        $category = ArchiveCategory::firstOrFail();
+
+        $owner = User::factory()->create(['role' => 'admin']);
+        $pic = User::factory()->create(['role' => 'staf']);
+
+        $private = Archive::create([
+            'archive_category_id' => $category->id,
+            'archive_number' => 'ARS/PRG/PRIVATE',
+            'title' => 'Arsip privat pemilik lain',
+            'visibility' => Archive::VISIBILITY_PRIVATE,
+            'created_by' => $owner->id,
+        ]);
+
+        $program = Program::create([
+            'code' => 'PRG/ARCHIVE/1',
+            'title' => 'Program dengan arsip privat',
+            'pic_user_id' => $pic->id,
+            'status' => Program::STATUS_APPROVED,
+        ]);
+
+        $activity = ProgramActivity::create([
+            'program_id' => $program->id,
+            'title' => 'Kegiatan',
+            'status' => 'completed',
+        ]);
+
+        $report = ProgramReport::create([
+            'program_id' => $program->id,
+            'program_activity_id' => $activity->id,
+            'title' => 'Laporan',
+            'report_date' => now()->toDateString(),
+            'summary' => 'Ringkasan',
+            'achieved_percent' => 100,
+            'status' => ProgramReport::STATUS_SUBMITTED,
+            'submitted_by' => $pic->id,
+        ]);
+
+        ProgramEvidence::create([
+            'program_report_id' => $report->id,
+            'archive_id' => $private->id,
+            'title' => 'Bukti privat',
+            'uploaded_by' => $owner->id,
+        ]);
+
+        $this->actingAs($pic)
+            ->get("/program-kerja/{$program->id}")
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Programs/Show', false)
+                ->where('archives', [])
+                ->where('program.reports.0.evidence.0.archive', null)
+            );
+
+        $this->actingAs($pic)->post("/program-kerja/{$program->id}/reports", [
+            'program_activity_id' => $activity->id,
+            'title' => 'Laporan dengan arsip terlarang',
+            'report_date' => now()->toDateString(),
+            'summary' => 'Ringkasan',
+            'achieved_percent' => 100,
+            'evidence_title' => 'Bukti privat',
+            'evidence_archive_id' => $private->id,
+        ])->assertForbidden();
     }
 }

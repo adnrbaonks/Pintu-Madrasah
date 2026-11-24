@@ -3,7 +3,10 @@
 namespace Tests\Feature;
 
 use App\Models\Announcement;
+use App\Models\Archive;
+use App\Models\ArchiveCategory;
 use App\Models\User;
+use App\Services\ArchiveService;
 use Illuminate\Foundation\Testing\LazilyRefreshDatabase;
 use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
@@ -153,5 +156,62 @@ class AnnouncementSecurityTest extends TestCase
             'priority' => 'normal',
             'publish_date' => now()->toDateString(),
         ])->assertSessionHasErrors(['target_roles']);
+    }
+
+    public function test_private_archive_metadata_is_not_exposed_to_unauthorized_announcement_viewers(): void
+    {
+        app(ArchiveService::class)->ensureDefaultCategories();
+        $category = ArchiveCategory::firstOrFail();
+        $owner = User::factory()->create(['role' => 'kaur_tu']);
+        $viewer = User::factory()->create(['role' => 'guru']);
+
+        $private = Archive::create([
+            'archive_category_id' => $category->id,
+            'archive_number' => 'ARS/ANN/PRIVATE',
+            'title' => 'Arsip privat pemilik lain',
+            'visibility' => Archive::VISIBILITY_PRIVATE,
+            'created_by' => $owner->id,
+        ]);
+
+        $internal = Archive::create([
+            'archive_category_id' => $category->id,
+            'archive_number' => 'ARS/ANN/INTERNAL',
+            'title' => 'Arsip internal madrasah',
+            'visibility' => Archive::VISIBILITY_INTERNAL,
+            'created_by' => $owner->id,
+        ]);
+
+        Announcement::create([
+            'title' => 'Pengumuman dengan arsip privat',
+            'content' => 'Konten',
+            'target_scope' => 'all',
+            'priority' => 'normal',
+            'publish_date' => now()->toDateString(),
+            'author_user_id' => $owner->id,
+            'archive_id' => $private->id,
+            'is_active' => true,
+        ]);
+
+        Announcement::create([
+            'title' => 'Pengumuman dengan arsip internal',
+            'content' => 'Konten',
+            'target_scope' => 'all',
+            'priority' => 'normal',
+            'publish_date' => now()->toDateString(),
+            'author_user_id' => $owner->id,
+            'archive_id' => $internal->id,
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($viewer)
+            ->get('/pengumuman')
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Announcements/Index', false)
+                ->where('archives', fn ($archives) => collect($archives)->pluck('id')->all() === [$internal->id])
+                ->where('announcements', fn ($items) => collect($items)->every(
+                    fn ($announcement) => ($announcement['archive']['id'] ?? null) !== $private->id
+                ))
+            );
     }
 }
