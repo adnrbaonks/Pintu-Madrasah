@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Setting;
 use App\Models\User;
+use Illuminate\Encryption\Encrypter;
 use Illuminate\Foundation\Testing\LazilyRefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -106,5 +107,46 @@ class SettingSecurityTest extends TestCase
         $this->assertNotSame('legacy-rdm-secret-key-112233', $rawRdm);
         $this->assertSame('legacy-rdm-secret-key-112233', decrypt($rawRdm));
         $this->assertSame('legacy-rdm-secret-key-112233', Setting::get('rdm_api_key'));
+    }
+
+    public function test_ciphertext_from_another_app_key_is_never_double_wrapped_and_migration_is_idempotent(): void
+    {
+        Setting::flushCache();
+
+        $oldEncrypter = new Encrypter(random_bytes(32), config('app.cipher'));
+        $oldCiphertext = $oldEncrypter->encrypt('rotated-secret-value');
+
+        DB::table('settings')->insert([
+            [
+                'key' => 'gemini_api_key',
+                'value' => $oldCiphertext,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'key' => 'emis_sso_token',
+                'value' => 'plaintext-emis-token',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+        ]);
+
+        $this->assertSame('invalid_ciphertext', Setting::encryptionState($oldCiphertext));
+        $this->assertTrue(Setting::isEncrypted($oldCiphertext));
+
+        // get() tidak boleh mengenkripsi ulang ciphertext key lama dan mengembalikan default
+        $this->assertSame('fallback', Setting::get('gemini_api_key', 'fallback'));
+        $this->assertSame($oldCiphertext, DB::table('settings')->where('key', 'gemini_api_key')->value('value'));
+
+        // Run migrasi pertama: hanya plaintext yang dienkripsi
+        $this->assertSame(1, Setting::migratePlaintextSecrets());
+        $encryptedEmisAfterFirstRun = DB::table('settings')->where('key', 'emis_sso_token')->value('value');
+        $this->assertSame('plaintext-emis-token', decrypt($encryptedEmisAfterFirstRun));
+        $this->assertSame($oldCiphertext, DB::table('settings')->where('key', 'gemini_api_key')->value('value'));
+
+        // Run migrasi kedua: idempotent, tidak menyentuh ciphertext lama maupun yang sudah terenkripsi
+        $this->assertSame(0, Setting::migratePlaintextSecrets());
+        $this->assertSame($encryptedEmisAfterFirstRun, DB::table('settings')->where('key', 'emis_sso_token')->value('value'));
+        $this->assertSame($oldCiphertext, DB::table('settings')->where('key', 'gemini_api_key')->value('value'));
     }
 }

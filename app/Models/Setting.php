@@ -2,7 +2,9 @@
 
 namespace App\Models;
 
+use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Log;
 
 class Setting extends Model
 {
@@ -29,14 +31,18 @@ class Setting extends Model
         $value = $setting?->value;
 
         if ($value !== null && in_array($key, self::SECRET_KEYS, true)) {
-            if (self::isEncrypted($value)) {
+            $encryptionState = self::encryptionState($value);
+            if ($encryptionState === 'encrypted') {
                 $value = decrypt($value);
+            } elseif ($encryptionState === 'invalid_ciphertext') {
+                Log::warning('Setting secret uses an unavailable APP_KEY; preserving ciphertext.', ['key' => $key]);
+                $value = null;
             } else {
-                // Secret lama yang masih plaintext: otomatis dan aman migrasikan ke bentuk terenkripsi di DB
+                // Secret lama yang masih plaintext: otomatis migrasikan ke bentuk terenkripsi.
                 try {
                     $setting->update(['value' => encrypt($value)]);
                 } catch (\Throwable) {
-                    // Fallback aman jika koneksi read-only
+                    // Fallback aman jika koneksi read-only.
                 }
             }
         }
@@ -65,9 +71,11 @@ class Setting extends Model
         $records = self::whereIn('key', self::SECRET_KEYS)->get();
 
         foreach ($records as $record) {
-            if ($record->value !== null && $record->value !== '' && ! self::isEncrypted($record->value)) {
+            if ($record->value !== null && $record->value !== '' && self::encryptionState($record->value) === 'plaintext') {
                 $record->update(['value' => encrypt($record->value)]);
                 $migrated++;
+            } elseif ($record->value !== null && self::encryptionState($record->value) === 'invalid_ciphertext') {
+                Log::warning('Setting secret uses an unavailable APP_KEY; preserving ciphertext.', ['key' => $record->key]);
             }
         }
 
@@ -76,13 +84,43 @@ class Setting extends Model
 
     public static function isEncrypted(string $value): bool
     {
+        return self::encryptionState($value) !== 'plaintext';
+    }
+
+    /**
+     * @return 'encrypted'|'invalid_ciphertext'|'plaintext'
+     */
+    public static function encryptionState(string $value): string
+    {
+        if (! self::hasEncryptedPayloadStructure($value)) {
+            return 'plaintext';
+        }
+
         try {
             decrypt($value);
 
-            return true;
-        } catch (\Throwable) {
+            return 'encrypted';
+        } catch (DecryptException) {
+            return 'invalid_ciphertext';
+        }
+    }
+
+    private static function hasEncryptedPayloadStructure(string $value): bool
+    {
+        $decoded = base64_decode($value, true);
+        if (! is_string($decoded)) {
             return false;
         }
+
+        $payload = json_decode($decoded, true);
+        if (! is_array($payload)) {
+            return false;
+        }
+
+        return isset($payload['iv'], $payload['value'], $payload['mac'])
+            && is_string($payload['iv'])
+            && is_string($payload['value'])
+            && is_string($payload['mac']);
     }
 
     public static function flushCache(): void
