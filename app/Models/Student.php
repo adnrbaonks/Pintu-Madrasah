@@ -67,13 +67,8 @@ class Student extends Model
 
     public function currentCohort()
     {
-        static $activeYearId = false;
-        if ($activeYearId === false) {
-            $activeYearId = AcademicYear::active()?->id;
-        }
-
         return $this->hasOne(StudentAcademicCohort::class)
-            ->where('academic_year_id', $activeYearId);
+            ->whereHas('academicYear', fn ($query) => $query->where('is_active', true));
     }
 
     public function documents()

@@ -2,6 +2,9 @@
 
 namespace App\Http\Resources\Api\V1;
 
+use App\Models\Student;
+use App\Models\StudentAcademicCohort;
+use App\Models\StudentDocument;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -9,6 +12,9 @@ class StudentResource extends JsonResource
 {
     /**
      * Atribut default non-PII yang aman dikembalikan tanpa scope students:pii.
+     * NISN diklasifikasikan sebagai kode referensi akademik operasional untuk integrasi
+     * aplikasi satelit (SIPSMAD/RDM/E-Learning), sedangkan NIK/No. KK/alamat/data keluarga
+     * diklasifikasikan sebagai PII yang wajib memerlukan scope students:pii.
      */
     public const NON_PII_FIELDS = [
         'id',
@@ -53,23 +59,44 @@ class StudentResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
-        $attributes = $this->resource->toArray();
+        /** @var Student $student */
+        $student = $this->resource;
+        $attributes = $student->attributesToArray();
 
         // 1. Periksa izin scope PII pada API client
         $scopes = (array) $request->attributes->get('api_scopes', []);
         $hasPiiScope = in_array('students:pii', $scopes, true);
 
-        // Jika tidak memiliki scope PII, hapus relasi dokumen sensitif jika termuat
-        if (! $hasPiiScope && isset($attributes['documents'])) {
-            unset($attributes['documents']);
+        // 2. Transformasi relasi bertingkat melalui Resource eksplisit (mencegah kebocoran nested raw model)
+        if ($student->relationLoaded('currentCohort')) {
+            $currentCohort = $student->getRelation('currentCohort');
+            $attributes['current_cohort'] = $currentCohort instanceof StudentAcademicCohort
+                ? (new StudentCohortResource($currentCohort))->toArray($request)
+                : null;
         }
 
-        // 2. Tentukan field yang diizinkan untuk pemanggil ini (deny by default)
+        if ($student->relationLoaded('cohorts')) {
+            $attributes['cohorts'] = collect($student->getRelation('cohorts'))
+                ->filter(fn ($cohort): bool => $cohort instanceof StudentAcademicCohort)
+                ->map(fn (StudentAcademicCohort $cohort): array => (new StudentCohortResource($cohort))->toArray($request))
+                ->values()
+                ->all();
+        }
+
+        if ($hasPiiScope && $student->relationLoaded('documents')) {
+            $attributes['documents'] = collect($student->getRelation('documents'))
+                ->filter(fn ($doc): bool => $doc instanceof StudentDocument)
+                ->map(fn (StudentDocument $doc): array => (new StudentDocumentResource($doc))->toArray($request))
+                ->values()
+                ->all();
+        }
+
+        // 3. Tentukan field yang diizinkan untuk pemanggil ini (deny by default)
         $allowedFields = $hasPiiScope
             ? self::ALLOWED_FIELDS
             : self::NON_PII_FIELDS;
 
-        // 3. Evaluasi parameter ?fields=...
+        // 4. Evaluasi parameter ?fields=...
         $fieldsParam = $request->query('fields');
         if (is_string($fieldsParam) && trim($fieldsParam) !== '') {
             $requested = array_map('trim', explode(',', $fieldsParam));

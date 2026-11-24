@@ -2,6 +2,8 @@
 
 namespace App\Http\Resources\Api\V1;
 
+use App\Models\PositionAssignment;
+use App\Models\Staff;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -9,6 +11,8 @@ class StaffResource extends JsonResource
 {
     /**
      * Atribut default non-PII yang aman dikembalikan tanpa scope staff:pii.
+     * Seluruh nomor identitas kepegawaian/kependudukan GTK (NIK, NIP, NUPTK, NPK)
+     * diklasifikasikan sebagai PII dan wajib memerlukan scope staff:pii.
      */
     public const NON_PII_FIELDS = [
         'id',
@@ -55,18 +59,30 @@ class StaffResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
-        $attributes = $this->resource->toArray();
+        /** @var Staff $staff */
+        $staff = $this->resource;
+        $attributes = $staff->attributesToArray();
+        $attributes['name'] = $staff->name;
 
         // 1. Periksa izin scope PII pada API client
         $scopes = (array) $request->attributes->get('api_scopes', []);
         $hasPiiScope = in_array('staff:pii', $scopes, true);
 
-        // 2. Tentukan field yang diizinkan untuk pemanggil ini (deny by default)
+        // 2. Transformasi relasi penugasan jabatan melalui Resource eksplisit
+        if ($staff->relationLoaded('positionAssignments')) {
+            $attributes['position_assignments'] = collect($staff->getRelation('positionAssignments'))
+                ->filter(fn ($assignment): bool => $assignment instanceof PositionAssignment)
+                ->map(fn (PositionAssignment $assignment): array => (new PositionAssignmentResource($assignment))->toArray($request))
+                ->values()
+                ->all();
+        }
+
+        // 3. Tentukan field yang diizinkan untuk pemanggil ini (deny by default)
         $allowedFields = $hasPiiScope
             ? self::ALLOWED_FIELDS
             : self::NON_PII_FIELDS;
 
-        // 3. Evaluasi parameter ?fields=...
+        // 4. Evaluasi parameter ?fields=...
         $fieldsParam = $request->query('fields');
         if (is_string($fieldsParam) && trim($fieldsParam) !== '') {
             $requested = array_map('trim', explode(',', $fieldsParam));

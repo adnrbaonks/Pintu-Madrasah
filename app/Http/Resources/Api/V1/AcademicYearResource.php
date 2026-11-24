@@ -7,13 +7,27 @@ use Illuminate\Http\Resources\Json\JsonResource;
 
 class AcademicYearResource extends JsonResource
 {
+    public const ALLOWED_FIELDS = [
+        'id',
+        'year',
+        'semester',
+        'is_active',
+        'is_locked',
+        'created_at',
+        'updated_at',
+    ];
+
     /**
      * @return array<string, mixed>
      */
     public function toArray(Request $request): array
     {
-        return collect($this->resource->toArray())->merge([
-            'full_label' => $this->resource->full_label,
-        ])->all();
+        $attributes = array_intersect_key(
+            $this->resource->attributesToArray(),
+            array_flip(self::ALLOWED_FIELDS),
+        );
+        $attributes['full_label'] = $this->resource->full_label;
+
+        return $attributes;
     }
 }

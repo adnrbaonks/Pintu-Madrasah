@@ -5,10 +5,15 @@ namespace Tests\Feature;
 use App\Models\AcademicYear;
 use App\Models\ApiClient;
 use App\Models\IntegrationToken;
+use App\Models\OrganizationUnit;
+use App\Models\Position;
+use App\Models\PositionAssignment;
 use App\Models\Rombel;
 use App\Models\SchoolClass;
 use App\Models\Staff;
 use App\Models\Student;
+use App\Models\StudentAcademicCohort;
+use App\Models\StudentDocument;
 use App\Models\User;
 use App\Services\ApiKeyService;
 use App\Services\IntegrationTokenService;
@@ -275,6 +280,143 @@ class ApiStandardAndSecurityTest extends TestCase
             ->assertJsonFragment(['kk_number' => $student->kk_number])
             ->assertJsonFragment(['address' => 'Alamat privat'])
             ->assertJsonFragment(['father_name' => 'Nama Ayah Privat']);
+    }
+
+    public function test_nested_api_relations_use_dedicated_resources_and_prevent_pii_or_internal_attribute_leakage(): void
+    {
+        $year = AcademicYear::factory()->create(['is_active' => true]);
+        $schoolClass = SchoolClass::factory()->create(['grade_level' => '8', 'major_name' => 'Reguler']);
+
+        $homeroomTeacher = Staff::factory()->create([
+            'full_name_with_titles' => 'Wali Kelas Delapan, S.Pd.',
+            'nik' => '3201999988887777',
+            'nip' => '198801012015011009',
+            'nuptk' => '5544332211009988',
+            'phone' => '081299998888',
+            'email' => 'wali.rahasia@example.test',
+            'tpg_status' => true,
+        ]);
+
+        $rombel = Rombel::factory()->create([
+            'academic_year_id' => $year->id,
+            'class_id' => $schoolClass->id,
+            'name' => 'VIII-A',
+            'homeroom_teacher_id' => $homeroomTeacher->id,
+        ]);
+
+        $student = Student::factory()->create([
+            'nisn' => '0099887766',
+            'name' => 'Siswa Uji Relasi',
+            'status' => 'active',
+        ]);
+
+        StudentAcademicCohort::create([
+            'student_id' => $student->id,
+            'academic_year_id' => $year->id,
+            'semester' => $year->semester ?? 'Ganjil',
+            'rombel_id' => $rombel->id,
+            'attendance_number' => 7,
+            'status' => 'active',
+        ]);
+
+        StudentDocument::create([
+            'student_id' => $student->id,
+            'document_type' => 'kartu_keluarga',
+            'gdrive_file_id' => 'gdrive-secret-internal-id',
+            'gdrive_view_url' => 'https://drive.google.com/file/d/preview-safe',
+            'file_size' => 12345,
+            'is_verified_ai' => true,
+            'ai_verification_result' => [
+                'extracted_nik' => '3201000011112222',
+                'raw_ocr_text' => 'TEKS OCR KARTU KELUARGA RAHASIA',
+            ],
+            'status' => 'verified',
+            'upload_retries' => 2,
+        ]);
+
+        $unit = OrganizationUnit::create([
+            'code' => 'TU',
+            'name' => 'Tata Usaha',
+            'type' => 'supporting',
+            'is_active' => true,
+        ]);
+        $position = Position::create([
+            'org_unit_id' => $unit->id,
+            'code' => 'KAUR-TU',
+            'name' => 'Kepala Urusan TU',
+            'level' => 2,
+            'is_structural' => true,
+        ]);
+        PositionAssignment::create([
+            'staff_id' => $homeroomTeacher->id,
+            'position_id' => $position->id,
+            'org_unit_id' => $unit->id,
+            'sk_number' => 'SK/001/2026',
+            'valid_from' => '2026-01-01',
+            'is_primary' => true,
+            'status' => 'active',
+        ]);
+
+        $nonPiiClient = app(ApiKeyService::class)->createClient([
+            'name' => 'Nested Non-PII Client',
+            'scopes' => ['students:read', 'staff:read', 'classes:read'],
+        ]);
+        $piiStudentOnlyClient = app(ApiKeyService::class)->createClient([
+            'name' => 'Student PII Without Staff PII',
+            'scopes' => ['students:read', 'students:pii', 'classes:read'],
+        ]);
+
+        // 1. /api/v1/classes dengan scope classes:read TIDAK boleh membocorkan PII wali kelas (homeroom_teacher)
+        $classesResponse = $this->withHeader('X-API-KEY', $nonPiiClient['plain_key'])
+            ->getJson('/api/v1/classes')
+            ->assertOk()
+            ->assertJsonPath('data.0.homeroom_teacher.id', $homeroomTeacher->id)
+            ->assertJsonPath('data.0.homeroom_teacher.full_name_with_titles', 'Wali Kelas Delapan, S.Pd.');
+
+        $teacherPayload = $classesResponse->json('data.0.homeroom_teacher');
+        $this->assertArrayNotHasKey('nik', $teacherPayload);
+        $this->assertArrayNotHasKey('nip', $teacherPayload);
+        $this->assertArrayNotHasKey('nuptk', $teacherPayload);
+        $this->assertArrayNotHasKey('phone', $teacherPayload);
+        $this->assertArrayNotHasKey('email', $teacherPayload);
+        $this->assertArrayNotHasKey('tpg_status', $teacherPayload);
+
+        // 2. /api/v1/students dengan include=currentCohort.rombel.homeroomTeacher tetap memfilter PII wali kelas
+        $studentNestedRes = $this->withHeader('X-API-KEY', $nonPiiClient['plain_key'])
+            ->getJson('/api/v1/students?include=currentCohort.rombel.homeroomTeacher')
+            ->assertOk()
+            ->assertJsonPath('data.0.current_cohort.rombel.name', 'VIII-A')
+            ->assertJsonPath('data.0.current_cohort.rombel.homeroom_teacher.full_name_with_titles', 'Wali Kelas Delapan, S.Pd.');
+
+        $nestedTeacher = $studentNestedRes->json('data.0.current_cohort.rombel.homeroom_teacher');
+        $this->assertArrayNotHasKey('nik', $nestedTeacher);
+        $this->assertArrayNotHasKey('nip', $nestedTeacher);
+        $this->assertArrayNotHasKey('phone', $nestedTeacher);
+        $this->assertArrayNotHasKey('email', $nestedTeacher);
+
+        // 3. Klien dengan students:pii dapat meminta documents, tetapi hasil OCR mentah AI (ai_verification_result)
+        // dan gdrive_file_id internal tidak bocor.
+        $studentDetailRes = $this->withHeader('X-API-KEY', $piiStudentOnlyClient['plain_key'])
+            ->getJson("/api/v1/students/{$student->nisn}?fields=id,nisn,name,documents,cohorts")
+            ->assertOk()
+            ->assertJsonPath('data.documents.0.document_type', 'kartu_keluarga')
+            ->assertJsonPath('data.documents.0.document_type_label', 'Kartu Keluarga')
+            ->assertJsonPath('data.documents.0.status', 'verified');
+
+        $docPayload = $studentDetailRes->json('data.documents.0');
+        $this->assertArrayNotHasKey('ai_verification_result', $docPayload);
+        $this->assertArrayNotHasKey('gdrive_file_id', $docPayload);
+        $this->assertArrayNotHasKey('upload_retries', $docPayload);
+
+        // 4. /api/v1/staff?include=positionAssignments mengembalikan struktur jabatan dari PositionAssignmentResource
+        $staffRes = $this->withHeader('X-API-KEY', $nonPiiClient['plain_key'])
+            ->getJson('/api/v1/staff?include=positionAssignments')
+            ->assertOk()
+            ->assertJsonPath('data.0.position_assignments.0.sk_number', 'SK/001/2026')
+            ->assertJsonPath('data.0.position_assignments.0.position.code', 'KAUR-TU')
+            ->assertJsonPath('data.0.position_assignments.0.unit.code', 'TU');
+
+        $this->assertArrayNotHasKey('tpg_status', $staffRes->json('data.0'));
     }
 
     public function test_emis_endpoints_require_valid_integration_token_or_operator_session_and_validate_jwt_exp(): void

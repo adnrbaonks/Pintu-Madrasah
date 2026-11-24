@@ -14,7 +14,9 @@ class StudentApiController extends Controller
 {
     private const ALLOWED_INCLUDES = [
         'currentCohort' => ['currentCohort.rombel', 'currentCohort.academicYear'],
+        'currentCohort.rombel.homeroomTeacher' => ['currentCohort.rombel.homeroomTeacher'],
         'cohorts' => ['cohorts.rombel', 'cohorts.academicYear'],
+        'cohorts.rombel.homeroomTeacher' => ['cohorts.rombel.homeroomTeacher'],
         'documents' => ['documents'],
     ];
 
@@ -104,7 +106,7 @@ class StudentApiController extends Controller
     public function show(Request $request, string $nisn): JsonResponse
     {
         $student = Student::where('nisn', $nisn)
-            ->with(['cohorts.rombel', 'cohorts.academicYear', 'documents'])
+            ->with($this->resolveShowIncludes($request))
             ->firstOrFail();
 
         return response()->json([
@@ -130,7 +132,7 @@ class StudentApiController extends Controller
     public function showById(Request $request, string $uuid): JsonResponse
     {
         $student = Student::whereKey($uuid)
-            ->with(['cohorts.rombel', 'cohorts.academicYear', 'documents'])
+            ->with($this->resolveShowIncludes($request))
             ->firstOrFail();
 
         return response()->json([
@@ -140,5 +142,23 @@ class StudentApiController extends Controller
                 'generated_at' => now()->toIso8601String(),
             ],
         ]);
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function resolveShowIncludes(Request $request): array
+    {
+        $with = ['cohorts.rombel', 'cohorts.academicYear', 'documents'];
+
+        if (is_string($request->query('include')) && $request->query('include') !== '') {
+            foreach (array_map('trim', explode(',', $request->query('include'))) as $inc) {
+                if (isset(self::ALLOWED_INCLUDES[$inc])) {
+                    $with = array_values(array_unique(array_merge($with, self::ALLOWED_INCLUDES[$inc])));
+                }
+            }
+        }
+
+        return $with;
     }
 }
