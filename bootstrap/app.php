@@ -4,7 +4,6 @@ use App\Http\Middleware\ApiDeprecation;
 use App\Http\Middleware\AuthenticateIntegrationToken;
 use App\Http\Middleware\CheckApiKey;
 use App\Http\Middleware\CheckApiScope;
-use App\Http\Middleware\CheckRole;
 use App\Http\Middleware\ForceJson;
 use App\Http\Middleware\HandleInertiaRequests;
 use App\Http\Middleware\IdempotencyKey;
@@ -40,7 +39,6 @@ return Application::configure(basePath: dirname(__DIR__))
             'role' => RoleMiddleware::class,
             'permission' => PermissionMiddleware::class,
             'role_or_permission' => RoleOrPermissionMiddleware::class,
-            'checkrole' => CheckRole::class,
             'api.key' => CheckApiKey::class,
             'api.scope' => CheckApiScope::class,
             'api.deprecation' => ApiDeprecation::class,

@@ -182,6 +182,10 @@ class PkkmManagementTest extends TestCase
             'pic_user_id' => $picGuru->id,
         ]);
 
+        // 0. PIC komponen berhak melihat halaman detail instrumen, sedangkan guru lain ditolak (403)
+        $this->actingAs($picGuru)->get("/pkkm/{$instrument->id}")->assertOk();
+        $this->actingAs($guruLain)->get("/pkkm/{$instrument->id}")->assertForbidden();
+
         // 1. PIC komponen dilarang mengisi verified_score (hanya boleh self_score)
         $this->actingAs($picGuru)->post("/pkkm/components/{$component->id}/assess", [
             'self_score' => 85,

@@ -44,7 +44,7 @@ class AuthenticateIntegrationToken
 
         // 2. Fallback transisi same-origin session: user operator/admin yang sudah login di aplikasi web
         $user = $request->user() ?: Auth::guard('web')->user();
-        if ($user && in_array($user->role, self::ALLOWED_ROLES, true)) {
+        if ($user && $user->hasAnyRole(self::ALLOWED_ROLES)) {
             return $next($request);
         }
 

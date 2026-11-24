@@ -757,7 +757,7 @@ class StaffChangeRequestService
 
         if (! $actor->hasRole('kepala_madrasah') && ! $actor->can('approve_staff_changes')) {
             throw ValidationException::withMessages([
-                'actor' => 'Hanya Kepala Madrasah yang memiliki kewenangan menyetujui perubahan data GTK.',
+                'actor' => 'Hanya Kepala Madrasah atau pemegang kewenangan substantif yang dapat menyetujui perubahan data GTK.',
             ]);
         }
     }
@@ -793,7 +793,7 @@ class StaffChangeRequestService
             : ['kaur_tu'];
 
         return User::query()
-            ->whereIn('role', $roles)
+            ->whereHas('roles', fn ($query) => $query->whereIn('name', $roles))
             ->where('is_active', true)
             ->whereKeyNot($excludeUserId)
             ->get();

@@ -24,11 +24,11 @@ class AnnouncementController extends Controller
                     ->orWhereDate('expires_at', '>=', now()->toDateString());
             });
 
-        $isAdmin = $user && ($user->hasRole('admin') || $user->role === 'admin');
+        $isAdmin = $user && $user->hasRole('admin');
 
         if (! $isAdmin) {
-            $userRoles = $user ? $user->roles()->pluck('name')->push($user->role)->filter()->unique()->values()->all() : [];
-            $isGtk = ! empty($user->staff_id) || ($user && ($user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator', 'guru', 'pegawai']) || in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator', 'guru', 'pegawai'], true)));
+            $userRoles = $user ? $user->roles()->pluck('name')->all() : [];
+            $isGtk = ! empty($user->staff_id) || ($user && ($user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator', 'guru', 'pegawai'])));
 
             $query->where(function ($scopeQuery) use ($user, $userRoles, $isGtk): void {
                 $scopeQuery->where('author_user_id', $user->id)
@@ -54,7 +54,7 @@ class AnnouncementController extends Controller
             ->orderByDesc('created_at')
             ->get();
 
-        $canManage = $user && ($user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator']) || in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'], true));
+        $canManage = $user && ($user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator']));
 
         return Inertia::render('Announcements/Index', [
             'announcements' => $announcements,
@@ -66,7 +66,7 @@ class AnnouncementController extends Controller
     public function store(Request $request): RedirectResponse
     {
         $user = $request->user();
-        $canManage = $user && ($user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator']) || in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'], true));
+        $canManage = $user && ($user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator']));
         if (! $canManage) {
             abort(403, 'Anda tidak memiliki hak akses untuk mempublikasikan pengumuman.');
         }
@@ -103,7 +103,7 @@ class AnnouncementController extends Controller
     public function destroy(Request $request, Announcement $announcement): RedirectResponse
     {
         $user = $request->user();
-        $canDelete = $user && ($user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu']) || in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu'], true));
+        $canDelete = $user && ($user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu']));
         if (! $canDelete) {
             abort(403);
         }

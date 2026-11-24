@@ -73,7 +73,7 @@ class ArchiveService
     public function canView(User $user, Archive $archive): bool
     {
         // Admin sistem selalu dapat mengakses arsip
-        if ($user->hasRole('admin') || $user->role === 'admin') {
+        if ($user->hasRole('admin')) {
             return true;
         }
 
@@ -86,8 +86,8 @@ class ArchiveService
             return true;
         }
 
-        // Internal atau public: seluruh GTK / civitas madrasah terautentikasi
-        if ($archive->visibility === Archive::VISIBILITY_INTERNAL || $archive->visibility === 'public') {
+        // Internal: seluruh GTK / civitas madrasah terautentikasi
+        if ($archive->visibility === Archive::VISIBILITY_INTERNAL) {
             return true;
         }
 
@@ -95,7 +95,7 @@ class ArchiveService
         if ($archive->visibility === Archive::VISIBILITY_ROLE_RESTRICTED) {
             $allowed = is_array($archive->allowed_roles) ? $archive->allowed_roles : [];
 
-            return $user->hasAnyRole($allowed) || in_array($user->role, $allowed, true);
+            return $user->hasAnyRole($allowed);
         }
 
         // Privat: hanya pemilik dokumen dan admin (sudah ditangani di atas)
@@ -107,8 +107,7 @@ class ArchiveService
      */
     public function canManage(User $user, ?Archive $archive = null): bool
     {
-        if ($user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'])
-            || in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'], true)) {
+        if ($user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'])) {
             return true;
         }
 

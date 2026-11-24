@@ -30,7 +30,7 @@ class CalendarController extends Controller
     public function store(Request $request): RedirectResponse
     {
         $user = $request->user();
-        if (! in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'], true)) {
+        if (! $user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'])) {
             abort(403);
         }
 
@@ -64,7 +64,7 @@ class CalendarController extends Controller
     public function destroy(Request $request, CalendarEvent $event): RedirectResponse
     {
         $user = $request->user();
-        if (! in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu'], true)) {
+        if (! $user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu'])) {
             abort(403);
         }
 

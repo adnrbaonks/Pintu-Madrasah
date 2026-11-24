@@ -170,7 +170,7 @@ class StaffChangeRequestController extends Controller
         $user = $request->user();
         $isOwner = $changeRequest->requester_user_id === $user->id
             || ($user->staff_id && $changeRequest->staff_id === $user->staff_id);
-        $isReviewer = in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'], true);
+        $isReviewer = $user->can('verify_staff_changes') || $user->can('approve_staff_changes');
 
         if (! $isOwner && ! $isReviewer) {
             abort(403, 'Anda tidak memiliki akses ke pengajuan ini.');

@@ -112,4 +112,36 @@ class DigitalArchiveTest extends TestCase
         $this->assertSame(1, $expiredCount);
         $this->assertSame(Archive::STATUS_EXPIRED, $archive->fresh()->status);
     }
+
+    public function test_role_restricted_archive_strictly_enforces_allowed_roles_via_spatie(): void
+    {
+        Storage::fake('local');
+
+        $operator = User::factory()->create(['role' => 'operator']);
+        $kaurTu = User::factory()->create(['role' => 'kaur_tu']);
+        $kamad = User::factory()->create(['role' => 'kepala_madrasah']);
+        $guru = User::factory()->create(['role' => 'guru']);
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        app(ArchiveService::class)->ensureDefaultCategories();
+        $category = ArchiveCategory::where('code', 'TATA-USAHA')->firstOrFail();
+
+        $archive = Archive::create([
+            'archive_category_id' => $category->id,
+            'archive_number' => 'ARS/TU/2026/999',
+            'title' => 'Dokumen Terbatas Khusus Guru',
+            'visibility' => Archive::VISIBILITY_ROLE_RESTRICTED,
+            'allowed_roles' => ['guru'],
+            'created_by' => $operator->id,
+        ]);
+
+        // Role yang ada di allowed_roles (guru), pembuat (operator), dan admin diizinkan
+        $this->actingAs($guru)->get("/arsip-digital/{$archive->id}")->assertOk();
+        $this->actingAs($operator)->get("/arsip-digital/{$archive->id}")->assertOk();
+        $this->actingAs($admin)->get("/arsip-digital/{$archive->id}")->assertOk();
+
+        // Role manajerial yang TIDAK ada di allowed_roles wajib ditolak (403)
+        $this->actingAs($kaurTu)->get("/arsip-digital/{$archive->id}")->assertForbidden();
+        $this->actingAs($kamad)->get("/arsip-digital/{$archive->id}")->assertForbidden();
+    }
 }

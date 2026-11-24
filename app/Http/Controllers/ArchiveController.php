@@ -280,7 +280,7 @@ class ArchiveController extends Controller
     public function destroy(Request $request, Archive $archive): RedirectResponse
     {
         $user = $request->user();
-        if (! in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu'], true)) {
+        if (! $user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu'])) {
             abort(403, 'Hanya Admin, Kepala Madrasah, atau Kepala TU yang dapat menghapus arsip.');
         }
 
@@ -318,7 +318,7 @@ class ArchiveController extends Controller
             abort(403, 'Akses tidak diizinkan.');
         }
 
-        $isPrivileged = in_array($user->role, ['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'], true);
+        $isPrivileged = $user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator']);
         $isOwner = false;
 
         if ($type === 'staff_document') {

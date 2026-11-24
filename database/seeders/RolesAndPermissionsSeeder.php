@@ -78,7 +78,7 @@ class RolesAndPermissionsSeeder extends Seeder
         $staf = Role::findOrCreate('staf');
         $staf->syncPermissions([
             'view_students', 'create_students', 'edit_students', 'export_students',
-            'manage_archives', 'manage_organization',
+            'manage_archives', 'manage_organization', 'manage_bk',
             'view_staff', 'edit_staff',
             'view_rombels', 'manage_rombels',
             'view_academic_years',
@@ -87,6 +87,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'manage_mutations', 'manage_placements', 'manage_promotions',
             'view_ppdb',
             'view_letters', 'manage_letters',
+            'manage_bk',
             'print_documents',
             'view_emis',
         ]);

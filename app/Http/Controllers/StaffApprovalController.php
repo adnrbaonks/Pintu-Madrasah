@@ -136,7 +136,7 @@ class StaffApprovalController extends Controller
         }
 
         if (! $user->hasRole('kepala_madrasah') && ! $user->can('approve_staff_changes')) {
-            abort(403, 'Hanya Kepala Madrasah yang memiliki kewenangan menyetujui perubahan data GTK.');
+            abort(403, 'Hanya Kepala Madrasah atau pemegang kewenangan substantif yang dapat menyetujui perubahan data GTK.');
         }
     }
 }

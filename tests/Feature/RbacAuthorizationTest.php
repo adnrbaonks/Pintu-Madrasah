@@ -125,6 +125,15 @@ class RbacAuthorizationTest extends TestCase
         $this->actingAs($guru)->get('/audit-logs')->assertOk();
     }
 
+    public function test_staf_retains_bk_access_while_pegawai_is_denied(): void
+    {
+        $staf = User::factory()->create(['role' => 'staf']);
+        $pegawai = User::factory()->create(['role' => 'pegawai']);
+
+        $this->actingAs($staf)->get('/bk')->assertOk();
+        $this->actingAs($pegawai)->get('/bk')->assertForbidden();
+    }
+
     public function test_permission_changes_take_effect_immediately_on_routes(): void
     {
         $guru = User::factory()->create(['role' => 'guru']);
