@@ -7,16 +7,59 @@ use App\Models\WebhookSubscription;
 class WebhookPublisher
 {
     /**
-     * Daftar kunci PII sensitif yang dihapus secara default bila `include_pii = false`.
+     * Daftar kunci identitas sensitif yang dihapus ketika `include_pii = false`.
+     *
+     * @var array<int, string>
+     */
+    public const IDENTITY_PII_KEYS = [
+        'nik',
+        'nisn',
+        'nip',
+        'nuptk',
+        'npk',
+        'kk_number',
+        'family_card_number',
+        'emis_student_id',
+        'emis_id',
+    ];
+
+    /**
+     * Daftar kunci data pribadi sensitif yang dihapus ketika `include_pii = false`.
+     *
+     * @var array<int, string>
+     */
+    public const PERSONAL_PII_KEYS = [
+        'gender',
+        'birth_place',
+        'birth_date',
+        'religion',
+        'address',
+        'phone',
+        'email',
+        'father_name',
+        'mother_name',
+        'guardian_name',
+        'father_income',
+        'mother_income',
+        'guardian_income',
+        'previous_school',
+        'photo_path',
+        'civil_rank',
+        'civil_rank_tmt',
+        'highest_education',
+        'university_name',
+        'study_program',
+        'graduation_year',
+    ];
+
+    /**
+     * Daftar gabungan seluruh kunci PII sensitif yang dihapus secara default bila `include_pii = false`.
      *
      * @var array<int, string>
      */
     public const PII_KEYS = [
-        'nik',
-        'family_card_number',
-        'father_income',
-        'mother_income',
-        'guardian_income',
+        ...self::IDENTITY_PII_KEYS,
+        ...self::PERSONAL_PII_KEYS,
     ];
 
     /**
@@ -45,9 +88,11 @@ class WebhookPublisher
         ?WebhookSubscription $subscription = null,
         ?string $occurredAt = null,
     ): array {
-        $filteredData = ($subscription === null || ! $subscription->include_pii)
-            ? $this->stripPii($data)
-            : $data;
+        $allowedPii = $this->canIncludePii($event, $subscription);
+
+        $filteredData = $allowedPii
+            ? $data
+            : $this->stripPii($data);
 
         return [
             'event' => $event,
@@ -59,18 +104,75 @@ class WebhookPublisher
     }
 
     /**
-     * Hapus atribut PII dari payload bila langganan tidak mengaktifkan `include_pii`.
+     * Evaluasi apakah subscription berhak menerima PII untuk event tertentu.
+     * Bila subscription tertaut ke API Client (`api_client_id`), client tersebut wajib aktif
+     * dan memiliki scope PII yang relevan (`students:pii` / `staff:pii`).
+     */
+    public function canIncludePii(string $event, ?WebhookSubscription $subscription): bool
+    {
+        if ($subscription === null || ! $subscription->include_pii) {
+            return false;
+        }
+
+        if ($subscription->api_client_id === null) {
+            return true;
+        }
+
+        $client = $subscription->relationLoaded('apiClient')
+            ? $subscription->apiClient
+            : $subscription->apiClient()->first();
+
+        if (! $client || $client->isRevoked() || $client->isExpired()) {
+            return false;
+        }
+
+        if (str_starts_with($event, 'student.')) {
+            return $client->hasScope('students:pii');
+        }
+
+        if (str_starts_with($event, 'staff.')) {
+            return $client->hasScope('staff:pii');
+        }
+
+        return $client->hasScope('students:pii') || $client->hasScope('staff:pii');
+    }
+
+    /**
+     * Hapus atribut PII secara rekursif dari payload (termasuk nested object dan daftar `changed_fields`)
+     * bila langganan tidak berhak menerima PII.
      *
      * @param  array<string, mixed>  $data
      * @return array<string, mixed>
      */
     public function stripPii(array $data): array
     {
-        foreach (self::PII_KEYS as $key) {
-            unset($data[$key]);
+        $piiLookup = array_fill_keys(self::PII_KEYS, true);
+        $sanitized = [];
+
+        foreach ($data as $key => $value) {
+            if (is_string($key) && isset($piiLookup[$key])) {
+                continue;
+            }
+
+            if ($key === 'changed_fields' && is_array($value)) {
+                $sanitized[$key] = array_values(array_filter(
+                    $value,
+                    fn (mixed $field): bool => ! is_string($field) || ! isset($piiLookup[$field])
+                ));
+
+                continue;
+            }
+
+            if (is_array($value)) {
+                $sanitized[$key] = $this->stripPii($value);
+
+                continue;
+            }
+
+            $sanitized[$key] = $value;
         }
 
-        return $data;
+        return $sanitized;
     }
 
     /**

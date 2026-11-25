@@ -65,12 +65,24 @@ class WebhookSubscriptionController extends Controller
             'max_attempts' => 'sometimes|integer|min:1|max:10',
         ]);
 
+        $includePii = (bool) ($data['include_pii'] ?? false);
+        if ($includePii && ! empty($data['api_client_id'])) {
+            $client = ApiClient::find($data['api_client_id']);
+            $requiredScope = str_starts_with($data['event'], 'student.') ? 'students:pii' : 'staff:pii';
+
+            if (! $client || ! $client->hasScope($requiredScope)) {
+                return redirect()->back()->withErrors([
+                    'include_pii' => "API Client yang dipilih belum memiliki scope {$requiredScope} untuk menerima payload PII.",
+                ])->withInput();
+            }
+        }
+
         $sub = WebhookSubscription::create([
             'api_client_id' => $data['api_client_id'] ?? null,
             'event' => $data['event'],
             'target_url' => $data['target_url'],
             'description' => $data['description'] ?? null,
-            'include_pii' => (bool) ($data['include_pii'] ?? false),
+            'include_pii' => $includePii,
             'max_attempts' => (int) ($data['max_attempts'] ?? 5),
             'secret' => 'whsec_'.Str::random(48),
         ]);

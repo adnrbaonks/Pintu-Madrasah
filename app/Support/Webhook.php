@@ -67,6 +67,7 @@ class Webhook
             'id' => $staff->id,
             'nip' => $staff->nip,
             'nuptk' => $staff->nuptk,
+            'npk' => $staff->npk,
             'name' => $staff->full_name_with_titles,
             'employment_status' => $staff->employment_status,
             'functional_position' => $staff->functional_position,

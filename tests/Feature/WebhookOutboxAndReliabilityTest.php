@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Jobs\DispatchWebhookJob;
+use App\Models\ApiClient;
 use App\Models\OutboxEvent;
 use App\Models\Staff;
 use App\Models\Student;
@@ -11,6 +12,7 @@ use App\Models\WebhookDelivery;
 use App\Models\WebhookSubscription;
 use App\Services\OutboxService;
 use App\Services\WebhookPublisher;
+use App\Support\Webhook;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Testing\LazilyRefreshDatabase;
 use Illuminate\Http\Client\Request as HttpClientRequest;
@@ -81,6 +83,9 @@ class WebhookOutboxAndReliabilityTest extends TestCase
             $this->assertSame($eventId, $json['event_id']);
             $this->assertSame(1, $json['version']);
             $this->assertArrayNotHasKey('nik', $json['data']);
+            $this->assertArrayNotHasKey('nisn', $json['data']);
+            $this->assertArrayNotHasKey('gender', $json['data']);
+            $this->assertSame('Siswa Uji Webhook', $json['data']['name'] ?? null);
             $this->assertSame($publisher->signatureV1($rawBody, $subDefaultNoPii->secret), $sigV1);
             $this->assertTrue($publisher->verifySignatureV2($timestamp, $rawBody, $subDefaultNoPii->secret, $sigV2));
             $this->assertFalse($publisher->verifySignatureV2($timestamp, $rawBody, 'wrong_secret', $sigV2));
@@ -88,7 +93,7 @@ class WebhookOutboxAndReliabilityTest extends TestCase
             return true;
         });
 
-        // 2. Verifikasi subscription dengan include_pii = true tetap menerima NIK
+        // 2. Verifikasi subscription dengan include_pii = true tetap menerima NIK, NISN, dan gender
         Http::assertSent(function (HttpClientRequest $req) use ($subWithPii): bool {
             if ($req->url() !== $subWithPii->target_url) {
                 return false;
@@ -96,6 +101,8 @@ class WebhookOutboxAndReliabilityTest extends TestCase
 
             $json = json_decode($req->body(), true);
             $this->assertSame('3601012345678901', $json['data']['nik'] ?? null);
+            $this->assertSame('0099887766', $json['data']['nisn'] ?? null);
+            $this->assertNotEmpty($json['data']['gender'] ?? null);
 
             return true;
         });
@@ -104,6 +111,109 @@ class WebhookOutboxAndReliabilityTest extends TestCase
         $delivery = WebhookDelivery::where('webhook_subscription_id', $subDefaultNoPii->id)->firstOrFail();
         $this->assertTrue($delivery->delivered);
         $this->assertSame('[REDACTED]', $delivery->response_headers['Set-Cookie'] ?? null);
+    }
+
+    public function test_webhook_pii_sanitization_covers_staff_nested_payloads_and_api_client_scopes(): void
+    {
+        $publisher = app(WebhookPublisher::class);
+
+        $staff = Staff::factory()->create([
+            'full_name_with_titles' => 'Ustadz Ahmad, S.Pd.',
+            'nip' => '198501012010011001',
+            'nuptk' => '1234567890123456',
+            'npk' => '9876543210123',
+            'employment_status' => 'pns',
+            'functional_position' => 'Guru Matematika',
+            'is_active' => true,
+        ]);
+
+        $rawPayload = Webhook::staffPayload($staff, [
+            'changed_fields' => ['nip', 'nuptk', 'npk', 'functional_position', 'phone'],
+            'nested_profile' => [
+                'nik' => '3601011985010001',
+                'nisn' => '0012345678',
+                'nip' => '198501012010011001',
+                'nuptk' => '1234567890123456',
+                'npk' => '9876543210123',
+                'gender' => 'L',
+                'phone' => '08123456789',
+                'email' => 'ahmad@madrasah.sch.id',
+                'father_income' => 5000000,
+                'unit_name' => 'MTsN 1 Pandeglang',
+            ],
+        ]);
+
+        $subNoPii = WebhookSubscription::create([
+            'event' => 'staff.updated',
+            'target_url' => 'https://satelit.example.com/staff-no-pii',
+            'secret' => 'whsec_staff_no_pii',
+            'is_active' => true,
+            'include_pii' => false,
+        ]);
+
+        $builtNoPii = $publisher->buildPayload('staff.updated', 'evt-1', $rawPayload, $subNoPii);
+        $dataNoPii = $builtNoPii['data'];
+
+        // Field operasional tetap dipertahankan
+        $this->assertSame($staff->id, $dataNoPii['id']);
+        $this->assertSame('Ustadz Ahmad, S.Pd.', $dataNoPii['name']);
+        $this->assertSame('pns', $dataNoPii['employment_status']);
+        $this->assertSame('Guru Matematika', $dataNoPii['functional_position']);
+        $this->assertTrue($dataNoPii['is_active']);
+        $this->assertSame(['functional_position'], $dataNoPii['changed_fields']);
+        $this->assertSame('MTsN 1 Pandeglang', $dataNoPii['nested_profile']['unit_name']);
+
+        // Identitas & PII pribadi dihapus baik di top-level maupun nested object
+        foreach (['nip', 'nuptk', 'npk', 'nik', 'nisn', 'gender', 'phone', 'email', 'father_income'] as $piiKey) {
+            $this->assertArrayNotHasKey($piiKey, $dataNoPii);
+            $this->assertArrayNotHasKey($piiKey, $dataNoPii['nested_profile']);
+        }
+
+        // Subscription dengan include_pii=true tetapi tertaut ke API Client tanpa scope staff:pii wajib disanitasi
+        $clientWithoutPiiScope = ApiClient::create([
+            'name' => 'Client Non PII',
+            'api_key' => 'pm_live_non_pii_client_key_12345',
+            'scopes' => ['staff:read'],
+            'is_active' => true,
+        ]);
+
+        $subClientWithoutScope = WebhookSubscription::create([
+            'api_client_id' => $clientWithoutPiiScope->id,
+            'event' => 'staff.updated',
+            'target_url' => 'https://satelit.example.com/staff-unscoped',
+            'secret' => 'whsec_staff_unscoped',
+            'is_active' => true,
+            'include_pii' => true,
+        ]);
+
+        $builtUnscoped = $publisher->buildPayload('staff.updated', 'evt-2', $rawPayload, $subClientWithoutScope);
+        $this->assertArrayNotHasKey('nip', $builtUnscoped['data']);
+        $this->assertArrayNotHasKey('nuptk', $builtUnscoped['data']);
+        $this->assertArrayNotHasKey('npk', $builtUnscoped['data']);
+        $this->assertArrayNotHasKey('nik', $builtUnscoped['data']['nested_profile']);
+
+        // Subscription dengan include_pii=true dan API Client yang memiliki scope staff:pii berhak menerima PII
+        $clientWithPiiScope = ApiClient::create([
+            'name' => 'Client Staff PII',
+            'api_key' => 'pm_live_staff_pii_client_key_12345',
+            'scopes' => ['staff:read', 'staff:pii'],
+            'is_active' => true,
+        ]);
+
+        $subClientWithScope = WebhookSubscription::create([
+            'api_client_id' => $clientWithPiiScope->id,
+            'event' => 'staff.updated',
+            'target_url' => 'https://satelit.example.com/staff-scoped',
+            'secret' => 'whsec_staff_scoped',
+            'is_active' => true,
+            'include_pii' => true,
+        ]);
+
+        $builtScoped = $publisher->buildPayload('staff.updated', 'evt-3', $rawPayload, $subClientWithScope);
+        $this->assertSame('198501012010011001', $builtScoped['data']['nip']);
+        $this->assertSame('1234567890123456', $builtScoped['data']['nuptk']);
+        $this->assertSame('9876543210123', $builtScoped['data']['npk']);
+        $this->assertSame('3601011985010001', $builtScoped['data']['nested_profile']['nik']);
     }
 
     public function test_webhook_deduplication_retry_backoff_and_dead_letter(): void
