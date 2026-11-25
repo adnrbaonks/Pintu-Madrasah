@@ -6,6 +6,7 @@ use App\Models\OutboxEvent;
 use App\Models\WebhookDelivery;
 use App\Models\WebhookSubscription;
 use App\Services\WebhookPublisher;
+use App\Services\WebhookUrlGuard;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -14,6 +15,7 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use InvalidArgumentException;
 
 class DispatchWebhookJob implements ShouldQueue
 {
@@ -54,9 +56,10 @@ class DispatchWebhookJob implements ShouldQueue
         return $schedule[max(0, min($attempt - 1, count($schedule) - 1))];
     }
 
-    public function handle(?WebhookPublisher $publisher = null): void
+    public function handle(?WebhookPublisher $publisher = null, ?WebhookUrlGuard $urlGuard = null): void
     {
         $publisher ??= app(WebhookPublisher::class);
+        $urlGuard ??= app(WebhookUrlGuard::class);
 
         if ($this->outboxEventId) {
             if ($this->leaseToken === null) {
@@ -133,7 +136,7 @@ class DispatchWebhookJob implements ShouldQueue
         $failures = [];
 
         foreach ($subs as $sub) {
-            $error = $this->deliver($sub, $publisher);
+            $error = $this->deliver($sub, $publisher, $urlGuard);
             if ($error !== null) {
                 $failures[] = $error;
             }
@@ -167,7 +170,7 @@ class DispatchWebhookJob implements ShouldQueue
         }
     }
 
-    private function deliver(WebhookSubscription $sub, WebhookPublisher $publisher): ?string
+    private function deliver(WebhookSubscription $sub, WebhookPublisher $publisher, WebhookUrlGuard $urlGuard): ?string
     {
         $existing = WebhookDelivery::query()
             ->where('webhook_subscription_id', $sub->id)
@@ -193,13 +196,35 @@ class DispatchWebhookJob implements ShouldQueue
             subscription: $sub,
         );
 
+        $signingSecret = (string) ($sub->secret ?? '');
+        if ($signingSecret === '') {
+            return "Missing or unreadable webhook secret for subscription {$sub->id}";
+        }
+
         $body = (string) json_encode($payload, JSON_UNESCAPED_UNICODE);
         $timestamp = time();
-        $sigV1 = $publisher->signatureV1($body, $sub->secret);
-        $sigV2 = $publisher->signatureV2($timestamp, $body, $sub->secret);
+        $sigV1 = $publisher->signatureV1($body, $signingSecret);
+        $sigV2 = $publisher->signatureV2($timestamp, $body, $signingSecret);
+
+        $timeoutSeconds = max(1, (int) config('services.webhooks.timeout_seconds', 15));
+        $connectTimeoutSeconds = max(1, (int) config('services.webhooks.connect_timeout_seconds', 5));
+        $maxResponseBytes = max(256, (int) config('services.webhooks.max_response_bytes', 2000));
 
         try {
-            $response = Http::timeout(15)
+            $resolvedTarget = $urlGuard->validateAndResolve((string) $sub->target_url);
+            $pinnedIp = $resolvedTarget['resolved_ips'][0];
+
+            $curlOptions = defined('CURLOPT_RESOLVE')
+                ? [CURLOPT_RESOLVE => ["{$resolvedTarget['host']}:{$resolvedTarget['port']}:{$pinnedIp}"]]
+                : [];
+
+            $response = Http::timeout($timeoutSeconds)
+                ->connectTimeout($connectTimeoutSeconds)
+                ->withoutRedirecting()
+                ->withOptions([
+                    'allow_redirects' => false,
+                    'curl' => $curlOptions,
+                ])
                 ->withHeaders([
                     'Content-Type' => 'application/json',
                     'X-Webhook-Id' => (string) $this->eventId,
@@ -212,8 +237,14 @@ class DispatchWebhookJob implements ShouldQueue
                 ->withBody($body, 'application/json')
                 ->post($sub->target_url);
 
-            $ok = $response->successful();
-            $errorMsg = $ok ? null : 'HTTP '.$response->status();
+            if ($response->status() >= 300 && $response->status() < 400) {
+                $ok = false;
+                $errorMsg = 'HTTP redirect rejected (status '.$response->status().')';
+            } else {
+                $ok = $response->successful();
+                $errorMsg = $ok ? null : 'HTTP '.$response->status();
+            }
+
             $nextRetryAt = (! $ok && $attempt < $maxAttempts)
                 ? now()->addSeconds($this->backoffSecondsForAttempt($attempt))
                 : null;
@@ -228,7 +259,7 @@ class DispatchWebhookJob implements ShouldQueue
                     'event' => $this->event,
                     'payload' => $payload,
                     'status_code' => $response->status(),
-                    'response_body' => mb_substr($response->body(), 0, 2000),
+                    'response_body' => mb_substr($response->body(), 0, $maxResponseBytes),
                     'response_headers' => $publisher->redactHeaders($response->headers()),
                     'delivered' => $ok,
                     'attempt' => $attempt,
@@ -241,6 +272,41 @@ class DispatchWebhookJob implements ShouldQueue
             $sub->update([
                 'last_triggered_at' => now(),
                 'last_status' => $response->status(),
+            ]);
+
+            return $errorMsg;
+        } catch (InvalidArgumentException $e) {
+            // SSRF / URL tidak aman: tolak permanen tanpa retry berulang ke jaringan internal
+            $errorMsg = 'SSRF Guard: '.mb_substr($e->getMessage(), 0, 900);
+
+            Log::warning('[WEBHOOK] Target URL ditolak oleh SSRF Guard', [
+                'event' => $this->event,
+                'event_id' => $this->eventId,
+                'url' => $sub->target_url,
+                'error' => $errorMsg,
+            ]);
+
+            WebhookDelivery::updateOrCreate(
+                [
+                    'webhook_subscription_id' => $sub->id,
+                    'event_id' => $this->eventId,
+                ],
+                [
+                    'outbox_event_id' => $this->outboxEventId,
+                    'event' => $this->event,
+                    'payload' => $payload,
+                    'status_code' => null,
+                    'delivered' => false,
+                    'attempt' => $maxAttempts,
+                    'next_retry_at' => null,
+                    'delivered_at' => null,
+                    'error' => $errorMsg,
+                ]
+            );
+
+            $sub->update([
+                'last_triggered_at' => now(),
+                'last_status' => null,
             ]);
 
             return $errorMsg;
@@ -336,7 +402,10 @@ class DispatchWebhookJob implements ShouldQueue
             return;
         }
 
-        $isDeadLetter = $newAttempts >= $this->tries;
+        $allSsrfBlocked = collect($failures)->every(
+            fn (string $failure): bool => str_starts_with($failure, 'SSRF Guard:')
+        );
+        $isDeadLetter = $newAttempts >= $this->tries || $allSsrfBlocked;
 
         $outbox->update([
             'status' => $isDeadLetter ? OutboxEvent::STATUS_FAILED : OutboxEvent::STATUS_PENDING,

@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\Setting;
+use App\Models\WebhookSubscription;
 use Illuminate\Console\Command;
 
 class EncryptPlaintextSecretsCommand extends Command
@@ -28,7 +29,9 @@ class EncryptPlaintextSecretsCommand extends Command
     {
         $this->info('Memeriksa dan mengenkripsi secret lama yang masih plaintext...');
 
-        $migrated = Setting::migratePlaintextSecrets();
+        $migratedSettings = Setting::migratePlaintextSecrets();
+        $migratedWebhooks = WebhookSubscription::migratePlaintextSecrets();
+        $migrated = $migratedSettings + $migratedWebhooks;
 
         $this->info("Migrasi selesai. {$migrated} secret terenkripsi ke database.");
 

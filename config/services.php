@@ -40,4 +40,15 @@ return [
         'model' => env('GEMINI_MODEL', 'gemini-1.5-flash'),
     ],
 
+    'webhooks' => [
+        'require_https' => env('WEBHOOK_REQUIRE_HTTPS', true),
+        'allowed_hosts' => array_values(array_filter(array_map(
+            'trim',
+            explode(',', (string) env('WEBHOOK_ALLOWED_HOSTS', ''))
+        ))),
+        'connect_timeout_seconds' => (int) env('WEBHOOK_CONNECT_TIMEOUT', 5),
+        'timeout_seconds' => (int) env('WEBHOOK_TIMEOUT', 15),
+        'max_response_bytes' => (int) env('WEBHOOK_MAX_RESPONSE_BYTES', 2000),
+    ],
+
 ];

@@ -7,14 +7,20 @@ use App\Models\ApiClient;
 use App\Models\OutboxEvent;
 use App\Models\WebhookDelivery;
 use App\Models\WebhookSubscription;
+use App\Services\WebhookUrlGuard;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
 use Inertia\Response;
+use InvalidArgumentException;
 
 class WebhookSubscriptionController extends Controller
 {
+    public function __construct(
+        private WebhookUrlGuard $urlGuard,
+    ) {}
+
     public function index(Request $request): Response
     {
         $subs = WebhookSubscription::with('apiClient:id,name')
@@ -64,6 +70,14 @@ class WebhookSubscriptionController extends Controller
             'include_pii' => 'sometimes|boolean',
             'max_attempts' => 'sometimes|integer|min:1|max:10',
         ]);
+
+        try {
+            $this->urlGuard->validateAndResolve((string) $data['target_url']);
+        } catch (InvalidArgumentException $e) {
+            return redirect()->back()->withErrors([
+                'target_url' => $e->getMessage(),
+            ])->withInput();
+        }
 
         $includePii = (bool) ($data['include_pii'] ?? false);
         if ($includePii && ! empty($data['api_client_id'])) {

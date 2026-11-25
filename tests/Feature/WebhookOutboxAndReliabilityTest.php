@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Jobs\DispatchWebhookJob;
 use App\Models\ApiClient;
 use App\Models\OutboxEvent;
+use App\Models\Setting;
 use App\Models\Staff;
 use App\Models\Student;
 use App\Models\User;
@@ -12,6 +13,7 @@ use App\Models\WebhookDelivery;
 use App\Models\WebhookSubscription;
 use App\Services\OutboxService;
 use App\Services\WebhookPublisher;
+use App\Services\WebhookUrlGuard;
 use App\Support\Webhook;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Testing\LazilyRefreshDatabase;
@@ -20,6 +22,7 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
+use Inertia\Testing\AssertableInertia;
 use Tests\TestCase;
 
 class WebhookOutboxAndReliabilityTest extends TestCase
@@ -584,5 +587,159 @@ class WebhookOutboxAndReliabilityTest extends TestCase
         $outbox->refresh();
         $this->assertSame(OutboxEvent::STATUS_PUBLISHED, $outbox->status);
         $this->assertNull($outbox->leased_by);
+    }
+
+    public function test_webhook_subscription_secret_is_encrypted_at_rest_and_hidden_from_inertia_and_json_responses(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        $response = $this->actingAs($admin)->post('/webhooks', [
+            'event' => 'student.created',
+            'target_url' => 'https://satelit.example.com/secure-secret-hook',
+            'description' => 'Uji proteksi secret',
+            'include_pii' => false,
+            'max_attempts' => 5,
+        ]);
+
+        $response->assertRedirect();
+        $flashMessage = (string) session('success');
+        $this->assertStringContainsString('whsec_', $flashMessage);
+
+        $sub = WebhookSubscription::where('target_url', 'https://satelit.example.com/secure-secret-hook')->firstOrFail();
+
+        // 1. Secret harus tersembunyi dari toArray() dan toJson()
+        $this->assertArrayNotHasKey('secret', $sub->toArray());
+        $this->assertStringNotContainsString('whsec_', $sub->toJson());
+
+        // 2. Di database (at-rest), nilai raw secret harus terenkripsi (bukan plaintext whsec_*)
+        $rawSecret = (string) DB::table('webhook_subscriptions')
+            ->where('id', $sub->id)
+            ->value('secret');
+        $this->assertNotSame($sub->secret, $rawSecret);
+        $this->assertStringNotContainsString('whsec_', $rawSecret);
+        $this->assertSame('encrypted', Setting::encryptionState($rawSecret));
+
+        // 3. Halaman daftar webhook (Inertia) tidak boleh memuat field secret
+        $this->actingAs($admin)
+            ->get('/webhooks')
+            ->assertOk()
+            ->assertInertia(fn (AssertableInertia $page) => $page
+                ->component('Webhooks/Index', false)
+                ->has('subscriptions', 1)
+                ->missing('subscriptions.0.secret')
+            );
+
+        // 4. Migrasi idempoten untuk secret lama berformat plaintext
+        $legacyId = (string) Str::uuid();
+        DB::table('webhook_subscriptions')->insert([
+            'id' => $legacyId,
+            'event' => 'staff.updated',
+            'target_url' => 'https://satelit.example.com/legacy-secret-hook',
+            'secret' => 'whsec_legacy_plaintext_secret_123456',
+            'is_active' => true,
+            'include_pii' => false,
+            'max_attempts' => 5,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $migratedCount = WebhookSubscription::migratePlaintextSecrets();
+        $this->assertSame(1, $migratedCount);
+        $this->assertSame(0, WebhookSubscription::migratePlaintextSecrets());
+
+        $legacySub = WebhookSubscription::findOrFail($legacyId);
+        $this->assertSame('whsec_legacy_plaintext_secret_123456', $legacySub->secret);
+    }
+
+    public function test_webhook_ssrf_protection_blocks_private_loopback_metadata_and_dns_rebinding(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        $blockedUrls = [
+            'http://satelit.example.com/plain-http',
+            'https://localhost/webhook',
+            'https://127.0.0.1/webhook',
+            'https://10.0.0.15/webhook',
+            'https://172.16.10.5/webhook',
+            'https://192.168.1.20/webhook',
+            'https://169.254.169.254/latest/meta-data/',
+            'https://[::1]/webhook',
+            'https://[fc00::1]/webhook',
+            'https://[fe80::1]/webhook',
+            'https://internal-redis/webhook',
+            'https://service.internal/webhook',
+        ];
+
+        foreach ($blockedUrls as $blockedUrl) {
+            $this->actingAs($admin)
+                ->post('/webhooks', [
+                    'event' => 'student.created',
+                    'target_url' => $blockedUrl,
+                ])
+                ->assertSessionHasErrors('target_url');
+        }
+
+        $this->assertSame(0, WebhookSubscription::count());
+
+        // Simulasikan DNS rebinding saat runtime pengiriman: URL terdaftar dengan domain publik,
+        // tetapi saat DispatchWebhookJob berjalan DNS mengarah ke 127.0.0.1 / 169.254.169.254.
+        Http::fake([
+            '*' => Http::response(['ok' => true], 200),
+        ]);
+
+        $sub = WebhookSubscription::create([
+            'event' => 'student.created',
+            'target_url' => 'https://rebinding.example.com/hook',
+            'secret' => 'whsec_rebinding_test',
+            'is_active' => true,
+        ]);
+
+        $reboundGuard = new WebhookUrlGuard(fn (string $host): array => ['169.254.169.254']);
+
+        $job = new DispatchWebhookJob(
+            event: 'student.created',
+            data: ['id' => 'stu-ssrf', 'name' => 'Siswa SSRF'],
+            onlySubscriptionId: $sub->id,
+            eventId: (string) Str::uuid(),
+        );
+
+        $job->handle(app(WebhookPublisher::class), $reboundGuard);
+
+        Http::assertNothingSent();
+
+        $delivery = WebhookDelivery::where('webhook_subscription_id', $sub->id)->firstOrFail();
+        $this->assertFalse($delivery->delivered);
+        $this->assertNull($delivery->next_retry_at);
+        $this->assertStringContainsString('SSRF Guard:', (string) $delivery->error);
+    }
+
+    public function test_webhook_delivery_rejects_http_redirects(): void
+    {
+        Http::fake([
+            'https://satelit.example.com/redirect-hook' => Http::response('', 302, [
+                'Location' => 'http://169.254.169.254/latest/meta-data/',
+            ]),
+        ]);
+
+        $sub = WebhookSubscription::create([
+            'event' => 'student.created',
+            'target_url' => 'https://satelit.example.com/redirect-hook',
+            'secret' => 'whsec_redirect_test',
+            'is_active' => true,
+        ]);
+
+        $job = new DispatchWebhookJob(
+            event: 'student.created',
+            data: ['id' => 'stu-redirect', 'name' => 'Siswa Redirect'],
+            onlySubscriptionId: $sub->id,
+            eventId: (string) Str::uuid(),
+        );
+        $job->handle();
+
+        Http::assertSentCount(1);
+        $delivery = WebhookDelivery::where('webhook_subscription_id', $sub->id)->firstOrFail();
+        $this->assertFalse($delivery->delivered);
+        $this->assertSame(302, $delivery->status_code);
+        $this->assertStringContainsString('redirect rejected', (string) $delivery->error);
     }
 }
