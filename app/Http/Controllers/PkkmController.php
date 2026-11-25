@@ -292,6 +292,15 @@ class PkkmController extends Controller
             'notes' => 'nullable|string|max:1000',
         ]);
 
+        if (isset($validated['archive_id'])) {
+            $archive = Archive::findOrFail($validated['archive_id']);
+            abort_unless(
+                $this->archiveService->canView($user, $archive),
+                403,
+                'Anda tidak berhak menautkan arsip yang tidak dapat Anda akses.'
+            );
+        }
+
         $filePath = null;
         $originalName = null;
         $mimeType = null;
@@ -306,28 +315,29 @@ class PkkmController extends Controller
             $fileSize = (int) $file->getSize();
         }
 
-        if (isset($validated['archive_id'])) {
-            $archive = Archive::findOrFail($validated['archive_id']);
-            abort_unless(
-                $this->archiveService->canView($user, $archive),
-                403,
-                'Anda tidak berhak menautkan arsip yang tidak dapat Anda akses.'
-            );
-        }
+        try {
+            DB::transaction(function () use ($component, $validated, $filePath, $originalName, $mimeType, $fileSize, $user): void {
+                PkkmEvidence::create([
+                    'pkkm_component_id' => $component->id,
+                    'archive_id' => $validated['archive_id'] ?? null,
+                    'title' => $validated['title'],
+                    'file_path' => $filePath,
+                    'original_name' => $originalName,
+                    'mime_type' => $mimeType,
+                    'file_size' => $fileSize,
+                    'external_url' => $validated['external_url'] ?? null,
+                    'notes' => $validated['notes'] ?? null,
+                    'verification_status' => 'pending',
+                    'uploaded_by' => $user->id,
+                ]);
+            });
+        } catch (\Throwable $e) {
+            if ($filePath !== null) {
+                Storage::disk('local')->delete($filePath);
+            }
 
-        PkkmEvidence::create([
-            'pkkm_component_id' => $component->id,
-            'archive_id' => $validated['archive_id'] ?? null,
-            'title' => $validated['title'],
-            'file_path' => $filePath,
-            'original_name' => $originalName,
-            'mime_type' => $mimeType,
-            'file_size' => $fileSize,
-            'external_url' => $validated['external_url'] ?? null,
-            'notes' => $validated['notes'] ?? null,
-            'verification_status' => 'pending',
-            'uploaded_by' => $user->id,
-        ]);
+            throw $e;
+        }
 
         return redirect()->back()->with('success', "Bukti komponen {$component->code} berhasil ditambahkan.");
     }

@@ -133,21 +133,26 @@ class StaffChangeRequestService
      */
     public function submit(StaffChangeRequest $changeRequest, User $actor): StaffChangeRequest
     {
-        $this->ensureStatusIn($changeRequest, [
-            StaffChangeRequest::STATUS_DRAFT,
-            StaffChangeRequest::STATUS_REVISION_REQUESTED,
-        ], 'Pengajuan ini tidak dapat dikirim karena bukan berstatus draf atau revisi.');
-
-        if ($changeRequest->items()->count() === 0) {
-            throw ValidationException::withMessages([
-                'items' => 'Pengajuan perubahan data harus memiliki minimal satu field yang diajukan.',
-            ]);
-        }
-
         return DB::transaction(function () use ($changeRequest, $actor): StaffChangeRequest {
-            $beforeStatus = $changeRequest->status;
+            $lockedRequest = StaffChangeRequest::query()
+                ->whereKey($changeRequest->id)
+                ->lockForUpdate()
+                ->firstOrFail();
 
-            $changeRequest->update([
+            $this->ensureStatusIn($lockedRequest, [
+                StaffChangeRequest::STATUS_DRAFT,
+                StaffChangeRequest::STATUS_REVISION_REQUESTED,
+            ], 'Pengajuan ini tidak dapat dikirim karena bukan berstatus draf atau revisi.');
+
+            if ($lockedRequest->items()->count() === 0) {
+                throw ValidationException::withMessages([
+                    'items' => 'Pengajuan perubahan data harus memiliki minimal satu field yang diajukan.',
+                ]);
+            }
+
+            $beforeStatus = $lockedRequest->status;
+
+            $lockedRequest->update([
                 'status' => StaffChangeRequest::STATUS_UNDER_TU_REVIEW,
                 'current_stage' => 'tu_review',
                 'submitted_at' => now(),
@@ -157,11 +162,11 @@ class StaffChangeRequestService
                 'user_id' => $actor->id,
                 'action' => 'submitted_staff_change_request',
                 'model_type' => StaffChangeRequest::class,
-                'model_id' => $changeRequest->id,
+                'model_id' => $lockedRequest->id,
                 'before_payload' => ['status' => $beforeStatus],
                 'after_payload' => [
-                    'status' => $changeRequest->status,
-                    'current_stage' => $changeRequest->current_stage,
+                    'status' => $lockedRequest->status,
+                    'current_stage' => $lockedRequest->current_stage,
                 ],
                 'ip_address' => request()?->ip(),
                 'user_agent' => request()?->userAgent(),
@@ -169,10 +174,12 @@ class StaffChangeRequestService
 
             $verifiers = $this->resolveStageRecipients('tu_review', $actor->id);
             if ($verifiers->isNotEmpty()) {
-                Notification::send($verifiers, new ChangeRequestSubmitted($changeRequest));
+                DB::afterCommit(function () use ($verifiers, $lockedRequest): void {
+                    Notification::send($verifiers, new ChangeRequestSubmitted($lockedRequest));
+                });
             }
 
-            return $changeRequest->fresh(['items', 'attachments', 'approvals', 'histories']);
+            return $lockedRequest->fresh(['items', 'attachments', 'approvals', 'histories']);
         });
     }
 
@@ -181,23 +188,29 @@ class StaffChangeRequestService
      */
     public function cancel(StaffChangeRequest $changeRequest, User $actor): void
     {
-        $this->ensureStatusIn($changeRequest, [
-            StaffChangeRequest::STATUS_DRAFT,
-            StaffChangeRequest::STATUS_SUBMITTED,
-            StaffChangeRequest::STATUS_UNDER_TU_REVIEW,
-            StaffChangeRequest::STATUS_REVISION_REQUESTED,
-        ], 'Pengajuan yang sudah diverifikasi atau diputuskan tidak dapat dibatalkan.');
-
         DB::transaction(function () use ($changeRequest, $actor): void {
-            $id = $changeRequest->id;
-            $changeRequest->delete();
+            $lockedRequest = StaffChangeRequest::query()
+                ->whereKey($changeRequest->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $this->ensureStatusIn($lockedRequest, [
+                StaffChangeRequest::STATUS_DRAFT,
+                StaffChangeRequest::STATUS_SUBMITTED,
+                StaffChangeRequest::STATUS_UNDER_TU_REVIEW,
+                StaffChangeRequest::STATUS_REVISION_REQUESTED,
+            ], 'Pengajuan yang sudah diverifikasi atau diputuskan tidak dapat dibatalkan.');
+
+            $id = $lockedRequest->id;
+            $beforeStatus = $lockedRequest->status;
+            $lockedRequest->delete();
 
             ActivityLog::create([
                 'user_id' => $actor->id,
                 'action' => 'cancelled_staff_change_request',
                 'model_type' => StaffChangeRequest::class,
                 'model_id' => $id,
-                'before_payload' => ['status' => $changeRequest->status],
+                'before_payload' => ['status' => $beforeStatus],
                 'after_payload' => null,
                 'ip_address' => request()?->ip(),
                 'user_agent' => request()?->userAgent(),
@@ -211,17 +224,23 @@ class StaffChangeRequestService
     public function verifyByTu(StaffChangeRequest $changeRequest, User $actor, ?string $notes = null): StaffChangeRequest
     {
         $this->ensureTuReviewerAuthority($actor);
-        $this->ensureNotSelfDecision($changeRequest, $actor);
-        $this->ensureStatusIn($changeRequest, [
-            StaffChangeRequest::STATUS_SUBMITTED,
-            StaffChangeRequest::STATUS_UNDER_TU_REVIEW,
-        ], 'Pengajuan tidak berada pada tahap verifikasi Tata Usaha.');
 
         return DB::transaction(function () use ($changeRequest, $actor, $notes): StaffChangeRequest {
-            $beforeStatus = $changeRequest->status;
+            $lockedRequest = StaffChangeRequest::query()
+                ->whereKey($changeRequest->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $this->ensureNotSelfDecision($lockedRequest, $actor);
+            $this->ensureStatusIn($lockedRequest, [
+                StaffChangeRequest::STATUS_SUBMITTED,
+                StaffChangeRequest::STATUS_UNDER_TU_REVIEW,
+            ], 'Pengajuan tidak berada pada tahap verifikasi Tata Usaha.');
+
+            $beforeStatus = $lockedRequest->status;
 
             StaffChangeApproval::create([
-                'request_id' => $changeRequest->id,
+                'request_id' => $lockedRequest->id,
                 'stage' => 'tu_review',
                 'actor_user_id' => $actor->id,
                 'decision' => StaffChangeRequest::STATUS_VERIFIED,
@@ -229,7 +248,7 @@ class StaffChangeRequestService
                 'decided_at' => now(),
             ]);
 
-            $changeRequest->update([
+            $lockedRequest->update([
                 'status' => StaffChangeRequest::STATUS_PENDING_HEAD_APPROVAL,
                 'current_stage' => 'head_approval',
             ]);
@@ -238,11 +257,11 @@ class StaffChangeRequestService
                 'user_id' => $actor->id,
                 'action' => 'verified_staff_change_request',
                 'model_type' => StaffChangeRequest::class,
-                'model_id' => $changeRequest->id,
+                'model_id' => $lockedRequest->id,
                 'before_payload' => ['status' => $beforeStatus],
                 'after_payload' => [
-                    'status' => $changeRequest->status,
-                    'current_stage' => $changeRequest->current_stage,
+                    'status' => $lockedRequest->status,
+                    'current_stage' => $lockedRequest->current_stage,
                     'notes' => $notes,
                 ],
                 'ip_address' => request()?->ip(),
@@ -251,10 +270,12 @@ class StaffChangeRequestService
 
             $headApprovers = $this->resolveStageRecipients('head_approval', $actor->id);
             if ($headApprovers->isNotEmpty()) {
-                Notification::send($headApprovers, new ChangeRequestSubmitted($changeRequest));
+                DB::afterCommit(function () use ($headApprovers, $lockedRequest): void {
+                    Notification::send($headApprovers, new ChangeRequestSubmitted($lockedRequest));
+                });
             }
 
-            return $changeRequest->fresh(['items', 'attachments', 'approvals.actor', 'histories']);
+            return $lockedRequest->fresh(['items', 'attachments', 'approvals.actor', 'histories']);
         });
     }
 
@@ -263,31 +284,36 @@ class StaffChangeRequestService
      */
     public function requestRevision(StaffChangeRequest $changeRequest, User $actor, string $notes): StaffChangeRequest
     {
-        $this->ensureNotSelfDecision($changeRequest, $actor);
-        $this->ensureStatusIn($changeRequest, [
-            StaffChangeRequest::STATUS_SUBMITTED,
-            StaffChangeRequest::STATUS_UNDER_TU_REVIEW,
-            StaffChangeRequest::STATUS_VERIFIED,
-            StaffChangeRequest::STATUS_PENDING_HEAD_APPROVAL,
-        ], 'Pengajuan pada status ini tidak dapat diminta revisi.');
+        return DB::transaction(function () use ($changeRequest, $actor, $notes): StaffChangeRequest {
+            $lockedRequest = StaffChangeRequest::query()
+                ->whereKey($changeRequest->id)
+                ->lockForUpdate()
+                ->firstOrFail();
 
-        $isHeadStage = in_array($changeRequest->status, [
-            StaffChangeRequest::STATUS_VERIFIED,
-            StaffChangeRequest::STATUS_PENDING_HEAD_APPROVAL,
-        ], true);
+            $this->ensureNotSelfDecision($lockedRequest, $actor);
+            $this->ensureStatusIn($lockedRequest, [
+                StaffChangeRequest::STATUS_SUBMITTED,
+                StaffChangeRequest::STATUS_UNDER_TU_REVIEW,
+                StaffChangeRequest::STATUS_VERIFIED,
+                StaffChangeRequest::STATUS_PENDING_HEAD_APPROVAL,
+            ], 'Pengajuan pada status ini tidak dapat diminta revisi.');
 
-        if ($isHeadStage) {
-            $this->ensureHeadApproverAuthority($actor);
-        } else {
-            $this->ensureTuReviewerAuthority($actor);
-        }
+            $isHeadStage = in_array($lockedRequest->status, [
+                StaffChangeRequest::STATUS_VERIFIED,
+                StaffChangeRequest::STATUS_PENDING_HEAD_APPROVAL,
+            ], true);
 
-        return DB::transaction(function () use ($changeRequest, $actor, $notes, $isHeadStage): StaffChangeRequest {
-            $beforeStatus = $changeRequest->status;
+            if ($isHeadStage) {
+                $this->ensureHeadApproverAuthority($actor);
+            } else {
+                $this->ensureTuReviewerAuthority($actor);
+            }
+
+            $beforeStatus = $lockedRequest->status;
             $stage = $isHeadStage ? 'head_approval' : 'tu_review';
 
             StaffChangeApproval::create([
-                'request_id' => $changeRequest->id,
+                'request_id' => $lockedRequest->id,
                 'stage' => $stage,
                 'actor_user_id' => $actor->id,
                 'decision' => StaffChangeRequest::STATUS_REVISION_REQUESTED,
@@ -295,7 +321,7 @@ class StaffChangeRequestService
                 'decided_at' => now(),
             ]);
 
-            $changeRequest->update([
+            $lockedRequest->update([
                 'status' => StaffChangeRequest::STATUS_REVISION_REQUESTED,
                 'current_stage' => 'draft',
             ]);
@@ -304,21 +330,24 @@ class StaffChangeRequestService
                 'user_id' => $actor->id,
                 'action' => 'revision_requested_staff_change_request',
                 'model_type' => StaffChangeRequest::class,
-                'model_id' => $changeRequest->id,
+                'model_id' => $lockedRequest->id,
                 'before_payload' => ['status' => $beforeStatus],
                 'after_payload' => [
-                    'status' => $changeRequest->status,
+                    'status' => $lockedRequest->status,
                     'notes' => $notes,
                 ],
                 'ip_address' => request()?->ip(),
                 'user_agent' => request()?->userAgent(),
             ]);
 
-            if ($changeRequest->requester) {
-                $changeRequest->requester->notify(new RevisionRequested($changeRequest, $notes));
+            $requester = $lockedRequest->requester;
+            if ($requester) {
+                DB::afterCommit(function () use ($requester, $lockedRequest, $notes): void {
+                    $requester->notify(new RevisionRequested($lockedRequest, $notes));
+                });
             }
 
-            return $changeRequest->fresh(['items', 'attachments', 'approvals.actor', 'histories']);
+            return $lockedRequest->fresh(['items', 'attachments', 'approvals.actor', 'histories']);
         });
     }
 
@@ -328,13 +357,18 @@ class StaffChangeRequestService
     public function rejectByTu(StaffChangeRequest $changeRequest, User $actor, string $notes): StaffChangeRequest
     {
         $this->ensureTuReviewerAuthority($actor);
-        $this->ensureNotSelfDecision($changeRequest, $actor);
-        $this->ensureStatusIn($changeRequest, [
-            StaffChangeRequest::STATUS_SUBMITTED,
-            StaffChangeRequest::STATUS_UNDER_TU_REVIEW,
-        ], 'Pengajuan tidak berada pada tahap verifikasi Tata Usaha.');
 
-        return $this->recordRejection($changeRequest, $actor, 'tu_review', $notes);
+        return $this->recordRejection(
+            changeRequest: $changeRequest,
+            actor: $actor,
+            stage: 'tu_review',
+            notes: $notes,
+            allowedStatuses: [
+                StaffChangeRequest::STATUS_SUBMITTED,
+                StaffChangeRequest::STATUS_UNDER_TU_REVIEW,
+            ],
+            invalidStatusMessage: 'Pengajuan tidak berada pada tahap verifikasi Tata Usaha.',
+        );
     }
 
     /**
@@ -347,17 +381,23 @@ class StaffChangeRequestService
         bool $autoApply = true,
     ): StaffChangeRequest {
         $this->ensureHeadApproverAuthority($actor);
-        $this->ensureNotSelfDecision($changeRequest, $actor);
-        $this->ensureStatusIn($changeRequest, [
-            StaffChangeRequest::STATUS_VERIFIED,
-            StaffChangeRequest::STATUS_PENDING_HEAD_APPROVAL,
-        ], 'Pengajuan belum diverifikasi Tata Usaha atau tidak berada pada tahap persetujuan Kepala Madrasah.');
 
         $approvedRequest = DB::transaction(function () use ($changeRequest, $actor, $notes): StaffChangeRequest {
-            $beforeStatus = $changeRequest->status;
+            $lockedRequest = StaffChangeRequest::query()
+                ->whereKey($changeRequest->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $this->ensureNotSelfDecision($lockedRequest, $actor);
+            $this->ensureStatusIn($lockedRequest, [
+                StaffChangeRequest::STATUS_VERIFIED,
+                StaffChangeRequest::STATUS_PENDING_HEAD_APPROVAL,
+            ], 'Pengajuan belum diverifikasi Tata Usaha atau tidak berada pada tahap persetujuan Kepala Madrasah.');
+
+            $beforeStatus = $lockedRequest->status;
 
             StaffChangeApproval::create([
-                'request_id' => $changeRequest->id,
+                'request_id' => $lockedRequest->id,
                 'stage' => 'head_approval',
                 'actor_user_id' => $actor->id,
                 'decision' => StaffChangeRequest::STATUS_APPROVED,
@@ -365,7 +405,7 @@ class StaffChangeRequestService
                 'decided_at' => now(),
             ]);
 
-            $changeRequest->update([
+            $lockedRequest->update([
                 'status' => StaffChangeRequest::STATUS_APPROVED,
                 'current_stage' => 'head_approval',
                 'decided_at' => now(),
@@ -375,21 +415,24 @@ class StaffChangeRequestService
                 'user_id' => $actor->id,
                 'action' => 'approved_by_head_staff_change_request',
                 'model_type' => StaffChangeRequest::class,
-                'model_id' => $changeRequest->id,
+                'model_id' => $lockedRequest->id,
                 'before_payload' => ['status' => $beforeStatus],
                 'after_payload' => [
-                    'status' => $changeRequest->status,
+                    'status' => $lockedRequest->status,
                     'notes' => $notes,
                 ],
                 'ip_address' => request()?->ip(),
                 'user_agent' => request()?->userAgent(),
             ]);
 
-            if ($changeRequest->requester) {
-                $changeRequest->requester->notify(new ChangeRequestApproved($changeRequest, $notes));
+            $requester = $lockedRequest->requester;
+            if ($requester) {
+                DB::afterCommit(function () use ($requester, $lockedRequest, $notes): void {
+                    $requester->notify(new ChangeRequestApproved($lockedRequest, $notes));
+                });
             }
 
-            return $changeRequest->fresh(['items', 'attachments', 'approvals.actor', 'histories']);
+            return $lockedRequest->fresh(['items', 'attachments', 'approvals.actor', 'histories']);
         });
 
         if ($autoApply) {
@@ -405,13 +448,18 @@ class StaffChangeRequestService
     public function rejectByHead(StaffChangeRequest $changeRequest, User $actor, string $notes): StaffChangeRequest
     {
         $this->ensureHeadApproverAuthority($actor);
-        $this->ensureNotSelfDecision($changeRequest, $actor);
-        $this->ensureStatusIn($changeRequest, [
-            StaffChangeRequest::STATUS_VERIFIED,
-            StaffChangeRequest::STATUS_PENDING_HEAD_APPROVAL,
-        ], 'Pengajuan tidak berada pada tahap persetujuan Kepala Madrasah.');
 
-        return $this->recordRejection($changeRequest, $actor, 'head_approval', $notes);
+        return $this->recordRejection(
+            changeRequest: $changeRequest,
+            actor: $actor,
+            stage: 'head_approval',
+            notes: $notes,
+            allowedStatuses: [
+                StaffChangeRequest::STATUS_VERIFIED,
+                StaffChangeRequest::STATUS_PENDING_HEAD_APPROVAL,
+            ],
+            invalidStatusMessage: 'Pengajuan tidak berada pada tahap persetujuan Kepala Madrasah.',
+        );
     }
 
     /**
@@ -537,24 +585,40 @@ class StaffChangeRequestService
             ]);
 
             if ($lockedRequest->requester) {
-                $lockedRequest->requester->notify(new ChangeRequestApplied($lockedRequest));
+                $requester = $lockedRequest->requester;
+                DB::afterCommit(function () use ($requester, $lockedRequest): void {
+                    $requester->notify(new ChangeRequestApplied($lockedRequest));
+                });
             }
 
             return $lockedRequest->fresh(['items', 'attachments', 'approvals.actor', 'histories']);
         });
     }
 
+    /**
+     * @param  array<int, string>  $allowedStatuses
+     */
     private function recordRejection(
         StaffChangeRequest $changeRequest,
         User $actor,
         string $stage,
         string $notes,
+        array $allowedStatuses,
+        string $invalidStatusMessage,
     ): StaffChangeRequest {
-        return DB::transaction(function () use ($changeRequest, $actor, $stage, $notes): StaffChangeRequest {
-            $beforeStatus = $changeRequest->status;
+        return DB::transaction(function () use ($changeRequest, $actor, $stage, $notes, $allowedStatuses, $invalidStatusMessage): StaffChangeRequest {
+            $lockedRequest = StaffChangeRequest::query()
+                ->whereKey($changeRequest->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $this->ensureNotSelfDecision($lockedRequest, $actor);
+            $this->ensureStatusIn($lockedRequest, $allowedStatuses, $invalidStatusMessage);
+
+            $beforeStatus = $lockedRequest->status;
 
             StaffChangeApproval::create([
-                'request_id' => $changeRequest->id,
+                'request_id' => $lockedRequest->id,
                 'stage' => $stage,
                 'actor_user_id' => $actor->id,
                 'decision' => StaffChangeRequest::STATUS_REJECTED,
@@ -562,7 +626,7 @@ class StaffChangeRequestService
                 'decided_at' => now(),
             ]);
 
-            $changeRequest->update([
+            $lockedRequest->update([
                 'status' => StaffChangeRequest::STATUS_REJECTED,
                 'current_stage' => $stage,
                 'decided_at' => now(),
@@ -574,10 +638,10 @@ class StaffChangeRequestService
                     ? 'rejected_by_head_staff_change_request'
                     : 'rejected_by_tu_staff_change_request',
                 'model_type' => StaffChangeRequest::class,
-                'model_id' => $changeRequest->id,
+                'model_id' => $lockedRequest->id,
                 'before_payload' => ['status' => $beforeStatus],
                 'after_payload' => [
-                    'status' => $changeRequest->status,
+                    'status' => $lockedRequest->status,
                     'stage' => $stage,
                     'notes' => $notes,
                 ],
@@ -585,11 +649,14 @@ class StaffChangeRequestService
                 'user_agent' => request()?->userAgent(),
             ]);
 
-            if ($changeRequest->requester) {
-                $changeRequest->requester->notify(new ChangeRequestRejected($changeRequest, $stage, $notes));
+            if ($lockedRequest->requester) {
+                $requester = $lockedRequest->requester;
+                DB::afterCommit(function () use ($requester, $lockedRequest, $stage, $notes): void {
+                    $requester->notify(new ChangeRequestRejected($lockedRequest, $stage, $notes));
+                });
             }
 
-            return $changeRequest->fresh(['items', 'attachments', 'approvals.actor', 'histories']);
+            return $lockedRequest->fresh(['items', 'attachments', 'approvals.actor', 'histories']);
         });
     }
 
@@ -736,28 +803,39 @@ class StaffChangeRequestService
      */
     private function storeAttachments(StaffChangeRequest $changeRequest, array $attachments, string $uploadedBy): void
     {
-        foreach ($attachments as $file) {
-            if (! $file instanceof UploadedFile) {
-                continue;
+        $storedPaths = [];
+
+        try {
+            foreach ($attachments as $file) {
+                if (! $file instanceof UploadedFile) {
+                    continue;
+                }
+
+                $attachmentId = (string) Str::uuid();
+                $ext = $file->getClientOriginalExtension() ?: 'bin';
+                $relativePath = "archives/staff_change_attachment/{$attachmentId}.{$ext}";
+                $contents = file_get_contents($file->getRealPath());
+
+                Storage::disk('local')->put($relativePath, $contents);
+                $storedPaths[] = $relativePath;
+
+                StaffChangeAttachment::create([
+                    'id' => $attachmentId,
+                    'request_id' => $changeRequest->id,
+                    'path' => $relativePath,
+                    'original_name' => $file->getClientOriginalName(),
+                    'mime' => $file->getClientMimeType(),
+                    'size' => $file->getSize(),
+                    'checksum' => hash('sha256', $contents ?: ''),
+                    'uploaded_by' => $uploadedBy,
+                ]);
+            }
+        } catch (\Throwable $e) {
+            foreach ($storedPaths as $path) {
+                Storage::disk('local')->delete($path);
             }
 
-            $attachmentId = (string) Str::uuid();
-            $ext = $file->getClientOriginalExtension() ?: 'bin';
-            $relativePath = "archives/staff_change_attachment/{$attachmentId}.{$ext}";
-            $contents = file_get_contents($file->getRealPath());
-
-            Storage::disk('local')->put($relativePath, $contents);
-
-            StaffChangeAttachment::create([
-                'id' => $attachmentId,
-                'request_id' => $changeRequest->id,
-                'path' => $relativePath,
-                'original_name' => $file->getClientOriginalName(),
-                'mime' => $file->getClientMimeType(),
-                'size' => $file->getSize(),
-                'checksum' => hash('sha256', $contents ?: ''),
-                'uploaded_by' => $uploadedBy,
-            ]);
+            throw $e;
         }
     }
 

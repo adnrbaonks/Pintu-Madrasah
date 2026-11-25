@@ -743,4 +743,66 @@ class StaffChangeRequestWorkflowTest extends TestCase
             throw $e;
         }
     }
+
+    public function test_gtk_decision_transitions_recheck_locked_state_and_prevent_conflicting_decisions_or_duplicate_notifications(): void
+    {
+        $staff = Staff::factory()->create(['phone' => '0811002200']);
+        $guru = User::factory()->create(['role' => 'guru', 'staff_id' => $staff->id]);
+        $kaurTuA = User::factory()->create(['role' => 'kaur_tu']);
+        $kaurTuB = User::factory()->create(['role' => 'kaur_tu']);
+        $kamadA = User::factory()->create(['role' => 'kepala_madrasah']);
+        $kamadB = User::factory()->create(['role' => 'kepala_madrasah']);
+
+        $service = app(StaffChangeRequestService::class);
+        $request = $service->createDraft($staff, $guru, ['phone' => '0811003300'], 'Uji konkurensi keputusan GTK');
+        $service->submit($request, $guru);
+
+        // Dua reviewer TU memegang snapshot model stale dengan status UNDER_TU_REVIEW yang sama
+        $staleSnapshotTuA = StaffChangeRequest::findOrFail($request->id);
+        $staleSnapshotTuB = StaffChangeRequest::findOrFail($request->id);
+        $staleSnapshotGuru = StaffChangeRequest::findOrFail($request->id);
+
+        // Reviewer TU A memverifikasi lebih dulu
+        $service->verifyByTu($staleSnapshotTuA, $kaurTuA, 'Disetujui TU A');
+
+        // Reviewer TU B mencoba menolak memakai snapshot lama -> harus gagal karena lockForUpdate membaca status terbaru
+        try {
+            $service->rejectByTu($staleSnapshotTuB, $kaurTuB, 'Ditolak TU B terlambat');
+            $this->fail('Keputusan TU kedua dari snapshot stale seharusnya ditolak.');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('status', $e->errors());
+        }
+
+        // Pemohon mencoba membatalkan memakai snapshot lama setelah masuk tahap Kamad -> harus ditolak
+        try {
+            $service->cancel($staleSnapshotGuru, $guru);
+            $this->fail('Pembatalan dari snapshot stale setelah masuk tahap Kamad seharusnya ditolak.');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('status', $e->errors());
+        }
+
+        // Dua approver Kamad memegang snapshot model stale dengan status PENDING_HEAD_APPROVAL
+        $staleSnapshotKamadA = StaffChangeRequest::findOrFail($request->id);
+        $staleSnapshotKamadB = StaffChangeRequest::findOrFail($request->id);
+
+        $notifBeforeKamad = $guru->notifications()->count();
+
+        $service->approveByHead($staleSnapshotKamadA, $kamadA, 'Disetujui Kamad A');
+
+        $notifAfterApprove = $guru->notifications()->count();
+        // approveByHead untuk field lokal otomatis memicu apply(), sehingga pemohon menerima ChangeRequestApproved + ChangeRequestApplied (2 notifikasi)
+        $this->assertSame($notifBeforeKamad + 2, $notifAfterApprove);
+
+        try {
+            $service->rejectByHead($staleSnapshotKamadB, $kamadB, 'Ditolak Kamad B terlambat');
+            $this->fail('Keputusan Kamad kedua dari snapshot stale seharusnya ditolak.');
+        } catch (ValidationException $e) {
+            $this->assertArrayHasKey('status', $e->errors());
+        }
+
+        $notifAfterStaleReject = $guru->notifications()->count();
+        // Upaya keputusan kedua yang ditolak tidak boleh mengirim notifikasi tambahan
+        $this->assertSame($notifAfterApprove, $notifAfterStaleReject);
+        $this->assertSame(StaffChangeRequest::STATUS_COMPLETED, $request->fresh()->status);
+    }
 }

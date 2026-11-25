@@ -137,7 +137,7 @@ class WebhookSubscriptionController extends Controller
         DispatchWebhookJob::dispatch($webhook->event, [
             'test' => true,
             'message' => 'Ping uji dari Pintu Madrasah. Jika satelit menerima ini, integrasi beres.',
-        ], $webhook->id)->onQueue('webhooks');
+        ], $webhook->id)->onQueue((string) config('services.webhooks.queue', 'webhooks'));
 
         return redirect()->back()->with('success', "Ping uji dikirim ke {$webhook->target_url}. Cek log pengiriman di bawah.");
     }
@@ -159,7 +159,7 @@ class WebhookSubscriptionController extends Controller
             onlySubscriptionId: $delivery->webhook_subscription_id,
             eventId: $delivery->event_id ?: (string) Str::uuid(),
             outboxEventId: $delivery->outbox_event_id,
-        )->onQueue('webhooks');
+        )->onQueue((string) config('services.webhooks.queue', 'webhooks'));
 
         return redirect()->back()->with('success', "Pengiriman ulang (attempt berikutnya) dijadwalkan untuk event {$delivery->event}.");
     }

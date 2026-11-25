@@ -60,6 +60,7 @@ class DispatchWebhookJob implements ShouldQueue
     {
         $publisher ??= app(WebhookPublisher::class);
         $urlGuard ??= app(WebhookUrlGuard::class);
+        $outbox = null;
 
         if ($this->outboxEventId) {
             if ($this->leaseToken === null) {
@@ -71,11 +72,17 @@ class DispatchWebhookJob implements ShouldQueue
                 $this->leaseToken = 'job:'.($this->job?->getJobId() ?? Str::random(8));
 
                 $owned = OutboxEvent::whereKey($this->outboxEventId)
-                    ->where('status', OutboxEvent::STATUS_PENDING)
+                    ->where(function ($query) {
+                        $query->where('status', OutboxEvent::STATUS_PENDING);
+
+                        if ($this->onlySubscriptionId !== null) {
+                            $query->orWhere('status', OutboxEvent::STATUS_FAILED);
+                        }
+                    })
                     ->when($this->onlySubscriptionId === null, function ($query) {
                         $query->where(function ($avail) {
                             $avail->whereNull('available_at')->orWhere('available_at', '<=', now());
-                        });
+                        })->whereRaw('attempts < COALESCE(max_attempts, 5)');
                     })
                     ->update([
                         'status' => OutboxEvent::STATUS_PROCESSING,
@@ -83,6 +90,14 @@ class DispatchWebhookJob implements ShouldQueue
                         'lease_until' => now()->addSeconds(300),
                         'leased_by' => $this->leaseToken,
                     ]);
+
+                if ($owned && $this->onlySubscriptionId !== null && $current && $current->status === OutboxEvent::STATUS_FAILED) {
+                    OutboxEvent::whereKey($this->outboxEventId)
+                        ->where('leased_by', $this->leaseToken)
+                        ->update([
+                            'max_attempts' => max($current->maxAttempts(), $current->attempts + 1),
+                        ]);
+                }
 
                 if (! $owned && $this->onlySubscriptionId === null) {
                     Log::notice('[OUTBOX] Direct webhook job skipped because event is already claimed or completed', [
@@ -116,6 +131,8 @@ class DispatchWebhookJob implements ShouldQueue
 
                 return;
             }
+
+            $outbox = OutboxEvent::find($this->outboxEventId);
         }
 
         $query = WebhookSubscription::where('is_active', true)
@@ -136,7 +153,7 @@ class DispatchWebhookJob implements ShouldQueue
         $failures = [];
 
         foreach ($subs as $sub) {
-            $error = $this->deliver($sub, $publisher, $urlGuard);
+            $error = $this->deliver($sub, $publisher, $urlGuard, $outbox);
             if ($error !== null) {
                 $failures[] = $error;
             }
@@ -170,8 +187,12 @@ class DispatchWebhookJob implements ShouldQueue
         }
     }
 
-    private function deliver(WebhookSubscription $sub, WebhookPublisher $publisher, WebhookUrlGuard $urlGuard): ?string
-    {
+    private function deliver(
+        WebhookSubscription $sub,
+        WebhookPublisher $publisher,
+        WebhookUrlGuard $urlGuard,
+        ?OutboxEvent $outbox = null,
+    ): ?string {
         $existing = WebhookDelivery::query()
             ->where('webhook_subscription_id', $sub->id)
             ->where('event_id', $this->eventId)
@@ -182,7 +203,10 @@ class DispatchWebhookJob implements ShouldQueue
             return null;
         }
 
-        $maxAttempts = max((int) ($sub->max_attempts ?: 5), 1);
+        $subMaxAttempts = max((int) ($sub->max_attempts ?: 5), 1);
+        $maxAttempts = $outbox
+            ? max($subMaxAttempts, $outbox->maxAttempts())
+            : $subMaxAttempts;
         $attempt = $existing ? ($existing->attempt + 1) : 1;
 
         if ($attempt > $maxAttempts) {
@@ -405,7 +429,8 @@ class DispatchWebhookJob implements ShouldQueue
         $allSsrfBlocked = collect($failures)->every(
             fn (string $failure): bool => str_starts_with($failure, 'SSRF Guard:')
         );
-        $isDeadLetter = $newAttempts >= $this->tries || $allSsrfBlocked;
+        $effectiveMaxAttempts = max($this->tries, $outbox->maxAttempts());
+        $isDeadLetter = $newAttempts >= $effectiveMaxAttempts || $allSsrfBlocked;
 
         $outbox->update([
             'status' => $isDeadLetter ? OutboxEvent::STATUS_FAILED : OutboxEvent::STATUS_PENDING,

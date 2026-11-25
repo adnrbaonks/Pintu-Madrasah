@@ -30,6 +30,7 @@ class OutboxEvent extends Model
         'lease_until',
         'leased_by',
         'attempts',
+        'max_attempts',
         'last_error',
     ];
 
@@ -43,7 +44,13 @@ class OutboxEvent extends Model
             'reserved_at' => 'datetime',
             'lease_until' => 'datetime',
             'attempts' => 'integer',
+            'max_attempts' => 'integer',
         ];
+    }
+
+    public function maxAttempts(): int
+    {
+        return max(1, (int) ($this->max_attempts ?: 5));
     }
 
     public function isLeaseExpired(): bool

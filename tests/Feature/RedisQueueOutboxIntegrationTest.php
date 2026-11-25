@@ -22,6 +22,8 @@ class RedisQueueOutboxIntegrationTest extends TestCase
 {
     use LazilyRefreshDatabase;
 
+    private string $testQueueName = 'webhooks';
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -31,20 +33,24 @@ class RedisQueueOutboxIntegrationTest extends TestCase
             $this->markTestSkipped('Redis server pada 127.0.0.1:6379 tidak terjangkau.');
         }
 
+        // Isolasi nama antrean per test run agar tidak mengganggu antrean bersama atau worker lain
+        $this->testQueueName = 'webhooks_test_'.Str::lower(Str::random(12));
+
         config([
             'queue.default' => 'redis',
             'queue.connections.redis.connection' => 'default',
-            'queue.connections.redis.queue' => 'default',
+            'queue.connections.redis.queue' => $this->testQueueName,
             'queue.connections.redis.retry_after' => 90,
+            'services.webhooks.queue' => $this->testQueueName,
         ]);
 
-        $this->flushWebhookRedisKeys();
+        $this->cleanIsolatedTestQueueKeys();
     }
 
     protected function tearDown(): void
     {
         if ($this->isRedisReachable()) {
-            $this->flushWebhookRedisKeys();
+            $this->cleanIsolatedTestQueueKeys();
         }
 
         parent::tearDown();
@@ -67,7 +73,7 @@ class RedisQueueOutboxIntegrationTest extends TestCase
             'is_active' => true,
         ]);
 
-        // 1. Buat siswa -> Observer mencatat outbox_event dan menaruh DispatchWebhookJob(leaseToken=null) di Redis queue `webhooks`
+        // 1. Buat siswa -> Observer mencatat outbox_event dan menaruh DispatchWebhookJob(leaseToken=null) di Redis queue terisolasi
         $student = Student::factory()->create([
             'name' => 'Siswa Redis Queue',
             'nisn' => '0088776655',
@@ -80,7 +86,7 @@ class RedisQueueOutboxIntegrationTest extends TestCase
 
         // Karena queue adalah Redis asynchronous nyata, event masih pending sebelum worker berjalan
         $this->assertSame(OutboxEvent::STATUS_PENDING, $outbox->status);
-        $this->assertSame(1, $queueConnection->size('webhooks'));
+        $this->assertSame(1, $queueConnection->size($this->testQueueName));
         Http::assertNothingSent();
 
         // 2. Simulasi race condition: webhooks:process-outbox berjalan sebelum job pertama dipop dari Redis
@@ -90,12 +96,12 @@ class RedisQueueOutboxIntegrationTest extends TestCase
         $outbox->refresh();
         $this->assertSame(OutboxEvent::STATUS_PROCESSING, $outbox->status);
         $this->assertNotNull($outbox->leased_by);
-        $this->assertSame(2, $queueConnection->size('webhooks'));
+        $this->assertSame(2, $queueConnection->size($this->testQueueName));
 
-        // 3. Worker memproses kedua job dari Redis queue `webhooks`
-        $this->workRedisQueue('webhooks', 2);
+        // 3. Worker memproses kedua job dari Redis queue
+        $this->workRedisQueue($this->testQueueName, 2);
 
-        $this->assertSame(0, $queueConnection->size('webhooks'));
+        $this->assertSame(0, $queueConnection->size($this->testQueueName));
 
         // Hanya 1 HTTP webhook yang terkirim (job tanpa lease dilewati karena event sudah diklaim, + deduplikasi event_id)
         Http::assertSentCount(1);
@@ -135,15 +141,16 @@ class RedisQueueOutboxIntegrationTest extends TestCase
             'status' => OutboxEvent::STATUS_PENDING,
             'available_at' => now()->subSecond(),
             'attempts' => 0,
+            'max_attempts' => 5,
         ]);
 
         // 1. Proses outbox -> klaim event dan dorong job ke Redis
         Artisan::call('webhooks:process-outbox', ['--limit' => 10]);
-        $this->assertSame(1, $queueConnection->size('webhooks'));
+        $this->assertSame(1, $queueConnection->size($this->testQueueName));
 
         // 2. Worker Redis mengeksekusi attempt 1 (HTTP 503 gagal)
-        $this->workRedisQueue('webhooks', 1);
-        $this->assertSame(0, $queueConnection->size('webhooks'));
+        $this->workRedisQueue($this->testQueueName, 1);
+        $this->assertSame(0, $queueConnection->size($this->testQueueName));
 
         $outbox->refresh();
         $this->assertSame(OutboxEvent::STATUS_PENDING, $outbox->status);
@@ -160,16 +167,16 @@ class RedisQueueOutboxIntegrationTest extends TestCase
 
         // 3. Selama available_at masih di masa depan (backoff belum lewat), process-outbox tidak menjadwalkan ulang
         Artisan::call('webhooks:process-outbox', ['--limit' => 10]);
-        $this->assertSame(0, $queueConnection->size('webhooks'));
+        $this->assertSame(0, $queueConnection->size($this->testQueueName));
 
         // 4. Majukan waktu melewati backoff (10 detik) -> process-outbox mengklaim kembali & worker mengirim attempt 2 (HTTP 200)
         $this->travel(15)->seconds();
 
         Artisan::call('webhooks:process-outbox', ['--limit' => 10]);
-        $this->assertSame(1, $queueConnection->size('webhooks'));
+        $this->assertSame(1, $queueConnection->size($this->testQueueName));
 
-        $this->workRedisQueue('webhooks', 1);
-        $this->assertSame(0, $queueConnection->size('webhooks'));
+        $this->workRedisQueue($this->testQueueName, 1);
+        $this->assertSame(0, $queueConnection->size($this->testQueueName));
 
         $outbox->refresh();
         $this->assertSame(OutboxEvent::STATUS_PUBLISHED, $outbox->status);
@@ -206,11 +213,12 @@ class RedisQueueOutboxIntegrationTest extends TestCase
             'status' => OutboxEvent::STATUS_PENDING,
             'available_at' => now()->subMinute(),
             'attempts' => 0,
+            'max_attempts' => 5,
         ]);
 
         // 1. Worker A mengklaim event dengan lease pendek dan menaruh job di Redis
         $service->processPending(limit: 10, leaseSeconds: 10, workerId: 'redis-worker-a');
-        $this->assertSame(1, $queueConnection->size('webhooks'));
+        $this->assertSame(1, $queueConnection->size($this->testQueueName));
         $this->assertSame('redis-worker-a', $outbox->fresh()->leased_by);
 
         // 2. Lease Worker A kedaluwarsa sebelum job Worker A dieksekusi; Worker B mengklaim event & menaruh job baru di Redis
@@ -220,6 +228,10 @@ class RedisQueueOutboxIntegrationTest extends TestCase
         $this->assertCount(1, $claimedByB);
         $this->assertSame('redis-worker-b', $outbox->fresh()->leased_by);
 
+        // Worker C mencoba mengklaim bersamaan saat lease Worker B masih aktif -> 0 event terambil
+        $claimedByC = $service->claimNextBatch(limit: 10, leaseSeconds: 300, workerId: 'redis-worker-c');
+        $this->assertCount(0, $claimedByC);
+
         DispatchWebhookJob::dispatch(
             event: $outbox->event_type,
             data: $outbox->payload ?? [],
@@ -227,13 +239,13 @@ class RedisQueueOutboxIntegrationTest extends TestCase
             eventId: $outbox->id,
             outboxEventId: $outbox->id,
             leaseToken: 'redis-worker-b',
-        )->onQueue('webhooks');
+        )->onQueue($this->testQueueName);
 
-        $this->assertSame(2, $queueConnection->size('webhooks'));
+        $this->assertSame(2, $queueConnection->size($this->testQueueName));
 
         // 3. Pop job pertama dari Redis (milik Worker A yang stale): harus di-drop tanpa menimpa klaim Worker B & tanpa HTTP
-        $this->workRedisQueue('webhooks', 1);
-        $this->assertSame(1, $queueConnection->size('webhooks'));
+        $this->workRedisQueue($this->testQueueName, 1);
+        $this->assertSame(1, $queueConnection->size($this->testQueueName));
         Http::assertNothingSent();
 
         $outbox->refresh();
@@ -241,14 +253,86 @@ class RedisQueueOutboxIntegrationTest extends TestCase
         $this->assertSame('redis-worker-b', $outbox->leased_by);
 
         // 4. Pop job kedua dari Redis (milik Worker B yang memegang lease aktif): berhasil mengirim HTTP & publish outbox
-        $this->workRedisQueue('webhooks', 1);
-        $this->assertSame(0, $queueConnection->size('webhooks'));
+        $this->workRedisQueue($this->testQueueName, 1);
+        $this->assertSame(0, $queueConnection->size($this->testQueueName));
         Http::assertSentCount(1);
 
         $outbox->refresh();
         $this->assertSame(OutboxEvent::STATUS_PUBLISHED, $outbox->status);
         $this->assertNull($outbox->leased_by);
         $this->assertNull($outbox->lease_until);
+    }
+
+    public function test_redis_queue_retry_failed_reprocesses_dead_letter_outbox_event_preserving_attempt_history(): void
+    {
+        Http::fake([
+            'https://satelit.example.com/dead-letter-recovery' => Http::response(['recovered' => true], 200),
+        ]);
+
+        $queueConnection = Queue::connection('redis');
+
+        $sub = WebhookSubscription::create([
+            'event' => 'staff.updated',
+            'target_url' => 'https://satelit.example.com/dead-letter-recovery',
+            'secret' => 'whsec_dead_letter_retry_secret',
+            'is_active' => true,
+            'max_attempts' => 5,
+        ]);
+
+        $outbox = OutboxEvent::create([
+            'aggregate_type' => Staff::class,
+            'aggregate_id' => (string) Str::uuid(),
+            'event_type' => 'staff.updated',
+            'payload' => ['name' => 'Guru Dead Letter Retry'],
+            'status' => OutboxEvent::STATUS_FAILED,
+            'available_at' => null,
+            'attempts' => 5,
+            'max_attempts' => 5,
+            'last_error' => 'HTTP 502 (dead-letter after 5 attempts)',
+        ]);
+
+        WebhookDelivery::create([
+            'webhook_subscription_id' => $sub->id,
+            'outbox_event_id' => $outbox->id,
+            'event_id' => $outbox->id,
+            'event' => 'staff.updated',
+            'payload' => ['data' => ['name' => 'Guru Dead Letter Retry']],
+            'status_code' => 502,
+            'delivered' => false,
+            'attempt' => 5,
+            'error' => 'HTTP 502',
+        ]);
+
+        // 1. Tanpa --retry-failed, event dead-letter (failed, attempts=5) tidak boleh diambil
+        Artisan::call('webhooks:process-outbox', ['--limit' => 10]);
+        $this->assertSame(0, $queueConnection->size($this->testQueueName));
+        $this->assertSame(OutboxEvent::STATUS_FAILED, $outbox->fresh()->status);
+
+        // 2. Dengan --retry-failed, event dead-letter diambil, max_attempts dinaikkan dari 5 menjadi 6,
+        // dan riwayat attempts sebelumnya (5) tidak di-reset secara liar
+        Artisan::call('webhooks:process-outbox', ['--limit' => 10, '--retry-failed' => true]);
+        $this->assertSame(1, $queueConnection->size($this->testQueueName));
+
+        $outbox->refresh();
+        $this->assertSame(OutboxEvent::STATUS_PROCESSING, $outbox->status);
+        $this->assertSame(5, $outbox->attempts);
+        $this->assertSame(6, $outbox->max_attempts);
+
+        // 3. Worker Redis memproses job retry ke-6 hingga published tanpa menduplikasi baris WebhookDelivery
+        $this->workRedisQueue($this->testQueueName, 1);
+        $this->assertSame(0, $queueConnection->size($this->testQueueName));
+
+        $outbox->refresh();
+        $this->assertSame(OutboxEvent::STATUS_PUBLISHED, $outbox->status);
+        $this->assertSame(6, $outbox->attempts);
+        $this->assertSame(6, $outbox->max_attempts);
+        $this->assertNull($outbox->last_error);
+
+        $deliveries = WebhookDelivery::where('event_id', $outbox->id)->get();
+        $this->assertCount(1, $deliveries);
+        $this->assertTrue($deliveries->first()->delivered);
+        $this->assertSame(6, $deliveries->first()->attempt);
+        Http::assertSentCount(1);
     }
 
     private function workRedisQueue(string $queue, int $jobs): void
@@ -274,10 +358,11 @@ class RedisQueueOutboxIntegrationTest extends TestCase
         }
     }
 
-    private function flushWebhookRedisKeys(): void
+    private function cleanIsolatedTestQueueKeys(): void
     {
         $conn = Redis::connection('default');
-        foreach (['queues:webhooks', 'queues:webhooks:notify', 'queues:webhooks:delayed', 'queues:webhooks:reserved', 'queues:default'] as $key) {
+        $q = $this->testQueueName;
+        foreach (["queues:{$q}", "queues:{$q}:notify", "queues:{$q}:delayed", "queues:{$q}:reserved"] as $key) {
             $conn->del($key);
         }
     }

@@ -41,6 +41,7 @@ return [
     ],
 
     'webhooks' => [
+        'queue' => env('WEBHOOK_QUEUE', 'webhooks'),
         'require_https' => env('WEBHOOK_REQUIRE_HTTPS', true),
         'allowed_hosts' => array_values(array_filter(array_map(
             'trim',

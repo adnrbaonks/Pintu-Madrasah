@@ -233,67 +233,78 @@ class ArchiveService
      */
     public function createArchive(array $data, UploadedFile $file, User $actor, ?Request $request = null): Archive
     {
-        return DB::transaction(function () use ($data, $file, $actor, $request): Archive {
-            /** @var ArchiveCategory $category */
-            $category = ArchiveCategory::findOrFail($data['archive_category_id']);
+        $storedPath = null;
 
-            $documentDate = ! empty($data['document_date'])
-                ? (string) $data['document_date']
-                : now()->toDateString();
+        try {
+            return DB::transaction(function () use ($data, $file, $actor, $request, &$storedPath): Archive {
+                /** @var ArchiveCategory $category */
+                $category = ArchiveCategory::findOrFail($data['archive_category_id']);
 
-            $retentionUntil = $data['retention_until'] ?? null;
-            if (! $retentionUntil && $category->retention_days) {
-                $retentionUntil = now()->parse($documentDate)->addDays($category->retention_days)->toDateString();
+                $documentDate = ! empty($data['document_date'])
+                    ? (string) $data['document_date']
+                    : now()->toDateString();
+
+                $retentionUntil = $data['retention_until'] ?? null;
+                if (! $retentionUntil && $category->retention_days) {
+                    $retentionUntil = now()->parse($documentDate)->addDays($category->retention_days)->toDateString();
+                }
+
+                $activeYearId = $data['academic_year_id']
+                    ?? AcademicYear::where('is_active', true)->value('id');
+
+                $archiveNumber = ! empty($data['archive_number'])
+                    ? (string) $data['archive_number']
+                    : $this->generateArchiveNumber($category);
+
+                $visibility = (string) ($data['visibility'] ?? $category->default_visibility ?? Archive::VISIBILITY_INTERNAL);
+
+                $archive = Archive::create([
+                    'archive_category_id' => $category->id,
+                    'organization_unit_id' => $data['organization_unit_id'] ?? null,
+                    'academic_year_id' => $activeYearId,
+                    'archive_number' => $archiveNumber,
+                    'title' => (string) $data['title'],
+                    'description' => $data['description'] ?? null,
+                    'classification_code' => $data['classification_code'] ?? $category->code,
+                    'visibility' => $visibility,
+                    'allowed_roles' => $data['allowed_roles'] ?? null,
+                    'owner_user_id' => $data['owner_user_id'] ?? $actor->id,
+                    'owner_staff_id' => $data['owner_staff_id'] ?? $actor->staff?->id,
+                    'current_version' => 1,
+                    'document_date' => $documentDate,
+                    'retention_until' => $retentionUntil,
+                    'status' => Archive::STATUS_ACTIVE,
+                    'tags' => $data['tags'] ?? [],
+                    'created_by' => $actor->id,
+                ]);
+
+                $version = $this->storeVersionFile(
+                    archive: $archive,
+                    versionNumber: 1,
+                    file: $file,
+                    actor: $actor,
+                    changeNotes: 'Unggahan dokumen awal (Versi 1)',
+                    storedPathRef: $storedPath,
+                );
+
+                $this->logAccess(
+                    archive: $archive,
+                    action: 'created',
+                    actor: $actor,
+                    version: $version,
+                    request: $request,
+                    metadata: ['version' => 1, 'file_name' => $version->original_name],
+                );
+
+                return $archive->load(['category', 'latestVersion', 'creator']);
+            });
+        } catch (\Throwable $e) {
+            if ($storedPath !== null) {
+                Storage::disk(self::DISK)->delete($storedPath);
             }
 
-            $activeYearId = $data['academic_year_id']
-                ?? AcademicYear::where('is_active', true)->value('id');
-
-            $archiveNumber = ! empty($data['archive_number'])
-                ? (string) $data['archive_number']
-                : $this->generateArchiveNumber($category);
-
-            $visibility = (string) ($data['visibility'] ?? $category->default_visibility ?? Archive::VISIBILITY_INTERNAL);
-
-            $archive = Archive::create([
-                'archive_category_id' => $category->id,
-                'organization_unit_id' => $data['organization_unit_id'] ?? null,
-                'academic_year_id' => $activeYearId,
-                'archive_number' => $archiveNumber,
-                'title' => (string) $data['title'],
-                'description' => $data['description'] ?? null,
-                'classification_code' => $data['classification_code'] ?? $category->code,
-                'visibility' => $visibility,
-                'allowed_roles' => $data['allowed_roles'] ?? null,
-                'owner_user_id' => $data['owner_user_id'] ?? $actor->id,
-                'owner_staff_id' => $data['owner_staff_id'] ?? $actor->staff?->id,
-                'current_version' => 1,
-                'document_date' => $documentDate,
-                'retention_until' => $retentionUntil,
-                'status' => Archive::STATUS_ACTIVE,
-                'tags' => $data['tags'] ?? [],
-                'created_by' => $actor->id,
-            ]);
-
-            $version = $this->storeVersionFile(
-                archive: $archive,
-                versionNumber: 1,
-                file: $file,
-                actor: $actor,
-                changeNotes: 'Unggahan dokumen awal (Versi 1)',
-            );
-
-            $this->logAccess(
-                archive: $archive,
-                action: 'created',
-                actor: $actor,
-                version: $version,
-                request: $request,
-                metadata: ['version' => 1, 'file_name' => $version->original_name],
-            );
-
-            return $archive->load(['category', 'latestVersion', 'creator']);
-        });
+            throw $e;
+        }
     }
 
     /**
@@ -306,36 +317,47 @@ class ArchiveService
         ?string $changeNotes = null,
         ?Request $request = null,
     ): ArchiveVersion {
-        return DB::transaction(function () use ($archive, $file, $actor, $changeNotes, $request): ArchiveVersion {
-            $locked = Archive::whereKey($archive->id)->lockForUpdate()->firstOrFail();
-            $nextVersion = ((int) $locked->current_version) + 1;
+        $storedPath = null;
 
-            $version = $this->storeVersionFile(
-                archive: $locked,
-                versionNumber: $nextVersion,
-                file: $file,
-                actor: $actor,
-                changeNotes: $changeNotes ?: "Pembaruan dokumen (Versi {$nextVersion})",
-            );
+        try {
+            return DB::transaction(function () use ($archive, $file, $actor, $changeNotes, $request, &$storedPath): ArchiveVersion {
+                $locked = Archive::whereKey($archive->id)->lockForUpdate()->firstOrFail();
+                $nextVersion = ((int) $locked->current_version) + 1;
 
-            $locked->update([
-                'current_version' => $nextVersion,
-            ]);
+                $version = $this->storeVersionFile(
+                    archive: $locked,
+                    versionNumber: $nextVersion,
+                    file: $file,
+                    actor: $actor,
+                    changeNotes: $changeNotes ?: "Pembaruan dokumen (Versi {$nextVersion})",
+                    storedPathRef: $storedPath,
+                );
 
-            $this->logAccess(
-                archive: $locked,
-                action: 'version_uploaded',
-                actor: $actor,
-                version: $version,
-                request: $request,
-                metadata: [
-                    'version' => $nextVersion,
-                    'change_notes' => $version->change_notes,
-                ],
-            );
+                $locked->update([
+                    'current_version' => $nextVersion,
+                ]);
 
-            return $version;
-        });
+                $this->logAccess(
+                    archive: $locked,
+                    action: 'version_uploaded',
+                    actor: $actor,
+                    version: $version,
+                    request: $request,
+                    metadata: [
+                        'version' => $nextVersion,
+                        'change_notes' => $version->change_notes,
+                    ],
+                );
+
+                return $version;
+            });
+        } catch (\Throwable $e) {
+            if ($storedPath !== null) {
+                Storage::disk(self::DISK)->delete($storedPath);
+            }
+
+            throw $e;
+        }
     }
 
     /**
@@ -399,11 +421,13 @@ class ArchiveService
         UploadedFile $file,
         User $actor,
         string $changeNotes,
+        ?string &$storedPathRef = null,
     ): ArchiveVersion {
         $ext = strtolower($file->getClientOriginalExtension() ?: 'bin');
         $safeFilename = "v{$versionNumber}_".Str::random(16).'.'.$ext;
         $directory = "digital-archives/{$archive->id}";
         $storedPath = $file->storeAs($directory, $safeFilename, self::DISK);
+        $storedPathRef = $storedPath;
 
         $realPath = Storage::disk(self::DISK)->path($storedPath);
         $checksum = is_file($realPath) ? hash_file('sha256', $realPath) : null;

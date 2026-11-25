@@ -95,6 +95,7 @@ class OutboxService
             'status' => OutboxEvent::STATUS_PENDING,
             'available_at' => now(),
             'attempts' => 0,
+            'max_attempts' => 5,
             'reserved_at' => null,
             'lease_until' => null,
             'leased_by' => null,
@@ -141,19 +142,20 @@ class OutboxService
                         $sub->where('status', OutboxEvent::STATUS_PENDING)
                             ->where(function ($avail) {
                                 $avail->whereNull('available_at')->orWhere('available_at', '<=', now());
-                            });
+                            })
+                            ->whereRaw('attempts < COALESCE(max_attempts, 5)');
                     })->orWhere(function ($sub) {
                         $sub->where('status', OutboxEvent::STATUS_PROCESSING)
                             ->where(function ($lease) {
                                 $lease->whereNotNull('lease_until')->where('lease_until', '<=', now());
-                            });
+                            })
+                            ->whereRaw('attempts < COALESCE(max_attempts, 5)');
                     });
 
                     if ($retryFailed) {
                         $q->orWhere('status', OutboxEvent::STATUS_FAILED);
                     }
                 })
-                ->where('attempts', '<', 5)
                 ->orderBy('created_at')
                 ->limit($limit);
 
@@ -163,15 +165,33 @@ class OutboxService
                 return new Collection;
             }
 
-            $ids = $events->pluck('id')->all();
+            $ids = [];
 
-            OutboxEvent::whereIn('id', $ids)->update([
-                'status' => OutboxEvent::STATUS_PROCESSING,
-                'reserved_at' => now(),
-                'lease_until' => $leaseUntil,
-                'leased_by' => $workerId,
-                'updated_at' => now(),
-            ]);
+            foreach ($events as $event) {
+                $wasDeadLetter = $event->status === OutboxEvent::STATUS_FAILED;
+                if (! $wasDeadLetter && $event->attempts >= $event->maxAttempts()) {
+                    continue;
+                }
+
+                $newMaxAttempts = $wasDeadLetter
+                    ? max($event->maxAttempts(), $event->attempts + 1)
+                    : $event->maxAttempts();
+
+                $event->update([
+                    'status' => OutboxEvent::STATUS_PROCESSING,
+                    'max_attempts' => $newMaxAttempts,
+                    'reserved_at' => now(),
+                    'lease_until' => $leaseUntil,
+                    'leased_by' => $workerId,
+                    'updated_at' => now(),
+                ]);
+
+                $ids[] = $event->id;
+            }
+
+            if ($ids === []) {
+                return new Collection;
+            }
 
             return OutboxEvent::whereIn('id', $ids)->get();
         });
@@ -192,7 +212,8 @@ class OutboxService
 
             foreach ($events as $event) {
                 $newAttempts = $event->attempts + 1;
-                $isDeadLetter = $newAttempts >= $maxAttempts;
+                $effectiveMaxAttempts = max($maxAttempts, $event->maxAttempts());
+                $isDeadLetter = $newAttempts >= $effectiveMaxAttempts;
                 $event->update([
                     'status' => $isDeadLetter ? OutboxEvent::STATUS_FAILED : OutboxEvent::STATUS_PENDING,
                     'attempts' => $newAttempts,
@@ -264,7 +285,7 @@ class OutboxService
                 eventId: $outbox->id,
                 outboxEventId: $outbox->id,
                 leaseToken: $outbox->leased_by,
-            )->onQueue('webhooks');
+            )->onQueue((string) config('services.webhooks.queue', 'webhooks'));
 
             $processed++;
         }

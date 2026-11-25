@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Archive;
+use App\Models\ArchiveAccessLog;
 use App\Models\ArchiveCategory;
 use App\Models\User;
 use App\Services\ArchiveService;
@@ -235,5 +236,60 @@ class DigitalArchiveTest extends TestCase
         // Jika permission manage_archives dicabut dari role staf, staf bukan pemilik tidak lagi dapat mengelola arsip
         Role::findByName('staf')->revokePermissionTo('manage_archives');
         $this->assertFalse(app(ArchiveService::class)->canManage($staf->fresh(), $archive));
+    }
+
+    public function test_archive_upload_cleans_up_stored_file_when_database_transaction_fails(): void
+    {
+        Storage::fake('local');
+
+        $admin = User::factory()->create(['role' => 'admin']);
+        $category = ArchiveCategory::create([
+            'code' => 'KP.99',
+            'name' => 'Kepegawaian Uji Transaksi',
+            'retention_years' => 5,
+            'default_visibility' => 'internal',
+            'is_active' => true,
+        ]);
+
+        $service = app(ArchiveService::class);
+        $archive = $service->createArchive(
+            [
+                'archive_category_id' => $category->id,
+                'title' => 'Arsip Versi 1 Valid',
+                'classification_code' => 'KP.99',
+                'visibility' => Archive::VISIBILITY_INTERNAL,
+            ],
+            UploadedFile::fake()->create('v1.pdf', 100, 'application/pdf'),
+            $admin
+        );
+
+        $v1Path = $archive->latestVersion->file_path;
+        Storage::disk('local')->assertExists($v1Path);
+        $filesBefore = Storage::disk('local')->allFiles('archives/digital');
+
+        // Paksa kegagalan di dalam transaksi saat membuat ArchiveAccessLog pada uploadNewVersion
+        ArchiveAccessLog::creating(function () {
+            throw new \RuntimeException('Simulated DB failure during version upload');
+        });
+
+        try {
+            $service->uploadNewVersion(
+                $archive->fresh(),
+                UploadedFile::fake()->create('v2-failed.pdf', 120, 'application/pdf'),
+                $admin,
+                'Versi 2 gagal DB'
+            );
+            $this->fail('Upload versi baru seharusnya melempar exception saat transaksi DB gagal.');
+        } catch (\RuntimeException $e) {
+            $this->assertSame('Simulated DB failure during version upload', $e->getMessage());
+        } finally {
+            ArchiveAccessLog::flushEventListeners();
+        }
+
+        // File versi 1 tetap aman, sedangkan file versi 2 yang batal harus sudah dibersihkan dari disk
+        Storage::disk('local')->assertExists($v1Path);
+        $filesAfter = Storage::disk('local')->allFiles('archives/digital');
+        $this->assertSame($filesBefore, $filesAfter);
+        $this->assertSame(1, $archive->fresh()->versions()->count());
     }
 }

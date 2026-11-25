@@ -36,7 +36,7 @@ class Webhook
             onlySubscriptionId: null,
             eventId: $eventId,
             outboxEventId: $outboxEventId,
-        )->onQueue('webhooks');
+        )->onQueue((string) config('services.webhooks.queue', 'webhooks'));
     }
 
     /**
