@@ -139,19 +139,47 @@ class ArchiveService
     }
 
     /**
-     * Periksa apakah pengguna berhak membuat/mengubah/mengunggah versi baru arsip.
+     * Periksa apakah pengguna adalah pemilik/pembuat sah dari arsip.
      */
-    public function canManage(User $user, ?Archive $archive = null): bool
+    public function isOwner(User $user, Archive $archive): bool
     {
-        if ($user->hasAnyRole(['admin', 'kepala_madrasah', 'kaur_tu', 'staf', 'operator'])) {
+        if ($archive->created_by === $user->id || $archive->owner_user_id === $user->id) {
             return true;
         }
 
-        if ($archive && ($archive->created_by === $user->id || $archive->owner_user_id === $user->id)) {
+        if ($archive->owner_staff_id && $user->staff && $user->staff->id === $archive->owner_staff_id) {
             return true;
         }
 
         return false;
+    }
+
+    /**
+     * Periksa apakah pengguna berhak membuat/mengubah/mengunggah versi baru arsip.
+     * Menggunakan granular permission `manage_archives` sebagai sumber otorisasi utama,
+     * dengan hak terbatas bagi pemilik dokumen terhadap arsip miliknya sendiri.
+     */
+    public function canManage(User $user, ?Archive $archive = null): bool
+    {
+        if ($user->can('manage_archives')) {
+            return true;
+        }
+
+        if ($archive !== null && $this->isOwner($user, $archive)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Periksa apakah pengguna berhak mengubah klasifikasi, kategori, visibilitas,
+     * retensi, atau status arsip. Hak pemilik dokumen TIDAK mengizinkan perubahan
+     * klasifikasi atau visibilitas tanpa permission `manage_archives`.
+     */
+    public function canChangeClassificationOrVisibility(User $user): bool
+    {
+        return $user->can('manage_archives');
     }
 
     /**

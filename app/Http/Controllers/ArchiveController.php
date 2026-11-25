@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Resources\ArchiveAccessLogResource;
 use App\Jobs\UploadToGoogleDriveJob;
 use App\Models\AcademicYear;
 use App\Models\Archive;
@@ -24,7 +25,7 @@ use Symfony\Component\HttpFoundation\BinaryFileResponse;
 class ArchiveController extends Controller
 {
     /**
-     * Permission granular per jenis dokumen privat.
+     * Permission granular untuk melihat dokumen privat.
      *
      * @var array<string, string>
      */
@@ -34,6 +35,20 @@ class ArchiveController extends Controller
         'ppdb' => 'view_ppdb_documents',
         'mutation' => 'view_mutation_documents',
         'staff_document' => 'view_staff',
+    ];
+
+    /**
+     * Permission granular untuk operasi mutasi / retry upload dokumen.
+     * Memisahkan hak baca (view_*) dari hak pengelolaan/mutasi.
+     *
+     * @var array<string, string>
+     */
+    private const DOCUMENT_RETRY_PERMISSIONS = [
+        'student_document' => 'edit_students',
+        'photo' => 'edit_students',
+        'ppdb' => 'manage_ppdb',
+        'mutation' => 'manage_mutations',
+        'staff_document' => 'edit_staff',
     ];
 
     public function __construct(
@@ -158,6 +173,8 @@ class ArchiveController extends Controller
             abort(403, 'Anda tidak memiliki hak akses untuk melihat arsip ini.');
         }
 
+        $canViewAuditLogs = $user->can('view_audit_logs');
+
         $archive->load([
             'category',
             'organizationUnit:id,code,name',
@@ -165,7 +182,6 @@ class ArchiveController extends Controller
             'creator:id,name',
             'ownerUser:id,name',
             'versions.uploader:id,name',
-            'accessLogs' => fn ($q) => $q->with('user:id,name,role')->limit(50),
         ]);
 
         $this->archiveService->logAccess(
@@ -176,15 +192,25 @@ class ArchiveController extends Controller
             request: $request,
         );
 
+        if ($canViewAuditLogs) {
+            $archive->load(['accessLogs' => fn ($q) => $q->with('user:id,name,role')->limit(50)]);
+        }
+
         $signedUrls = [];
         foreach ($archive->versions as $ver) {
             $signedUrls[$ver->version_number] = $this->archiveService->temporaryDownloadUrl($archive, $ver);
         }
 
+        $archivePayload = $archive->toArray();
+        $archivePayload['access_logs'] = $canViewAuditLogs
+            ? ArchiveAccessLogResource::collection($archive->accessLogs)->resolve($request)
+            : [];
+
         return Inertia::render('Archives/Show', [
-            'archive' => $archive,
+            'archive' => $archivePayload,
             'signedUrls' => $signedUrls,
             'canManage' => $this->archiveService->canManage($user, $archive),
+            'canViewAuditLogs' => $canViewAuditLogs,
             'categories' => ArchiveCategory::where('is_active', true)->orderBy('name')->get(['id', 'code', 'name']),
             'units' => OrganizationUnit::where('is_active', true)->orderBy('name')->get(['id', 'code', 'name']),
         ]);
@@ -213,6 +239,29 @@ class ArchiveController extends Controller
             'retention_until' => 'nullable|date',
             'status' => 'required|in:active,expired,disposed',
         ]);
+
+        if (! $this->archiveService->canChangeClassificationOrVisibility($user)) {
+            $existingRoles = is_array($archive->allowed_roles) ? $archive->allowed_roles : [];
+            $incomingRoles = array_key_exists('allowed_roles', $validated) && is_array($validated['allowed_roles'])
+                ? $validated['allowed_roles']
+                : $existingRoles;
+
+            $existingRetention = $archive->retention_until?->toDateString();
+            $incomingRetention = ! empty($validated['retention_until'])
+                ? (string) $validated['retention_until']
+                : null;
+
+            $attemptingRestrictedChange = $validated['archive_category_id'] !== $archive->archive_category_id
+                || ($validated['classification_code'] ?? $archive->classification_code) !== $archive->classification_code
+                || $validated['visibility'] !== $archive->visibility
+                || $incomingRoles !== $existingRoles
+                || $incomingRetention !== $existingRetention
+                || $validated['status'] !== $archive->status;
+
+            if ($attemptingRestrictedChange) {
+                abort(403, 'Pemilik dokumen tanpa izin pengelolaan arsip tidak dapat mengubah klasifikasi, kategori, visibilitas, atau status retensi arsip.');
+            }
+        }
 
         $archive->update($validated);
 
@@ -362,16 +411,21 @@ class ArchiveController extends Controller
 
     /**
      * Retry uploading a document to Google Drive.
+     * Memerlukan permission pengelolaan/mutasi (`manage_archives` atau permission write modul terkait),
+     * bukan sekadar permission baca (`view_*`).
      */
     public function retry(Request $request, $type, $id)
     {
         $user = $request->user();
-        $permission = self::DOCUMENT_VIEW_PERMISSIONS[$type] ?? null;
+        $writePermission = self::DOCUMENT_RETRY_PERMISSIONS[$type] ?? null;
+        $canRetry = $user !== null
+            && $writePermission !== null
+            && ($user->can($writePermission) || $user->can('manage_archives'));
 
         abort_unless(
-            $user !== null && $permission !== null && $user->can($permission),
+            $canRetry,
             403,
-            'Anda tidak memiliki hak akses untuk memproses ulang dokumen ini.'
+            'Anda tidak memiliki hak akses pengelolaan untuk memproses ulang dokumen ini.'
         );
 
         if ($type === 'ppdb') {

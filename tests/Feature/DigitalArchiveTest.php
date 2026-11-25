@@ -9,6 +9,8 @@ use App\Services\ArchiveService;
 use Illuminate\Foundation\Testing\LazilyRefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use Inertia\Testing\AssertableInertia;
+use Spatie\Permission\Models\Role;
 use Tests\TestCase;
 
 class DigitalArchiveTest extends TestCase
@@ -143,5 +145,95 @@ class DigitalArchiveTest extends TestCase
         // Role manajerial yang TIDAK ada di allowed_roles wajib ditolak (403)
         $this->actingAs($kaurTu)->get("/arsip-digital/{$archive->id}")->assertForbidden();
         $this->actingAs($kamad)->get("/arsip-digital/{$archive->id}")->assertForbidden();
+    }
+
+    public function test_archive_detail_hides_access_logs_from_users_without_view_audit_logs_permission(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $kamad = User::factory()->create(['role' => 'kepala_madrasah']);
+        $guru = User::factory()->create(['role' => 'guru']);
+
+        app(ArchiveService::class)->ensureDefaultCategories();
+        $category = ArchiveCategory::where('code', 'TATA-USAHA')->firstOrFail();
+
+        $archive = Archive::create([
+            'archive_category_id' => $category->id,
+            'archive_number' => 'ARS/TU/2026/888',
+            'title' => 'Pengumuman Internal',
+            'visibility' => Archive::VISIBILITY_INTERNAL,
+            'created_by' => $admin->id,
+        ]);
+
+        // Guru melihat arsip -> mencatat access log tetapi payload access_logs harus kosong
+        $this->actingAs($guru)
+            ->get("/arsip-digital/{$archive->id}")
+            ->assertOk()
+            ->assertInertia(fn (AssertableInertia $page) => $page
+                ->component('Archives/Show', false)
+                ->where('canViewAuditLogs', false)
+                ->where('archive.access_logs', [])
+            );
+
+        // Kepala Madrasah memiliki view_audit_logs -> melihat riwayat akses terstruktur
+        $this->actingAs($kamad)
+            ->get("/arsip-digital/{$archive->id}")
+            ->assertOk()
+            ->assertInertia(fn (AssertableInertia $page) => $page
+                ->component('Archives/Show', false)
+                ->where('canViewAuditLogs', true)
+                ->has('archive.access_logs', 2)
+                ->has('archive.access_logs.0.ip_address')
+            );
+    }
+
+    public function test_archive_owner_without_manage_archives_can_edit_content_but_cannot_escalate_visibility_or_classification(): void
+    {
+        $guru = User::factory()->create(['role' => 'guru']);
+        $staf = User::factory()->create(['role' => 'staf']);
+
+        app(ArchiveService::class)->ensureDefaultCategories();
+        $categoryA = ArchiveCategory::where('code', 'TATA-USAHA')->firstOrFail();
+        $categoryB = ArchiveCategory::where('code', 'KURIKULUM')->firstOrFail();
+
+        $archive = Archive::create([
+            'archive_category_id' => $categoryA->id,
+            'archive_number' => 'ARS/TU/2026/777',
+            'title' => 'Arsip Pribadi Guru',
+            'description' => 'Catatan awal',
+            'classification_code' => 'KP.01',
+            'visibility' => Archive::VISIBILITY_PRIVATE,
+            'status' => Archive::STATUS_ACTIVE,
+            'created_by' => $guru->id,
+            'owner_user_id' => $guru->id,
+        ]);
+
+        // Pemilik tanpa manage_archives boleh mengubah judul/deskripsi arsipnya sendiri
+        $this->actingAs($guru)->put("/arsip-digital/{$archive->id}", [
+            'archive_category_id' => $categoryA->id,
+            'title' => 'Arsip Pribadi Guru (Revisi)',
+            'description' => 'Catatan diperbarui',
+            'classification_code' => 'KP.01',
+            'visibility' => Archive::VISIBILITY_PRIVATE,
+            'status' => Archive::STATUS_ACTIVE,
+        ])->assertRedirect();
+
+        $this->assertSame('Arsip Pribadi Guru (Revisi)', $archive->fresh()->title);
+
+        // Pemilik tanpa manage_archives TIDAK boleh menaikkan visibilitas menjadi internal atau mengubah klasifikasi
+        $this->actingAs($guru)->put("/arsip-digital/{$archive->id}", [
+            'archive_category_id' => $categoryB->id,
+            'title' => 'Arsip Pribadi Guru (Internal)',
+            'description' => 'Upaya eskalasi',
+            'classification_code' => 'OT.00',
+            'visibility' => Archive::VISIBILITY_INTERNAL,
+            'status' => Archive::STATUS_ACTIVE,
+        ])->assertForbidden();
+
+        $this->assertSame(Archive::VISIBILITY_PRIVATE, $archive->fresh()->visibility);
+        $this->assertSame('KP.01', $archive->fresh()->classification_code);
+
+        // Jika permission manage_archives dicabut dari role staf, staf bukan pemilik tidak lagi dapat mengelola arsip
+        Role::findByName('staf')->revokePermissionTo('manage_archives');
+        $this->assertFalse(app(ArchiveService::class)->canManage($staf->fresh(), $archive));
     }
 }

@@ -146,19 +146,40 @@ class DocumentAccessAuthorizationTest extends TestCase
             ->assertForbidden();
     }
 
-    public function test_document_retry_is_gated_by_document_specific_permission(): void
+    public function test_document_retry_is_gated_by_write_management_permission_not_read_permission(): void
     {
+        $operator = User::factory()->create(['role' => 'operator']);
+        $kamad = User::factory()->create(['role' => 'kepala_madrasah']);
         $staf = User::factory()->create(['role' => 'staf']);
 
-        // Staf berwenang lolos gerbang otorisasi, lalu model tidak ditemukan.
-        $this->actingAs($staf)
+        // Kepala Madrasah memiliki view_student_documents & view_ppdb_documents (baca),
+        // tetapi tanpa manage_archives tidak boleh memicu retry proses dokumen jika hanya punya hak baca.
+        Role::findByName('kepala_madrasah')->revokePermissionTo('manage_archives');
+        $this->assertTrue($kamad->fresh()->can('view_student_documents'));
+        $this->assertTrue($kamad->fresh()->can('view_ppdb_documents'));
+        $this->actingAs($kamad->fresh())
+            ->post('/documents/student_document/'.$this->uuid().'/retry')
+            ->assertForbidden();
+        $this->actingAs($kamad->fresh())
+            ->post('/documents/ppdb/'.$this->uuid().'/retry')
+            ->assertForbidden();
+
+        // Operator memiliki manage_ppdb & edit_students -> lolos gerbang otorisasi (404 karena ID fiktif).
+        $this->actingAs($operator)
             ->post('/documents/ppdb/'.$this->uuid().'/retry')
             ->assertNotFound();
+        $this->actingAs($operator)
+            ->post('/documents/student_document/'.$this->uuid().'/retry')
+            ->assertNotFound();
 
-        Role::findByName('staf')->revokePermissionTo('view_ppdb_documents');
+        // Jika permission tulis dicabut (dan manage_archives juga dicabut), retry ditolak meski hak baca masih aktif.
+        $stafRole = Role::findByName('staf');
+        $stafRole->revokePermissionTo('edit_students');
+        $stafRole->revokePermissionTo('manage_archives');
+        $this->assertTrue($staf->fresh()->can('view_student_documents'));
 
         $this->actingAs($staf->fresh())
-            ->post('/documents/ppdb/'.$this->uuid().'/retry')
+            ->post('/documents/student_document/'.$this->uuid().'/retry')
             ->assertForbidden();
     }
 
