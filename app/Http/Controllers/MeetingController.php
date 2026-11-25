@@ -7,6 +7,7 @@ use App\Models\CalendarEvent;
 use App\Models\Meeting;
 use App\Models\MeetingAction;
 use App\Models\MeetingMinute;
+use App\Models\MeetingMinuteRevision;
 use App\Models\MeetingParticipant;
 use App\Models\OrganizationUnit;
 use App\Models\User;
@@ -176,6 +177,7 @@ class MeetingController extends Controller
             'participants.user:id,name,role',
             'minutes.recorder:id,name',
             'minutes.approver:id,name',
+            'minutes.revisions.reviser:id,name',
             'minutes.archive:id,archive_number,title,visibility,allowed_roles,created_by,owner_user_id,owner_staff_id',
             'actions.assignee:id,name',
         ]);
@@ -226,6 +228,8 @@ class MeetingController extends Controller
 
     /**
      * Simpan notulen & keputusan rapat (dapat ditautkan langsung ke Arsip Digital).
+     * Notulen yang telah disahkan (approved_at !== null) terkunci dari timpa langsung
+     * dan wajib melalui mekanisme revisi eksplisit yang mencatat versi sebelumnya.
      */
     public function saveMinutes(Request $request, Meeting $meeting): RedirectResponse
     {
@@ -239,6 +243,7 @@ class MeetingController extends Controller
             'discussion_summary' => 'required|string|max:10000',
             'decisions' => 'required|string|max:5000',
             'archive_id' => 'nullable|uuid|exists:archives,id',
+            'revision_notes' => 'nullable|string|max:1000',
         ]);
 
         if (! empty($validated['archive_id'])) {
@@ -246,6 +251,18 @@ class MeetingController extends Controller
             if (! $this->archiveService->canView($user, $archive)) {
                 abort(403, 'Anda tidak memiliki hak akses untuk menautkan arsip ini pada notulen rapat.');
             }
+        }
+
+        $existingMinute = $meeting->minutes()->first();
+        if ($existingMinute !== null && $existingMinute->approved_at !== null) {
+            $revisionNotes = trim((string) ($validated['revision_notes'] ?? ''));
+            if ($revisionNotes === '') {
+                return redirect()->back()->withErrors([
+                    'minutes' => 'Notulen rapat telah disahkan dan terkunci. Gunakan mekanisme revisi dengan mengisi alasan/catatan revisi (revision_notes).',
+                ]);
+            }
+
+            return $this->applyMinuteRevision($meeting, $existingMinute, $user, $validated, $revisionNotes);
         }
 
         MeetingMinute::updateOrCreate(
@@ -259,6 +276,80 @@ class MeetingController extends Controller
         );
 
         return redirect()->back()->with('success', 'Notulen rapat berhasil disimpan.');
+    }
+
+    /**
+     * Revisi eksplisit notulen rapat yang telah disahkan: menyimpan snapshot versi sebelumnya,
+     * alasan perubahan, serta mereset status pengesahan agar disahkan ulang.
+     */
+    public function reviseMinutes(Request $request, Meeting $meeting): RedirectResponse
+    {
+        $user = $request->user();
+        $isManager = $user && $user->can('manage_meetings');
+        if (! $isManager && $meeting->notetaker_user_id !== $user->id) {
+            abort(403, 'Hanya notulis atau pengelola rapat yang dapat merevisi notulen.');
+        }
+
+        $validated = $request->validate([
+            'discussion_summary' => 'required|string|max:10000',
+            'decisions' => 'required|string|max:5000',
+            'archive_id' => 'nullable|uuid|exists:archives,id',
+            'revision_notes' => 'required|string|min:5|max:1000',
+        ]);
+
+        if (! empty($validated['archive_id'])) {
+            $archive = Archive::findOrFail($validated['archive_id']);
+            if (! $this->archiveService->canView($user, $archive)) {
+                abort(403, 'Anda tidak memiliki hak akses untuk menautkan arsip ini pada notulen rapat.');
+            }
+        }
+
+        $minute = $meeting->minutes()->firstOrFail();
+
+        return $this->applyMinuteRevision($meeting, $minute, $user, $validated, trim($validated['revision_notes']));
+    }
+
+    /**
+     * @param  array<string, mixed>  $validated
+     */
+    private function applyMinuteRevision(
+        Meeting $meeting,
+        MeetingMinute $minute,
+        User $user,
+        array $validated,
+        string $revisionNotes
+    ): RedirectResponse {
+        DB::transaction(function () use ($meeting, $minute, $user, $validated, $revisionNotes): void {
+            $lockedMinute = MeetingMinute::query()->lockForUpdate()->findOrFail($minute->id);
+            $nextVersion = ((int) $lockedMinute->revisions()->max('version_number')) + 1;
+
+            MeetingMinuteRevision::create([
+                'meeting_minute_id' => $lockedMinute->id,
+                'version_number' => $nextVersion,
+                'previous_discussion_summary' => $lockedMinute->discussion_summary,
+                'previous_decisions' => $lockedMinute->decisions,
+                'previous_archive_id' => $lockedMinute->archive_id,
+                'previous_approved_by' => $lockedMinute->approved_by,
+                'previous_approved_at' => $lockedMinute->approved_at,
+                'revision_notes' => $revisionNotes,
+                'revised_by' => $user->id,
+            ]);
+
+            $lockedMinute->update([
+                'discussion_summary' => $validated['discussion_summary'],
+                'decisions' => $validated['decisions'],
+                'archive_id' => $validated['archive_id'] ?? null,
+                'recorded_by' => $user->id,
+                'approved_by' => null,
+                'approved_at' => null,
+            ]);
+
+            if ($meeting->status === Meeting::STATUS_COMPLETED) {
+                $meeting->update(['status' => Meeting::STATUS_ONGOING]);
+            }
+        });
+
+        return redirect()->back()->with('success', 'Revisi notulen rapat disimpan. Pengesahan sebelumnya diarsipkan dan memerlukan pengesahan ulang.');
     }
 
     /**

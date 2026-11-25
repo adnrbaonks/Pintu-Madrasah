@@ -360,6 +360,8 @@ class PkkmController extends Controller
 
     /**
      * Finalisasi instrumen PKKM oleh Kepala Madrasah / Admin.
+     * Menolak finalisasi apabila instrumen belum memiliki komponen, komponen belum memiliki
+     * asesmen dengan skor terverifikasi (verified_score), atau belum memiliki bukti terverifikasi.
      */
     public function finalize(Request $request, PkkmInstrument $instrument): RedirectResponse
     {
@@ -367,6 +369,59 @@ class PkkmController extends Controller
         $canFinalize = $user && $user->can('finalize_pkkm');
         if (! $canFinalize) {
             abort(403, 'Hanya Kepala Madrasah atau Admin yang dapat memfinalisasi instrumen PKKM.');
+        }
+
+        if ($instrument->status === PkkmInstrument::STATUS_FINALIZED) {
+            return redirect()->back()->withErrors(['instrument' => 'Instrumen PKKM sudah difinalisasi dan terkunci.']);
+        }
+
+        $components = $instrument->components()->with(['assessment', 'evidence'])->get();
+        if ($components->isEmpty()) {
+            return redirect()->back()->withErrors([
+                'instrument' => 'Instrumen PKKM tidak dapat difinalisasi karena belum memiliki komponen penilaian.',
+            ]);
+        }
+
+        $missingAssessmentCodes = [];
+        $missingVerifiedScoreCodes = [];
+        $missingVerifiedEvidenceCodes = [];
+        $pendingEvidenceCodes = [];
+
+        foreach ($components as $component) {
+            $assessment = $component->assessment;
+            if ($assessment === null) {
+                $missingAssessmentCodes[] = $component->code;
+            } elseif ($assessment->verified_score === null) {
+                $missingVerifiedScoreCodes[] = $component->code;
+            }
+
+            if ($component->evidence->where('verification_status', 'pending')->isNotEmpty()) {
+                $pendingEvidenceCodes[] = $component->code;
+            }
+
+            if ($component->evidence->where('verification_status', 'verified')->isEmpty()) {
+                $missingVerifiedEvidenceCodes[] = $component->code;
+            }
+        }
+
+        $completenessErrors = [];
+        if ($missingAssessmentCodes !== []) {
+            $completenessErrors[] = 'Komponen belum dinilai: '.implode(', ', $missingAssessmentCodes).'.';
+        }
+        if ($missingVerifiedScoreCodes !== []) {
+            $completenessErrors[] = 'Komponen belum memiliki skor verifikasi asesor (verified_score): '.implode(', ', $missingVerifiedScoreCodes).'.';
+        }
+        if ($pendingEvidenceCodes !== []) {
+            $completenessErrors[] = 'Komponen masih memiliki bukti berstatus pending: '.implode(', ', $pendingEvidenceCodes).'.';
+        }
+        if ($missingVerifiedEvidenceCodes !== []) {
+            $completenessErrors[] = 'Komponen belum memiliki bukti fisik terverifikasi: '.implode(', ', $missingVerifiedEvidenceCodes).'.';
+        }
+
+        if ($completenessErrors !== []) {
+            return redirect()->back()->withErrors([
+                'instrument' => 'Instrumen PKKM belum memenuhi syarat kelengkapan finalisasi: '.implode(' ', $completenessErrors),
+            ]);
         }
 
         $instrument->recalculateScore();

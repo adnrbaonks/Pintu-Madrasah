@@ -227,6 +227,7 @@ Route::middleware('auth')->group(function () {
         Route::get('/{meeting}', [MeetingController::class, 'show'])->name('show');
         Route::post('/{meeting}/attendance', [MeetingController::class, 'markAttendance'])->name('attendance');
         Route::post('/{meeting}/minutes', [MeetingController::class, 'saveMinutes'])->name('minutes.save');
+        Route::post('/{meeting}/minutes/revise', [MeetingController::class, 'reviseMinutes'])->name('minutes.revise');
         Route::post('/{meeting}/minutes/approve', [MeetingController::class, 'approveMinutes'])->name('minutes.approve');
         Route::post('/{meeting}/actions', [MeetingController::class, 'storeAction'])->name('actions.store');
         Route::post('/actions/{action}', [MeetingController::class, 'updateAction'])->name('actions.update');

@@ -326,4 +326,86 @@ class MeetingAndAgendaTest extends TestCase
             ])
             ->assertForbidden();
     }
+
+    public function test_approved_meeting_minutes_are_locked_from_direct_overwrite_and_require_explicit_revision_audit(): void
+    {
+        $notetaker = User::factory()->create(['role' => 'kaur_tu']);
+        $kamad = User::factory()->create(['role' => 'kepala_madrasah']);
+
+        $meeting = Meeting::create([
+            'meeting_number' => 'RPT/LOCK/2026/001',
+            'title' => 'Rapat Uji Kunci Notulen',
+            'meeting_type' => 'dinas',
+            'scheduled_at' => now()->addDay(),
+            'leader_user_id' => $kamad->id,
+            'notetaker_user_id' => $notetaker->id,
+            'status' => Meeting::STATUS_SCHEDULED,
+        ]);
+
+        // 1. Notulis menyimpan notulen awal
+        $this->actingAs($notetaker)
+            ->post("/rapat-dinas/{$meeting->id}/minutes", [
+                'discussion_summary' => 'Ringkasan versi 1 sebelum pengesahan.',
+                'decisions' => 'Keputusan versi 1 sebelum pengesahan.',
+            ])
+            ->assertRedirect()
+            ->assertSessionHasNoErrors();
+
+        // 2. Kepala Madrasah mengesahkan notulen
+        $this->actingAs($kamad)
+            ->post("/rapat-dinas/{$meeting->id}/minutes/approve")
+            ->assertRedirect();
+
+        $minute = $meeting->minutes()->firstOrFail();
+        $this->assertNotNull($minute->approved_at);
+        $this->assertSame($kamad->id, $minute->approved_by);
+        $this->assertSame(Meeting::STATUS_COMPLETED, $meeting->fresh()->status);
+
+        // 3. Upaya menimpa langsung notulen yang telah disahkan tanpa revision_notes ditolak
+        $this->actingAs($notetaker)
+            ->post("/rapat-dinas/{$meeting->id}/minutes", [
+                'discussion_summary' => 'Upaya menimpa diam-diam.',
+                'decisions' => 'Keputusan diubah diam-diam.',
+            ])
+            ->assertSessionHasErrors('minutes');
+
+        $minute->refresh();
+        $this->assertSame('Ringkasan versi 1 sebelum pengesahan.', $minute->discussion_summary);
+        $this->assertSame('Keputusan versi 1 sebelum pengesahan.', $minute->decisions);
+        $this->assertNotNull($minute->approved_at);
+
+        // 4. Revisi eksplisit mencatat snapshot versi sebelumnya, alasan perubahan, dan mereset status pengesahan
+        $this->actingAs($notetaker)
+            ->post("/rapat-dinas/{$meeting->id}/minutes/revise", [
+                'discussion_summary' => 'Ringkasan versi 2 pasca revisi.',
+                'decisions' => 'Keputusan versi 2 pasca revisi.',
+                'revision_notes' => 'Koreksi redaksi keputusan anggaran sesuai lampiran RKAM.',
+            ])
+            ->assertRedirect()
+            ->assertSessionHasNoErrors();
+
+        $minute->refresh();
+        $this->assertSame('Ringkasan versi 2 pasca revisi.', $minute->discussion_summary);
+        $this->assertSame('Keputusan versi 2 pasca revisi.', $minute->decisions);
+        $this->assertNull($minute->approved_at);
+        $this->assertNull($minute->approved_by);
+        $this->assertSame(Meeting::STATUS_ONGOING, $meeting->fresh()->status);
+
+        $revision = $minute->revisions()->firstOrFail();
+        $this->assertSame(1, $revision->version_number);
+        $this->assertSame('Ringkasan versi 1 sebelum pengesahan.', $revision->previous_discussion_summary);
+        $this->assertSame('Keputusan versi 1 sebelum pengesahan.', $revision->previous_decisions);
+        $this->assertSame($kamad->id, $revision->previous_approved_by);
+        $this->assertNotNull($revision->previous_approved_at);
+        $this->assertSame($notetaker->id, $revision->revised_by);
+        $this->assertSame('Koreksi redaksi keputusan anggaran sesuai lampiran RKAM.', $revision->revision_notes);
+
+        // 5. Kepala Madrasah dapat mengesahkan ulang notulen hasil revisi
+        $this->actingAs($kamad)
+            ->post("/rapat-dinas/{$meeting->id}/minutes/approve")
+            ->assertRedirect();
+
+        $this->assertNotNull($minute->fresh()->approved_at);
+        $this->assertSame(Meeting::STATUS_COMPLETED, $meeting->fresh()->status);
+    }
 }

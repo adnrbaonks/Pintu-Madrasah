@@ -143,6 +143,24 @@ class PkkmManagementTest extends TestCase
         // 5. Guru biasa tidak dapat memfinalisasi instrumen PKKM (403)
         $this->actingAs($guru)->post("/pkkm/{$instrument->id}/finalize")->assertForbidden();
 
+        // Lengkapi penilaian dan bukti terverifikasi pada 5 komponen baseline lainnya sebelum finalisasi
+        foreach ($instrument->components()->where('id', '!=', $newComponent->id)->get() as $baselineComponent) {
+            $this->actingAs($kamad)->post("/pkkm/components/{$baselineComponent->id}/assess", [
+                'self_score' => 88,
+                'verified_score' => 90,
+            ])->assertRedirect();
+
+            $this->actingAs($kaurTu)->post("/pkkm/components/{$baselineComponent->id}/evidence", [
+                'title' => "Bukti {$baselineComponent->code}",
+                'archive_id' => $archive->id,
+            ])->assertRedirect();
+
+            $baselineEvidence = $baselineComponent->fresh()->evidence()->firstOrFail();
+            $this->actingAs($kamad)->post("/pkkm/evidence/{$baselineEvidence->id}/review", [
+                'verification_status' => 'verified',
+            ])->assertRedirect();
+        }
+
         // 6. Kepala Madrasah memfinalisasi instrumen PKKM
         $this->actingAs($kamad)->post("/pkkm/{$instrument->id}/finalize")->assertRedirect();
 
@@ -354,5 +372,87 @@ class PkkmManagementTest extends TestCase
                 ->component('Pkkm/Index', false)
                 ->has('instruments', 2)
             );
+    }
+
+    public function test_pkkm_finalization_requires_all_components_to_have_verified_scores_and_verified_evidence(): void
+    {
+        $kaurTu = User::factory()->create(['role' => 'kaur_tu']);
+        $kamad = User::factory()->create(['role' => 'kepala_madrasah']);
+
+        $instrument = PkkmInstrument::create([
+            'code' => 'PKKM/2026/COMPLETENESS',
+            'title' => 'PKKM Uji Kelengkapan Finalisasi',
+            'period_year' => '2026',
+            'assessment_type' => 'annual',
+            'headmaster_user_id' => $kamad->id,
+            'status' => PkkmInstrument::STATUS_IN_PROGRESS,
+            'overall_score' => 0,
+            'created_by' => $kaurTu->id,
+        ]);
+
+        // 1. Gagal finalisasi jika belum memiliki komponen
+        $this->actingAs($kamad)
+            ->post("/pkkm/{$instrument->id}/finalize")
+            ->assertSessionHasErrors('instrument');
+        $this->assertNotSame(PkkmInstrument::STATUS_FINALIZED, $instrument->fresh()->status);
+
+        $component = PkkmComponent::create([
+            'pkkm_instrument_id' => $instrument->id,
+            'category_code' => 'A',
+            'category_name' => 'Usaha Madrasah',
+            'code' => 'A1',
+            'title' => 'Komponen Wajib A1',
+            'weight' => 1,
+            'max_score' => 100,
+            'sort_order' => 1,
+            'pic_user_id' => $kaurTu->id,
+        ]);
+
+        // 2. Gagal finalisasi jika komponen belum memiliki asesmen
+        $this->actingAs($kamad)
+            ->post("/pkkm/{$instrument->id}/finalize")
+            ->assertSessionHasErrors('instrument');
+
+        // 3. Gagal finalisasi jika baru ada self_score tanpa verified_score
+        $this->actingAs($kaurTu)->post("/pkkm/components/{$component->id}/assess", [
+            'self_score' => 85,
+        ])->assertRedirect();
+
+        $this->actingAs($kamad)
+            ->post("/pkkm/{$instrument->id}/finalize")
+            ->assertSessionHasErrors('instrument');
+
+        // 4. Isi verified_score, tetapi belum ada bukti terverifikasi -> tetap ditolak
+        $this->actingAs($kamad)->post("/pkkm/components/{$component->id}/assess", [
+            'self_score' => 85,
+            'verified_score' => 92,
+        ])->assertRedirect();
+
+        $this->actingAs($kamad)
+            ->post("/pkkm/{$instrument->id}/finalize")
+            ->assertSessionHasErrors('instrument');
+
+        // 5. Unggah bukti (masih pending) -> tetap ditolak sampai diverifikasi
+        $this->actingAs($kaurTu)->post("/pkkm/components/{$component->id}/evidence", [
+            'title' => 'Bukti RKJM',
+            'external_url' => 'https://madrasah.example.org/rkjm.pdf',
+        ])->assertRedirect();
+
+        $this->actingAs($kamad)
+            ->post("/pkkm/{$instrument->id}/finalize")
+            ->assertSessionHasErrors('instrument');
+
+        // 6. Verifikasi bukti -> finalisasi berhasil
+        $evidence = $component->fresh()->evidence()->firstOrFail();
+        $this->actingAs($kamad)->post("/pkkm/evidence/{$evidence->id}/review", [
+            'verification_status' => 'verified',
+        ])->assertRedirect();
+
+        $this->actingAs($kamad)
+            ->post("/pkkm/{$instrument->id}/finalize")
+            ->assertSessionHasNoErrors()
+            ->assertRedirect();
+
+        $this->assertSame(PkkmInstrument::STATUS_FINALIZED, $instrument->fresh()->status);
     }
 }

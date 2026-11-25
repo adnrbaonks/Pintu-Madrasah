@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class MeetingMinute extends Model
 {
@@ -46,5 +47,10 @@ class MeetingMinute extends Model
     public function approver(): BelongsTo
     {
         return $this->belongsTo(User::class, 'approved_by');
+    }
+
+    public function revisions(): HasMany
+    {
+        return $this->hasMany(MeetingMinuteRevision::class, 'meeting_minute_id')->orderByDesc('version_number');
     }
 }
