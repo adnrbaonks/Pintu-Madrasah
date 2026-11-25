@@ -10,6 +10,7 @@ use App\Models\MeetingMinute;
 use App\Models\MeetingParticipant;
 use App\Models\OrganizationUnit;
 use App\Models\User;
+use App\Services\ArchiveService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -19,6 +20,10 @@ use Inertia\Response;
 
 class MeetingController extends Controller
 {
+    public function __construct(
+        private ArchiveService $archiveService,
+    ) {}
+
     public function index(Request $request): Response
     {
         $user = $request->user();
@@ -171,14 +176,18 @@ class MeetingController extends Controller
             'participants.user:id,name,role',
             'minutes.recorder:id,name',
             'minutes.approver:id,name',
-            'minutes.archive:id,archive_number,title',
+            'minutes.archive:id,archive_number,title,visibility,allowed_roles,created_by,owner_user_id,owner_staff_id',
             'actions.assignee:id,name',
         ]);
+
+        if ($user && $meeting->relationLoaded('minutes')) {
+            $this->archiveService->hideUnviewableRelation($user, $meeting->minutes);
+        }
 
         return Inertia::render('Meetings/Show', [
             'meeting' => $meeting,
             'users' => User::where('is_active', true)->orderBy('name')->get(['id', 'name', 'role']),
-            'archives' => Archive::orderByDesc('created_at')->limit(50)->get(['id', 'archive_number', 'title']),
+            'archives' => $this->archiveService->recentViewable($user, 50),
         ]);
     }
 
@@ -231,6 +240,13 @@ class MeetingController extends Controller
             'decisions' => 'required|string|max:5000',
             'archive_id' => 'nullable|uuid|exists:archives,id',
         ]);
+
+        if (! empty($validated['archive_id'])) {
+            $archive = Archive::findOrFail($validated['archive_id']);
+            if (! $this->archiveService->canView($user, $archive)) {
+                abort(403, 'Anda tidak memiliki hak akses untuk menautkan arsip ini pada notulen rapat.');
+            }
+        }
 
         MeetingMinute::updateOrCreate(
             ['meeting_id' => $meeting->id],

@@ -162,10 +162,7 @@ class ProgramController extends Controller
         return Inertia::render('Programs/Show', [
             'program' => $this->filterProgramArchives($program, $user),
             'users' => User::where('is_active', true)->orderBy('name')->get(['id', 'name', 'role']),
-            'archives' => $this->archiveService->filterViewable(
-                $user,
-                Archive::orderByDesc('created_at')->limit(50)->get(['id', 'archive_number', 'title', 'visibility', 'allowed_roles', 'created_by', 'owner_user_id', 'owner_staff_id'])
-            ),
+            'archives' => $this->archiveService->recentViewable($user, 50),
         ]);
     }
 

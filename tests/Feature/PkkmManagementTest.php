@@ -290,4 +290,69 @@ class PkkmManagementTest extends TestCase
             'archive_id' => $private->id,
         ])->assertForbidden();
     }
+
+    public function test_pkkm_index_enforces_permission_or_assignment_scoping(): void
+    {
+        $kamad = User::factory()->create(['role' => 'kepala_madrasah']);
+        $kaurTu = User::factory()->create(['role' => 'kaur_tu']);
+        $picGuru = User::factory()->create(['role' => 'guru']);
+        $otherGuru = User::factory()->create(['role' => 'guru']);
+
+        $assignedInstrument = PkkmInstrument::create([
+            'code' => 'PKKM/2026/ASSIGNED',
+            'title' => 'PKKM Ditugaskan ke PIC Guru',
+            'period_year' => '2026',
+            'assessment_type' => 'annual',
+            'headmaster_user_id' => $kamad->id,
+            'status' => PkkmInstrument::STATUS_IN_PROGRESS,
+            'overall_score' => 0,
+            'created_by' => $kamad->id,
+        ]);
+
+        PkkmComponent::create([
+            'pkkm_instrument_id' => $assignedInstrument->id,
+            'category_code' => 'A',
+            'category_name' => 'A',
+            'code' => 'A1',
+            'title' => 'Komponen PIC',
+            'weight' => 1,
+            'max_score' => 100,
+            'sort_order' => 1,
+            'pic_user_id' => $picGuru->id,
+        ]);
+
+        $unassignedInstrument = PkkmInstrument::create([
+            'code' => 'PKKM/2026/OTHER',
+            'title' => 'PKKM Tanpa PIC Guru',
+            'period_year' => '2026',
+            'assessment_type' => 'annual',
+            'headmaster_user_id' => $kamad->id,
+            'status' => PkkmInstrument::STATUS_DRAFT,
+            'overall_score' => 0,
+            'created_by' => $kamad->id,
+        ]);
+
+        // Guru tanpa permission dan tanpa penugasan ditolak (403) pada index maupun show
+        $this->actingAs($otherGuru)->get('/pkkm')->assertForbidden();
+        $this->actingAs($otherGuru)->get("/pkkm/{$assignedInstrument->id}")->assertForbidden();
+
+        // Guru yang menjadi PIC komponen boleh membuka index tetapi hanya melihat instrumen miliknya
+        $this->actingAs($picGuru)
+            ->get('/pkkm')
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Pkkm/Index', false)
+                ->has('instruments', 1)
+                ->where('instruments.0.id', $assignedInstrument->id)
+            );
+
+        // Kaur TU dengan permission view_pkkm melihat seluruh instrumen
+        $this->actingAs($kaurTu)
+            ->get('/pkkm')
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->component('Pkkm/Index', false)
+                ->has('instruments', 2)
+            );
+    }
 }

@@ -117,6 +117,50 @@ class ArchiveService
     }
 
     /**
+     * Ambil daftar metadata arsip terbaru yang boleh dilihat oleh pengguna.
+     *
+     * @return Collection<int, Archive>
+     */
+    public function recentViewable(?User $user, int $limit = 50): Collection
+    {
+        if (! $user) {
+            return collect();
+        }
+
+        $columns = [
+            'id',
+            'archive_number',
+            'title',
+            'visibility',
+            'allowed_roles',
+            'created_by',
+            'owner_user_id',
+            'owner_staff_id',
+        ];
+
+        $query = Archive::query()->orderByDesc('created_at');
+
+        if ($user->hasRole('admin')) {
+            return $query->limit($limit)->get($columns);
+        }
+
+        $staffId = $user->staff_id ?? $user->staff?->id;
+
+        $query->where(function ($q) use ($user, $staffId): void {
+            $q->where('created_by', $user->id)
+                ->orWhere('owner_user_id', $user->id)
+                ->orWhere('visibility', Archive::VISIBILITY_INTERNAL)
+                ->orWhere('visibility', Archive::VISIBILITY_ROLE_RESTRICTED);
+
+            if ($staffId) {
+                $q->orWhere('owner_staff_id', $staffId);
+            }
+        });
+
+        return $this->filterViewable($user, $query->get($columns))->take($limit)->values();
+    }
+
+    /**
      * Hapus relasi arsip pada model turunan bila pengguna tidak berhak melihatnya.
      */
     public function hideUnviewableRelation(User $user, mixed $model, string $relation = 'archive'): void

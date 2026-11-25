@@ -23,9 +23,18 @@ class PkkmController extends Controller
         private ArchiveService $archiveService,
     ) {}
 
-    public function index(): Response
+    public function index(Request $request): Response
     {
-        $instruments = PkkmInstrument::query()
+        $user = $request->user();
+        $canViewAll = $user && (
+            $user->can('view_pkkm')
+            || $user->can('manage_pkkm')
+            || $user->can('assess_pkkm')
+            || $user->can('review_pkkm')
+            || $user->can('finalize_pkkm')
+        );
+
+        $query = PkkmInstrument::query()
             ->with([
                 'academicYear:id,year,semester',
                 'headmaster:id,name',
@@ -33,8 +42,23 @@ class PkkmController extends Controller
             ])
             ->withCount(['components', 'assessments'])
             ->orderByDesc('period_year')
-            ->orderByDesc('created_at')
-            ->get();
+            ->orderByDesc('created_at');
+
+        if (! $canViewAll && $user) {
+            $hasInvolvement = PkkmInstrument::query()
+                ->where('headmaster_user_id', $user->id)
+                ->orWhereHas('components', fn ($q) => $q->where('pic_user_id', $user->id))
+                ->exists();
+
+            abort_unless($hasInvolvement, 403, 'Anda tidak memiliki hak akses untuk melihat daftar instrumen PKKM.');
+
+            $query->where(function ($q) use ($user): void {
+                $q->where('headmaster_user_id', $user->id)
+                    ->orWhereHas('components', fn ($c) => $c->where('pic_user_id', $user->id));
+            });
+        }
+
+        $instruments = $query->get();
 
         return Inertia::render('Pkkm/Index', [
             'instruments' => $instruments,
@@ -113,17 +137,14 @@ class PkkmController extends Controller
             'finalizer:id,name',
             'components.pic:id,name,role',
             'components.assessment.assessor:id,name',
-            'components.evidence.archive:id,archive_number,title',
+            'components.evidence.archive:id,archive_number,title,visibility,allowed_roles,created_by,owner_user_id,owner_staff_id',
             'components.evidence.uploader:id,name',
         ]);
 
         return Inertia::render('Pkkm/Show', [
             'instrument' => $this->filterInstrumentArchives($instrument, $user),
             'users' => User::where('is_active', true)->orderBy('name')->get(['id', 'name', 'role']),
-            'archives' => $this->archiveService->filterViewable(
-                $user,
-                Archive::orderByDesc('created_at')->limit(50)->get(['id', 'archive_number', 'title', 'visibility', 'allowed_roles', 'created_by', 'owner_user_id', 'owner_staff_id'])
-            ),
+            'archives' => $this->archiveService->recentViewable($user, 50),
         ]);
     }
 
@@ -361,7 +382,13 @@ class PkkmController extends Controller
     private function authorizeInstrumentAccess(Request $request, PkkmInstrument $instrument): void
     {
         $user = $request->user();
-        $isManager = $user && $user->can('view_pkkm');
+        $isManager = $user && (
+            $user->can('view_pkkm')
+            || $user->can('manage_pkkm')
+            || $user->can('assess_pkkm')
+            || $user->can('review_pkkm')
+            || $user->can('finalize_pkkm')
+        );
         $isHeadmaster = $instrument->headmaster_user_id === $user?->id;
         $isPic = $instrument->components()->where('pic_user_id', $user?->id)->exists();
 

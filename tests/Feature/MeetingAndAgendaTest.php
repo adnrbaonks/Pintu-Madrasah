@@ -4,11 +4,15 @@ namespace Tests\Feature;
 
 use App\Models\AcademicYear;
 use App\Models\Announcement;
+use App\Models\Archive;
+use App\Models\ArchiveCategory;
 use App\Models\CalendarEvent;
 use App\Models\Meeting;
 use App\Models\MeetingAction;
+use App\Models\MeetingMinute;
 use App\Models\MeetingParticipant;
 use App\Models\User;
+use App\Services\ArchiveService;
 use Illuminate\Foundation\Testing\LazilyRefreshDatabase;
 use Inertia\Testing\AssertableInertia;
 use Tests\TestCase;
@@ -250,5 +254,76 @@ class MeetingAndAgendaTest extends TestCase
         // 5. Guru luar rapat ditolak (403) ketika mengakses detail rapat secara langsung (show)
         $this->actingAs($guruLuar)->get("/rapat-dinas/{$meeting->id}")->assertForbidden();
         $this->actingAs($guruPeserta)->get("/rapat-dinas/{$meeting->id}")->assertOk();
+    }
+
+    public function test_meeting_show_filters_private_archive_metadata_and_blocks_linking_unviewable_archives(): void
+    {
+        $owner = User::factory()->create(['role' => 'guru']);
+        $notetaker = User::factory()->create(['role' => 'guru']);
+        $kamad = User::factory()->create(['role' => 'kepala_madrasah']);
+
+        app(ArchiveService::class)->ensureDefaultCategories();
+        $category = ArchiveCategory::firstOrFail();
+
+        $internalArchive = Archive::create([
+            'archive_category_id' => $category->id,
+            'archive_number' => 'ARS/MTG/INTERNAL',
+            'title' => 'Arsip Internal Rapat',
+            'visibility' => Archive::VISIBILITY_INTERNAL,
+            'created_by' => $owner->id,
+            'created_at' => now()->subHour(),
+        ]);
+
+        // Buat > 50 arsip privat terbaru milik owner lain untuk memastikan recentViewable tidak kehabisan kuota
+        for ($i = 1; $i <= 55; $i++) {
+            $privateArchive = Archive::create([
+                'archive_category_id' => $category->id,
+                'archive_number' => sprintf('ARS/MTG/PRIV/%03d', $i),
+                'title' => "Arsip Privat {$i}",
+                'visibility' => Archive::VISIBILITY_PRIVATE,
+                'created_by' => $owner->id,
+                'owner_user_id' => $owner->id,
+            ]);
+        }
+
+        $meeting = Meeting::create([
+            'meeting_number' => 'RPT/SEC/2026/002',
+            'title' => 'Rapat Uji Filter Arsip',
+            'meeting_type' => 'koordinasi',
+            'scheduled_at' => now()->addDay(),
+            'leader_user_id' => $kamad->id,
+            'notetaker_user_id' => $notetaker->id,
+            'status' => Meeting::STATUS_SCHEDULED,
+        ]);
+
+        // Notulen sudah tertaut ke arsip privat milik owner lain
+        MeetingMinute::create([
+            'meeting_id' => $meeting->id,
+            'discussion_summary' => 'Ringkasan awal',
+            'decisions' => 'Keputusan awal',
+            'archive_id' => $privateArchive->id,
+            'recorded_by' => $owner->id,
+        ]);
+
+        // Notetaker tidak boleh melihat arsip privat di dropdown archives maupun relasi minutes.archive,
+        // tetapi arsip internal yang lebih lama tetap muncul walaupun ada 55 arsip privat yang lebih baru.
+        $this->actingAs($notetaker)
+            ->get("/rapat-dinas/{$meeting->id}")
+            ->assertOk()
+            ->assertInertia(fn (AssertableInertia $page) => $page
+                ->component('Meetings/Show', false)
+                ->where('meeting.minutes.archive', null)
+                ->where('archives', fn ($items) => collect($items)->pluck('id')->contains($internalArchive->id)
+                    && ! collect($items)->pluck('id')->contains($privateArchive->id))
+            );
+
+        // Notetaker ditolak (403) jika mencoba menautkan arsip privat milik orang lain pada notulen
+        $this->actingAs($notetaker)
+            ->post("/rapat-dinas/{$meeting->id}/minutes", [
+                'discussion_summary' => 'Ringkasan diperbarui',
+                'decisions' => 'Keputusan diperbarui',
+                'archive_id' => $privateArchive->id,
+            ])
+            ->assertForbidden();
     }
 }

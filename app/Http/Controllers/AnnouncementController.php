@@ -72,10 +72,7 @@ class AnnouncementController extends Controller
             'announcements' => $announcements,
             'canManage' => $canManage,
             'archives' => $user
-                ? $this->archiveService->filterViewable(
-                    $user,
-                    Archive::orderByDesc('created_at')->limit(50)->get(['id', 'archive_number', 'title', 'visibility', 'allowed_roles', 'created_by', 'owner_user_id', 'owner_staff_id'])
-                )
+                ? $this->archiveService->recentViewable($user, 50)
                 : [],
         ]);
     }
