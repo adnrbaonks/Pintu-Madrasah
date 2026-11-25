@@ -229,6 +229,7 @@ class ApiStandardAndSecurityTest extends TestCase
             'email' => 'private.staff@example.test',
         ]);
         $student = Student::factory()->create([
+            'nisn' => '0011223344',
             'nik' => '9876543210123456',
             'kk_number' => '1111222233334444',
             'address' => 'Alamat privat',
@@ -238,6 +239,10 @@ class ApiStandardAndSecurityTest extends TestCase
         $readOnlyKey = app(ApiKeyService::class)->createClient([
             'name' => 'Non-PII consumer',
             'scopes' => ['students:read', 'staff:read'],
+        ])['plain_key'];
+        $identifierKey = app(ApiKeyService::class)->createClient([
+            'name' => 'Student Identifier consumer',
+            'scopes' => ['students:read', 'students:identifiers'],
         ])['plain_key'];
         $piiKey = app(ApiKeyService::class)->createClient([
             'name' => 'PII consumer',
@@ -258,13 +263,33 @@ class ApiStandardAndSecurityTest extends TestCase
             ->assertJsonMissing(['phone' => $staff->phone])
             ->assertJsonMissing(['email' => $staff->email]);
 
+        // students:read saja tidak boleh mengekspos NISN ataupun lookup by NISN
         $this->withHeader('X-API-KEY', $readOnlyKey)
-            ->getJson('/api/v1/students?fields=id,nik,kk_number,address,father_name')
+            ->getJson('/api/v1/students')
             ->assertOk()
+            ->assertJsonMissing(['nisn' => $student->nisn]);
+
+        $this->withHeader('X-API-KEY', $readOnlyKey)
+            ->getJson('/api/v1/students?fields=id,nisn,nik,kk_number,address,father_name')
+            ->assertOk()
+            ->assertJsonMissing(['nisn' => $student->nisn])
             ->assertJsonMissing(['nik' => $student->nik])
             ->assertJsonMissing(['kk_number' => $student->kk_number])
             ->assertJsonMissing(['address' => 'Alamat privat'])
             ->assertJsonMissing(['father_name' => 'Nama Ayah Privat']);
+
+        $this->withHeader('X-API-KEY', $readOnlyKey)
+            ->getJson("/api/v1/students/{$student->nisn}")
+            ->assertStatus(403)
+            ->assertJsonPath('error.code', 'FORBIDDEN_SCOPE');
+
+        // students:identifiers mengekspos NISN dan mengizinkan lookup by NISN, tetapi tetap menahan NIK/KK/alamat
+        $this->withHeader('X-API-KEY', $identifierKey)
+            ->getJson("/api/v1/students/{$student->nisn}?fields=id,nisn,nik,address")
+            ->assertOk()
+            ->assertJsonPath('data.nisn', $student->nisn)
+            ->assertJsonMissing(['nik' => $student->nik])
+            ->assertJsonMissing(['address' => 'Alamat privat']);
 
         $this->withHeader('X-API-KEY', $piiKey)
             ->getJson('/api/v1/staff?fields=id,nik,phone,email')

@@ -94,17 +94,28 @@ class StudentApiController extends Controller
 
     #[OA\Get(
         path: '/api/v1/students/{nisn}',
-        summary: 'Detail Biodata Siswa berdasarkan NISN',
+        summary: 'Detail Biodata Siswa berdasarkan NISN (memerlukan scope students:identifiers atau students:pii)',
         parameters: [
             new OA\Parameter(name: 'nisn', in: 'path', required: true, schema: new OA\Schema(type: 'string')),
         ],
         responses: [
             new OA\Response(response: 200, description: 'Successful operation'),
+            new OA\Response(response: 403, description: 'Forbidden scope'),
             new OA\Response(response: 404, description: 'Student not found'),
         ]
     )]
     public function show(Request $request, string $nisn): JsonResponse
     {
+        $scopes = (array) $request->attributes->get('api_scopes', []);
+        if (! in_array('students:identifiers', $scopes, true) && ! in_array('students:pii', $scopes, true)) {
+            return response()->json([
+                'success' => false,
+                'message' => "Scope 'students:identifiers' atau 'students:pii' wajib dimiliki untuk pencarian berdasarkan NISN.",
+                'error' => ['code' => 'FORBIDDEN_SCOPE'],
+                'request_id' => $request->attributes->get('request_id'),
+            ], 403);
+        }
+
         $student = Student::where('nisn', $nisn)
             ->with($this->resolveShowIncludes($request))
             ->firstOrFail();

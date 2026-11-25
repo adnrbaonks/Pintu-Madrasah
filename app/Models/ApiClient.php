@@ -13,9 +13,10 @@ class ApiClient extends Model
     public $incrementing = false;
 
     public const SCOPES = [
-        'students:read' => 'Baca data siswa',
-        'students:pii' => 'Baca data sensitif (PII) siswa',
-        'staff:read' => 'Baca data guru & staf',
+        'students:read' => 'Baca data dasar siswa (tanpa identitas nasional/PII)',
+        'students:identifiers' => 'Baca kode identitas nasional siswa (NISN)',
+        'students:pii' => 'Baca data sensitif (PII) siswa (termasuk NISN, NIK, KK, alamat, dokumen)',
+        'staff:read' => 'Baca data dasar guru & staf',
         'staff:pii' => 'Baca data sensitif (PII) guru & staf',
         'classes:read' => 'Baca data rombel & kelas',
         'academic-years:read' => 'Baca tahun ajaran aktif',

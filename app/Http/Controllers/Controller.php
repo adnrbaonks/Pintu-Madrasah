@@ -19,7 +19,7 @@ use OpenApi\Attributes as OA;
     type: 'apiKey',
     in: 'header',
     name: 'X-API-KEY',
-    description: 'Kunci API per-klien berformat pm_live_<prefix8>_<secret40>. Scope: students:read, students:pii, staff:read, staff:pii, classes:read, academic-years:read.'
+    description: 'Kunci API per-klien berformat pm_live_<prefix8>_<secret40>. Scope: students:read, students:identifiers, students:pii, staff:read, staff:pii, classes:read, academic-years:read.'
 )]
 #[OA\SecurityScheme(
     securityScheme: 'IntegrationTokenAuth',

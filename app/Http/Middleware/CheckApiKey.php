@@ -2,7 +2,6 @@
 
 namespace App\Http\Middleware;
 
-use App\Models\Setting;
 use App\Services\ApiKeyService;
 use Closure;
 use Illuminate\Http\Request;
@@ -65,18 +64,9 @@ class CheckApiKey
             return $next($request);
         }
 
-        // ── Fallback: kunci tunggal legacy (Setting / env) dibatasi scope non-PII dasar ──
-        $legacy = Setting::get('api_key', env('API_GATEWAY_KEY', ''));
-        if ($legacy && hash_equals((string) $legacy, (string) $provided)) {
-            $request->attributes->set('api_client', null);
-            $request->attributes->set('api_scopes', ['students:read', 'staff:read', 'classes:read', 'academic-years:read']);
-
-            return $next($request);
-        }
-
         return response()->json([
             'success' => false,
-            'message' => 'API Key tidak valid.',
+            'message' => 'API Key tidak valid. Gunakan API Key per-klien yang terdaftar pada manajemen API Client.',
             'error' => ['code' => 'INVALID_API_KEY'],
             'request_id' => $requestId,
         ], 401);

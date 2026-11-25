@@ -11,14 +11,10 @@ use Illuminate\Http\Resources\Json\JsonResource;
 class StudentResource extends JsonResource
 {
     /**
-     * Atribut default non-PII yang aman dikembalikan tanpa scope students:pii.
-     * NISN diklasifikasikan sebagai kode referensi akademik operasional untuk integrasi
-     * aplikasi satelit (SIPSMAD/RDM/E-Learning), sedangkan NIK/No. KK/alamat/data keluarga
-     * diklasifikasikan sebagai PII yang wajib memerlukan scope students:pii.
+     * Atribut default non-PII yang aman dikembalikan dengan scope students:read.
      */
     public const NON_PII_FIELDS = [
         'id',
-        'nisn',
         'nis_local',
         'name',
         'gender',
@@ -28,6 +24,13 @@ class StudentResource extends JsonResource
         'updated_at',
         'current_cohort',
         'cohorts',
+    ];
+
+    /**
+     * Atribut identitas nasional siswa yang memerlukan scope students:identifiers atau students:pii.
+     */
+    public const IDENTIFIER_FIELDS = [
+        'nisn',
     ];
 
     /**
@@ -51,6 +54,7 @@ class StudentResource extends JsonResource
 
     public const ALLOWED_FIELDS = [
         ...self::NON_PII_FIELDS,
+        ...self::IDENTIFIER_FIELDS,
         ...self::PII_FIELDS,
     ];
 
@@ -63,9 +67,10 @@ class StudentResource extends JsonResource
         $student = $this->resource;
         $attributes = $student->attributesToArray();
 
-        // 1. Periksa izin scope PII pada API client
+        // 1. Periksa izin scope identitas nasional & PII pada API client
         $scopes = (array) $request->attributes->get('api_scopes', []);
         $hasPiiScope = in_array('students:pii', $scopes, true);
+        $hasIdentifierScope = $hasPiiScope || in_array('students:identifiers', $scopes, true);
 
         // 2. Transformasi relasi bertingkat melalui Resource eksplisit (mencegah kebocoran nested raw model)
         if ($student->relationLoaded('currentCohort')) {
@@ -92,9 +97,13 @@ class StudentResource extends JsonResource
         }
 
         // 3. Tentukan field yang diizinkan untuk pemanggil ini (deny by default)
+        $defaultFields = $hasIdentifierScope
+            ? [...self::NON_PII_FIELDS, ...self::IDENTIFIER_FIELDS]
+            : self::NON_PII_FIELDS;
+
         $allowedFields = $hasPiiScope
             ? self::ALLOWED_FIELDS
-            : self::NON_PII_FIELDS;
+            : $defaultFields;
 
         // 4. Evaluasi parameter ?fields=...
         $fieldsParam = $request->query('fields');
@@ -107,8 +116,8 @@ class StudentResource extends JsonResource
                 array_unshift($selectedFields, 'id');
             }
         } else {
-            // Tanpa parameter fields khusus, kembalikan hanya atribut non-PII default
-            $selectedFields = self::NON_PII_FIELDS;
+            // Tanpa parameter fields khusus, kembalikan hanya atribut default sesuai scope
+            $selectedFields = $defaultFields;
         }
 
         return array_intersect_key($attributes, array_flip($selectedFields));

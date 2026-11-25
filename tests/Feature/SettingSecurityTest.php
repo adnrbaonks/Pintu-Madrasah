@@ -48,7 +48,7 @@ class SettingSecurityTest extends TestCase
         $this->assertTrue($page['props']['settings']['has_api_key']);
     }
 
-    public function test_check_api_key_rejects_query_parameter_and_restricts_legacy_key(): void
+    public function test_check_api_key_rejects_query_parameter_and_retires_global_legacy_key_fallback(): void
     {
         Setting::set('api_key', 'legacy-fixed-key-000');
 
@@ -56,15 +56,12 @@ class SettingSecurityTest extends TestCase
             ->assertStatus(401)
             ->assertJsonPath('error.code', 'MISSING_API_KEY');
 
+        // Kunci global tunggal (Setting::get('api_key') / API_GATEWAY_KEY) telah dipensiunkan
+        // dan tidak boleh lagi dipakai sebagai bypass autentikasi tanpa ApiClient per-klien.
         $this->withHeader('X-API-KEY', 'legacy-fixed-key-000')
             ->getJson('/api/v1/classes')
-            ->assertOk();
-
-        // Legacy key tidak boleh otomatis memiliki scope PII
-        $this->withHeader('X-API-KEY', 'legacy-fixed-key-000')
-            ->getJson('/api/v1/students?fields=id,nik,address')
-            ->assertOk()
-            ->assertJsonMissing(['address' => 'Alamat privat']);
+            ->assertStatus(401)
+            ->assertJsonPath('error.code', 'INVALID_API_KEY');
     }
 
     public function test_legacy_plaintext_secrets_are_migrated_and_encrypted_transparently(): void
