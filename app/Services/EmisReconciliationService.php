@@ -102,6 +102,8 @@ class EmisReconciliationService
      */
     public function reconcileStudents(?string $actorId = null, ?string $notes = null): EmisImportBatch
     {
+        $this->itemBuffer = [];
+
         return DB::transaction(function () use ($actorId, $notes): EmisImportBatch {
             $batch = $this->createBatch(
                 entityType: 'student',
@@ -136,7 +138,7 @@ class EmisReconciliationService
 
                     if ($resolution['status'] === 'needs_review') {
                         $needsReviewCount++;
-                        EmisReconciliationItem::create([
+                        $this->queueItem([
                             'batch_id' => $batch->id,
                             'entity_type' => 'student',
                             'entity_id' => $resolution['student']?->id,
@@ -161,7 +163,7 @@ class EmisReconciliationService
 
                     if (! $student) {
                         $emisOnlyCount++;
-                        EmisReconciliationItem::create([
+                        $this->queueItem([
                             'batch_id' => $batch->id,
                             'entity_type' => 'student',
                             'entity_id' => null,
@@ -182,7 +184,7 @@ class EmisReconciliationService
 
                     if ($differences === []) {
                         $sameCount++;
-                        EmisReconciliationItem::create([
+                        $this->queueItem([
                             'batch_id' => $batch->id,
                             'entity_type' => 'student',
                             'entity_id' => $student->id,
@@ -195,7 +197,7 @@ class EmisReconciliationService
                         ]);
                     } else {
                         $diffCount++;
-                        EmisReconciliationItem::create([
+                        $this->queueItem([
                             'batch_id' => $batch->id,
                             'entity_type' => 'student',
                             'entity_id' => $student->id,
@@ -219,7 +221,7 @@ class EmisReconciliationService
                     }
 
                     $pintuOnlyCount++;
-                    EmisReconciliationItem::create([
+                    $this->queueItem([
                         'batch_id' => $batch->id,
                         'entity_type' => 'student',
                         'entity_id' => $student->id,
@@ -233,6 +235,8 @@ class EmisReconciliationService
                     ]);
                 }
             });
+
+            $this->flushItems();
 
             $batch->update([
                 'total_rows' => $totalRows,
@@ -253,6 +257,8 @@ class EmisReconciliationService
      */
     public function reconcileStaff(?string $actorId = null, ?string $notes = null): EmisImportBatch
     {
+        $this->itemBuffer = [];
+
         return DB::transaction(function () use ($actorId, $notes): EmisImportBatch {
             $batch = $this->createBatch(
                 entityType: 'staff',
@@ -286,7 +292,7 @@ class EmisReconciliationService
 
                     if ($resolution['status'] === 'needs_review') {
                         $needsReviewCount++;
-                        EmisReconciliationItem::create([
+                        $this->queueItem([
                             'batch_id' => $batch->id,
                             'entity_type' => 'staff',
                             'entity_id' => $resolution['staff']?->id,
@@ -311,7 +317,7 @@ class EmisReconciliationService
 
                     if (! $staff) {
                         $emisOnlyCount++;
-                        EmisReconciliationItem::create([
+                        $this->queueItem([
                             'batch_id' => $batch->id,
                             'entity_type' => 'staff',
                             'entity_id' => null,
@@ -332,7 +338,7 @@ class EmisReconciliationService
 
                     if ($differences === []) {
                         $sameCount++;
-                        EmisReconciliationItem::create([
+                        $this->queueItem([
                             'batch_id' => $batch->id,
                             'entity_type' => 'staff',
                             'entity_id' => $staff->id,
@@ -345,7 +351,7 @@ class EmisReconciliationService
                         ]);
                     } else {
                         $diffCount++;
-                        EmisReconciliationItem::create([
+                        $this->queueItem([
                             'batch_id' => $batch->id,
                             'entity_type' => 'staff',
                             'entity_id' => $staff->id,
@@ -369,7 +375,7 @@ class EmisReconciliationService
                     }
 
                     $pintuOnlyCount++;
-                    EmisReconciliationItem::create([
+                    $this->queueItem([
                         'batch_id' => $batch->id,
                         'entity_type' => 'staff',
                         'entity_id' => $staff->id,
@@ -383,6 +389,8 @@ class EmisReconciliationService
                     ]);
                 }
             });
+
+            $this->flushItems();
 
             $batch->update([
                 'total_rows' => $totalRows,
@@ -566,6 +574,39 @@ class EmisReconciliationService
         });
     }
 
+    /** @var array<int, array<string, mixed>> */
+    private array $itemBuffer = [];
+
+    /**
+     * Buffer item rekonsiliasi lalu insert massal per 500 baris (di dalam transaksi batch).
+     *
+     * @param  array<string, mixed>  $row
+     */
+    private function queueItem(array $row): void
+    {
+        $now = now();
+        foreach (['differences', 'pintu_snapshot', 'emis_snapshot'] as $col) {
+            $row[$col] = isset($row[$col]) ? json_encode($row[$col], JSON_UNESCAPED_UNICODE) : null;
+        }
+        $row += ['review_notes' => null];
+        $row['id'] = (string) Str::uuid();
+        $row['created_at'] = $now;
+        $row['updated_at'] = $now;
+        $this->itemBuffer[] = $row;
+
+        if (count($this->itemBuffer) >= 500) {
+            $this->flushItems();
+        }
+    }
+
+    private function flushItems(): void
+    {
+        if ($this->itemBuffer !== []) {
+            DB::table('emis_reconciliation_items')->insert($this->itemBuffer);
+            $this->itemBuffer = [];
+        }
+    }
+
     /**
      * Bangun indeks hash O(1) untuk pencocokan Siswa berdasarkan prioritas:
      * 1. emis_student_id, 2. nisn, 3. nik.
@@ -641,12 +682,16 @@ class EmisReconciliationService
             'emis_student_id' => [],
             'nisn' => [],
             'nik' => [],
+            '_dup' => [],
         ];
 
         foreach ($students as $student) {
             foreach (['emis_student_id', 'nisn', 'nik'] as $key) {
                 $val = trim((string) $student->{$key});
                 if ($val !== '') {
+                    if (isset($index[$key][$val]) && $index[$key][$val]->id !== $student->id) {
+                        $index['_dup'][$key][$val] = true; // duplikat identifier di master PINTU
+                    }
                     $index[$key][$val] = $student;
                 }
             }
@@ -670,12 +715,16 @@ class EmisReconciliationService
             'nuptk' => [],
             'nip' => [],
             'npk' => [],
+            '_dup' => [],
         ];
 
         foreach ($staffMembers as $staff) {
             foreach (['emis_gtk_id', 'nik', 'nuptk', 'nip', 'npk'] as $key) {
                 $val = trim((string) $staff->{$key});
                 if ($val !== '') {
+                    if (isset($index[$key][$val]) && $index[$key][$val]->id !== $staff->id) {
+                        $index['_dup'][$key][$val] = true; // duplikat identifier di master PINTU
+                    }
                     $index[$key][$val] = $staff;
                 }
             }
@@ -708,6 +757,16 @@ class EmisReconciliationService
                 'student' => null,
                 'reason' => 'Baris staging EMIS Siswa tidak memiliki emis_student_id, NISN, maupun NIK.',
             ];
+        }
+
+        foreach (['emis_student_id' => $emisStudentId, 'nisn' => $nisn, 'nik' => $nik] as $k => $v) {
+            if ($v !== '' && isset($studentIndex['_dup'][$k][$v])) {
+                return [
+                    'status' => 'needs_review',
+                    'student' => null,
+                    'reason' => "Duplikat identitas: {$k} yang sama dimiliki lebih dari satu siswa di master PINTU.",
+                ];
+            }
         }
 
         $matches = collect([
@@ -744,12 +803,22 @@ class EmisReconciliationService
         $nip = trim((string) $staging->nip);
         $npk = trim((string) $staging->npk);
 
-        if ($nik === '' && $nuptk === '' && $nip === '' && $npk === '') {
+        if ($emisGtkId === '' && $nik === '' && $nuptk === '' && $nip === '' && $npk === '') {
             return [
                 'status' => 'needs_review',
                 'staff' => null,
-                'reason' => 'Baris staging EMIS GTK tidak memiliki kunci identitas (NIK, NUPTK, NIP, atau NPK).',
+                'reason' => 'Baris staging EMIS GTK tidak memiliki kunci identitas (ID EMIS GTK, NIK, NUPTK, NIP, atau NPK).',
             ];
+        }
+
+        foreach (['emis_gtk_id' => $emisGtkId, 'nik' => $nik, 'nuptk' => $nuptk, 'nip' => $nip, 'npk' => $npk] as $k => $v) {
+            if ($v !== '' && isset($staffIndex['_dup'][$k][$v])) {
+                return [
+                    'status' => 'needs_review',
+                    'staff' => null,
+                    'reason' => "Duplikat identitas: {$k} yang sama dimiliki lebih dari satu GTK di master PINTU.",
+                ];
+            }
         }
 
         $matches = collect([

@@ -19,9 +19,23 @@ class EnsureEmisAbility
         'sync' => 'sync_emis',
     ];
 
-    public function handle(Request $request, Closure $next, string $ability): Response
+    public function handle(Request $request, Closure $next, string $ability, ?string $tokenAbility = null): Response
     {
         if ($request->attributes->get('integration_auth_method') === 'token') {
+            $token = $request->attributes->get('integration_token');
+            if ($tokenAbility === '-') {
+                // Commit/ubah task: token tidak pernah berwenang; ditolak eksplisit di controller.
+                return $next($request);
+            }
+            if ($tokenAbility === null || ! $token || ! $token->hasAbility($tokenAbility)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Token integrasi tidak memiliki ability untuk aksi ini.',
+                    'error' => ['code' => 'FORBIDDEN_TOKEN_ABILITY'],
+                    'request_id' => $request->attributes->get('request_id'),
+                ], 403);
+            }
+
             return $next($request);
         }
 

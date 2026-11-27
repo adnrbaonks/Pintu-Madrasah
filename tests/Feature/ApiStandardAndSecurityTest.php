@@ -464,6 +464,7 @@ class ApiStandardAndSecurityTest extends TestCase
             user: $operator,
             purpose: IntegrationToken::PURPOSE_EMIS_SISWA,
             label: 'Bookmarklet Operator TU',
+            abilities: ['credentials:update', 'sync:read'],
         );
         $plainIntegrationToken = $issued['plain_token'];
 
@@ -508,6 +509,7 @@ class ApiStandardAndSecurityTest extends TestCase
             ->actingAs($operator, 'web')
             ->getJson('/api/emis/status')
             ->assertOk()
-            ->assertJsonStructure(['emis_siswa', 'emis_gtk']);
+            ->assertJsonStructure(['emis_siswa'])
+            ->assertJsonMissingPath('emis_gtk');
     }
 }

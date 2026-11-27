@@ -12,6 +12,17 @@ class IntegrationToken extends Model
 
     public const PURPOSE_EMIS_GTK = 'emis_gtk';
 
+    public const ABILITIES = [
+        'staging:read', 'staging:write',
+        'reconcile:read', 'reconcile:run',
+        'sync:read', 'sync:trigger', 'sync:cancel',
+        'tasks:read',
+        'credentials:update',
+    ];
+
+    /** Token lama (abilities NULL) hanya boleh membaca. */
+    public const LEGACY_ABILITIES = ['staging:read', 'reconcile:read', 'sync:read', 'tasks:read'];
+
     protected $keyType = 'string';
 
     public $incrementing = false;
@@ -19,6 +30,7 @@ class IntegrationToken extends Model
     protected $fillable = [
         'user_id',
         'purpose',
+        'abilities',
         'token_prefix',
         'token_hash',
         'token_last4',
@@ -39,6 +51,7 @@ class IntegrationToken extends Model
             'id' => 'string',
             'user_id' => 'string',
             'created_by' => 'string',
+            'abilities' => 'array',
             'expires_at' => 'datetime',
             'last_used_at' => 'datetime',
             'revoked_at' => 'datetime',
@@ -56,6 +69,17 @@ class IntegrationToken extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    /** @return array<int,string> */
+    public function effectiveAbilities(): array
+    {
+        return $this->abilities === null ? self::LEGACY_ABILITIES : array_values($this->abilities);
+    }
+
+    public function hasAbility(string $ability): bool
+    {
+        return in_array($ability, $this->effectiveAbilities(), true);
     }
 
     public function isExpired(): bool
