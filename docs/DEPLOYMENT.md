@@ -274,3 +274,16 @@ File PII/scratch (PDF scan, Excel administrasi, `test_*.php`, `scratch.json`)
 tidak boleh berada di working tree aplikasi maupun repository. Simpan di
 direktori terpisah di luar repo dengan akses terbatas. `.gitignore` sudah
 menutup pola umum, tetapi tetap periksa `git status` sebelum commit.
+
+## 13. Branch protection `main` (WP0.5.11)
+
+Status: **belum diverifikasi/diterapkan dari repo ini** (`gh` CLI tidak tersedia). Terapkan manual di
+GitHub → Settings → Branches → Add branch ruleset untuk `main`:
+
+- Require a pull request before merging (minimal 1 approval; dismiss stale approvals).
+- Require status checks to pass, dan branch up to date. Required checks (nama job di `.github/workflows/ci.yml`):
+  `Validate & format`, `Tests (SQLite)`, `Tests (MySQL 8 + Redis)`, `Build frontend assets`.
+- Block force pushes dan block deletions.
+- Include administrators (tanpa bypass).
+
+Verifikasi setelah diterapkan: `gh api repos/adnrbaonks/Pintu-Madrasah/branches/main/protection`.

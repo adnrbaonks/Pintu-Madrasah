@@ -110,3 +110,7 @@ Apabila pada masa transisi produksi diperlukan import darurat dari staging EMIS:
   - Hanya dapat dijalankan oleh pengguna manusia terautentikasi sesi web dengan permission `sync_emis` (token integrasi ditolak dengan `403 INTEGRATION_TOKEN_TASK_UPDATE_FORBIDDEN`).
   - Tugas yang telah berstatus `completed` dikunci dari pembukaan ulang sembarangan; transisi keluar dari `completed` wajib menyertakan `reopen_confirmed = true` dan `operator_notes` minimal 10 karakter (`422 INVALID_TASK_STATUS_TRANSITION`).
   - Mencatat audit `emis_outbound_status_updated` di `activity_logs` tanpa memodifikasi data master PINTU.
+
+## WP0.5.11 — PII, UX direct edit GTK, pagination
+- `App\Services\EmisPiiSanitizer` menurunkan daftar PII dari flag `sensitive` di `config/data_ownership.php` (+ nama/gelar/pendidikan) dan menyanitasi rekursif.
+- `PUT /gtk/{staff}` dengan field campuran: field direct disimpan, field approval_required ditolak dan dilaporkan lewat flash `warning`/`rejected_fields` (bukan `success`).

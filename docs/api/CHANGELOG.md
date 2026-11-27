@@ -99,3 +99,8 @@ Dokumen ini mencatat riwayat perubahan kontrak API v1 dan Webhook pada **PINTU M
 
 ### v1.0.0 — 2026-10-03
 - Rilis awal API Gateway `/api/v1/students`, `/api/v1/students/{nisn}`, `/api/v1/staff`, `/api/v1/classes`, `/api/v1/academic-years/active`, dan Webhook v1 untuk event siswa.
+
+## WP0.5.11
+- `GET /api/emis{,-gtk}/reconciliation-batches` kini terpaginasi (`page`, `per_page` maks 50) dan **tidak lagi memuat `items`**; gunakan `GET .../reconciliation-batches/{batch}/items` (`per_page` maks 200, filter `classification`).
+- `GET .../update-tasks` terpaginasi (`per_page` maks 100); respons memuat `meta`.
+- PII pada snapshot, `differences`, `changed_fields`, `match_value`, dan staging list disanitasi rekursif berdasarkan data ownership dictionary. Token integrasi: seluruh PII (termasuk nama/tgl lahir) disamarkan; operator sesi: identifier dimasking, nama/tgl lahir tetap terlihat.
