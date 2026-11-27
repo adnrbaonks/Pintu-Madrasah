@@ -287,3 +287,10 @@ Status: **aktif dan terverifikasi** via `gh api repos/adnrbaonks/Pintu-Madrasah/
 ## 14. Catatan deploy WP0.5.12
 
 Jalankan `php artisan db:seed --class=RolesAndPermissionsSeeder --force` agar permission `reconcile_emis` terbentuk dan diberikan ke operator/admin. Tanpa itu, rekonsiliasi dari sesi akan ditolak 403. Klien yang membaca `data.items` dari respons reconcile harus pindah ke endpoint `/reconciliation-batches/{batch}/items`.
+
+## 14. WP0.5.13 — Token ability & import staging
+
+1. `php artisan migrate` (kolom `abilities`, `import_session_id`).
+2. Token integrasi lama menjadi read-only. Terbitkan ulang token bookmarklet EMIS dengan ability yang dibutuhkan (`staging:write`, `credentials:update`, dst.) lalu cabut yang lama.
+3. Frontend/klien yang membaca `emis_gtk` dari `/api/emis/status` harus pindah ke `/api/emis-gtk/status`.
+4. Import GTK memerlukan cache driver yang mendukung lock atomik (database/redis).

@@ -112,3 +112,37 @@ Dokumen ini mencatat riwayat perubahan kontrak API v1 dan Webhook pada **PINTU M
 - `GET /api/emis/staging` dan `GET /api/emis-gtk/staging` terpaginasi (`per_page` default 50, maks 200, `page`); `data` tetap array dan ditambah `meta` (`current_page`, `per_page`, `total`, `last_page`). PII disanitasi sesuai level (token: seluruh PII dimasking; sesi: identifier dimasking parsial).
 - Permission baru `reconcile_emis` (operator, admin). Matriks: lihat = `view_emis`; rekonsiliasi = `reconcile_emis`; pull/cancel/commit/import/ubah update-task = `sync_emis`. Token integrasi tetap dibatasi purpose (`emis_siswa` vs `emis_gtk`) dan tidak dapat commit/ubah task.
 - Fallback sesi tidak lagi meloloskan role (`staf`, `kaur_tu`, dll.) tanpa permission eksplisit.
+
+## WP0.5.13 — EMIS token scope, matching integrity, scale
+
+- **Ability token integrasi** (kolom `integration_tokens.abilities`): `staging:read`, `staging:write`, `reconcile:read`, `reconcile:run`, `sync:read`, `sync:trigger`, `sync:cancel`, `tasks:read`, `credentials:update`. Pelanggaran → `403 FORBIDDEN_TOKEN_ABILITY`.
+- **Migrasi token lama**: `abilities = NULL` diperlakukan *read-only* (`staging:read`, `reconcile:read`, `sync:read`, `tasks:read`). Token yang membutuhkan import/reconcile/pull/cancel/kredensial harus diterbitkan ulang dengan ability eksplisit (`abilities[]` pada pembuatan token).
+- Commit staging dan PATCH update-task tetap tidak pernah boleh lewat token (hanya sesi + permission).
+- `GET /api/emis/status` hanya siswa; `GET /api/emis-gtk/status` baru, hanya GTK.
+- Import GTK memakai `import_session_id`: halaman 1 tidak lagi menghapus data; baris `pending` sesi lama diganti atomik pada halaman terakhir; lock mencegah import bersamaan (`409 IMPORT_IN_PROGRESS`). `clear_staging` pada pull hanya menghapus baris `pending` (riwayat `committed` dipertahankan), butuh `staging:write` untuk token, dan diaudit (`staging.cleared`).
+- Matching GTK: `emis_gtk_id` kini dihitung sebagai identitas; identifier ganda di master PINTU → `needs_review` (tidak dipilih sembarang). Berlaku juga untuk siswa.
+- Item rekonsiliasi di-insert massal (500 baris/insert) dalam satu transaksi atomik.
+
+### Matriks endpoint (sesi → permission; token → ability)
+| Endpoint | Sesi | Token |
+|---|---|---|
+| GET staging | view_emis | staging:read |
+| GET status / progress | view_emis | sync:read |
+| GET reconciliation-batches(+items) | view_emis | reconcile:read |
+| GET update-tasks | view_emis | tasks:read |
+| POST reconcile | reconcile_emis | reconcile:run |
+| POST pull | sync_emis | sync:trigger |
+| POST cancel-sync | sync_emis | sync:cancel |
+| POST import / import-raw | sync_emis | staging:write |
+| POST token | sync_emis | credentials:update |
+| POST commit, PATCH update-tasks | sync_emis (+break-glass di produksi) | ditolak |
+
+### Benchmark rekonsiliasi siswa (sintetis, 10% pintu_only, ~13% berbeda; `EmisReconciliationBenchmarkTest`, `EMIS_BENCH_SIZES=...`)
+| Baris | SQLite durasi / puncak memori / query | MySQL 8 durasi / puncak memori / query |
+|---|---|---|
+| 500 | 0,1 s / 98,5 MB / 8 | 0,48 s / 100,5 MB / 8 |
+| 5.000 | 0,95 s / 114,5 MB / 43 | 2,64 s / 114,5 MB / 43 |
+| 10.000 | 1,97 s / 136,5 MB / 81 | 4,97 s / 138,5 MB / 81 |
+| 25.000 | 5,01 s / 194,5 MB / 195 | 12,45 s / 194,5 MB / 195 |
+
+Transaksi tetap satu (atomik, tidak ada batch setengah jadi); durasi transaksi ≈ durasi di atas. Untuk >50.000 baris disarankan checkpoint batch terpisah (belum diimplementasi).
