@@ -88,6 +88,12 @@ class Student extends Model
             ->latest('created_at');
     }
 
+    public function emisUpdateTasks()
+    {
+        return $this->hasMany(EmisUpdateTask::class, 'entity_id')
+            ->where('entity_type', 'student');
+    }
+
     // ── Selective Upsert — Aturan Field Protection ────────────────────
 
     /**

@@ -3,11 +3,14 @@
 namespace App\Jobs;
 
 use App\Models\AcademicYear;
+use App\Models\EmisImportBatch;
+use App\Models\EmisReconciliationItem;
 use App\Models\EmisStaging;
 use App\Models\Rombel;
 use App\Models\SchoolClass;
 use App\Models\Student;
 use App\Models\StudentAcademicCohort;
+use App\Services\EmisReconciliationService;
 use App\Services\EmisService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -25,16 +28,38 @@ class CommitEmisStagingJob implements ShouldQueue
 
     public int $timeout = 600;
 
-    public function handle(EmisService $emis): void
+    public function __construct(
+        public ?string $actorId = null,
+        public bool $allowOverwrite = false,
+        public bool $overwriteConfirmed = false,
+        public ?string $batchId = null,
+    ) {}
+
+    public function handle(?EmisService $emis = null): void
     {
         Log::info('[JOB] CommitEmisStagingJob dimulai');
 
-        $activeYear = AcademicYear::active();
-        if (! $activeYear) {
-            Log::error('[JOB] Tahun Ajaran Aktif belum diatur');
+        $emis ??= app(EmisService::class);
+        $reconciliationService = app(EmisReconciliationService::class);
+        $canOverwrite = $this->allowOverwrite && $this->overwriteConfirmed;
 
-            return;
-        }
+        $batch = $this->batchId
+            ? EmisImportBatch::find($this->batchId)
+            : null;
+
+        $batch ??= $reconciliationService->createBatch(
+            entityType: 'student',
+            sourceSystem: 'emis_student',
+            processType: EmisImportBatch::PROCESS_INITIAL_IMPORT,
+            actorId: $this->actorId,
+            allowOverwrite: $this->allowOverwrite,
+            overwriteConfirmed: $this->overwriteConfirmed,
+            notes: $canOverwrite
+                ? 'Import ulang EMIS Siswa dengan konfirmasi overwrite eksplisit.'
+                : 'Import awal EMIS Siswa (non-destructive terhadap master PINTU).',
+        );
+
+        $activeYear = AcademicYear::active();
 
         Cache::forget('emis:commit:pending');
         Cache::put('emis:commit:progress', [
@@ -46,6 +71,7 @@ class CommitEmisStagingJob implements ShouldQueue
         $total = $stagings->count();
 
         if ($total === 0) {
+            $batch->update(['total_rows' => 0]);
             Cache::put('emis:commit:progress', [
                 'status' => 'Tidak ada data untuk diproses',
                 'progress' => 100,
@@ -54,31 +80,98 @@ class CommitEmisStagingJob implements ShouldQueue
             return;
         }
 
-        $stats = ['created' => 0, 'updated' => 0, 'failed' => 0, 'rombel_created' => 0, 'failures' => []];
+        $stats = [
+            'created' => 0,
+            'updated' => 0,
+            'skipped_existing' => 0,
+            'matched_identical' => 0,
+            'differences' => 0,
+            'needs_review' => 0,
+            'failed' => 0,
+            'rombel_created' => 0,
+            'failures' => [],
+            'batch_id' => $batch->id,
+        ];
         $processedNisn = [];
 
         foreach ($stagings as $staging) {
             try {
+                $emisStudentId = isset($staging->raw_data['id']) && filled($staging->raw_data['id'])
+                    ? (string) $staging->raw_data['id']
+                    : null;
+
                 $parsed = [
-                    'emis_student_id' => $staging->raw_data['id'] ?? null,
+                    'emis_student_id' => $emisStudentId,
                     'nisn' => $staging->nisn,
                     'nik' => $staging->nik,
                     'name' => $staging->name,
                     'gender' => $staging->gender ?: 'L', // Default jika null
-                    'birth_date' => $staging->raw_data['birth_date'] ?? null,
-                    'birth_place' => $staging->raw_data['birth_place'] ?? null,
+                    'birth_date' => $staging->birth_date ?? ($staging->raw_data['birth_date'] ?? null),
+                    'birth_place' => $staging->birth_place ?? ($staging->raw_data['birth_place'] ?? null),
                     'status' => 'active',
                 ];
 
-                $student = Student::withTrashed()->where('nisn', $staging->nisn)->first();
+                $student = $this->findMatchingStudent($emisStudentId, $staging->nisn, $staging->nik, $hasConflict);
+
+                if ($hasConflict) {
+                    $stats['needs_review']++;
+                    EmisReconciliationItem::create([
+                        'batch_id' => $batch->id,
+                        'entity_type' => 'student',
+                        'entity_id' => $student?->id,
+                        'staging_id' => $staging->id,
+                        'external_reference_id' => $emisStudentId ?: $staging->nisn,
+                        'classification' => EmisReconciliationItem::CLASS_NEEDS_REVIEW,
+                        'review_notes' => 'Konflik identitas antara ID EMIS, NISN, dan NIK pada master PINTU.',
+                    ]);
+
+                    continue;
+                }
 
                 if ($student) {
-                    // Smart Fill (Pendekatan 2): Lindungi Data Lokal
-                    // Hanya update kolom yang di lokal masih benar-benar kosong (null atau string kosong)
+                    $differences = $reconciliationService->compareStudentWithStaging($student, $staging);
+
+                    if ($differences === []) {
+                        $stats['matched_identical']++;
+                        EmisReconciliationItem::create([
+                            'batch_id' => $batch->id,
+                            'entity_type' => 'student',
+                            'entity_id' => $student->id,
+                            'staging_id' => $staging->id,
+                            'external_reference_id' => $student->emis_student_id ?: $student->nisn,
+                            'classification' => EmisReconciliationItem::CLASS_SAME,
+                            'differences' => [],
+                        ]);
+                    } else {
+                        $stats['differences']++;
+                        EmisReconciliationItem::create([
+                            'batch_id' => $batch->id,
+                            'entity_type' => 'student',
+                            'entity_id' => $student->id,
+                            'staging_id' => $staging->id,
+                            'external_reference_id' => $student->emis_student_id ?: $student->nisn,
+                            'classification' => EmisReconciliationItem::CLASS_DIFFERENT,
+                            'differences' => $differences,
+                            'review_notes' => $canOverwrite
+                                ? 'Import ulang dengan konfirmasi overwrite.'
+                                : 'Master PINTU dipertahankan sebagai SSOT; perbedaan dicatat sebagai temuan.',
+                        ]);
+                    }
+
+                    // Kebijakan SSOT PINTU: Jangan timpa data master PINTU yang sudah terisi
+                    // kecuali import ulang dikonfirmasi secara eksplisit dan tidak terkunci.
                     $smartUpdate = [];
                     foreach ($parsed as $field => $newValue) {
+                        if ($newValue === null || $newValue === '') {
+                            continue;
+                        }
+
                         $oldValue = $student->$field;
-                        if (empty(trim((string) $oldValue)) || $oldValue === '-') {
+                        $isEmptyLocal = empty(trim((string) $oldValue)) || $oldValue === '-';
+
+                        if ($isEmptyLocal) {
+                            $smartUpdate[$field] = $newValue;
+                        } elseif ($canOverwrite && ! $student->isIdentityFieldProtected()) {
                             $smartUpdate[$field] = $newValue;
                         }
                     }
@@ -86,6 +179,8 @@ class CommitEmisStagingJob implements ShouldQueue
                     if (! empty($smartUpdate)) {
                         $student->update($smartUpdate);
                         $stats['updated']++;
+                    } elseif ($differences !== []) {
+                        $stats['skipped_existing']++;
                     }
                 } else {
                     $student = Student::create($parsed);
@@ -95,13 +190,13 @@ class CommitEmisStagingJob implements ShouldQueue
                 $processedNisn[] = $staging->nisn;
 
                 // Simpan grade_level dari rombel_name meski rombel tidak valid
-                $gradeLevel = $emis->parseGradeLevel($staging->rombel_name);
+                $gradeLevel = $emis->parseGradeLevel((string) $staging->rombel_name);
                 if ($gradeLevel && empty($student->grade_level)) {
                     $student->update(['grade_level' => $gradeLevel]);
                 }
 
-                // Auto-assign ke rombel
-                if ($staging->rombel_name && $staging->rombel_name !== 'Belum Masuk Rombel') {
+                // Auto-assign ke rombel jika tahun ajaran aktif tersedia
+                if ($activeYear && $staging->rombel_name && $staging->rombel_name !== 'Belum Masuk Rombel') {
                     // Validasi nama rombel: harus mengandung 1 grade level yang valid, bukan kombinasi seperti "7/8"
                     if (self::isValidRombelName($staging->rombel_name)) {
                         $gradeLevel = $emis->parseGradeLevel($staging->rombel_name);
@@ -156,6 +251,16 @@ class CommitEmisStagingJob implements ShouldQueue
         // Cleanup staging
         EmisStaging::where('status', 'committed')->delete();
 
+        $batch->update([
+            'total_rows' => $total,
+            'created_count' => $stats['created'],
+            'updated_count' => $stats['updated'],
+            'skipped_existing_count' => $stats['skipped_existing'],
+            'matched_identical_count' => $stats['matched_identical'],
+            'difference_count' => $stats['differences'],
+            'needs_review_count' => $stats['needs_review'] + $stats['failed'],
+        ]);
+
         Cache::put('emis:commit:progress', [
             'status' => 'Sinkronisasi selesai!',
             'progress' => 100,
@@ -163,6 +268,32 @@ class CommitEmisStagingJob implements ShouldQueue
         ], now()->addMinutes(15));
 
         Log::info('[JOB] Commit selesai', $stats);
+    }
+
+    private function findMatchingStudent(?string $emisStudentId, ?string $nisn, ?string $nik, ?bool &$hasConflict = false): ?Student
+    {
+        $hasConflict = false;
+
+        $byEmisId = filled($emisStudentId)
+            ? Student::withTrashed()->where('emis_student_id', $emisStudentId)->first()
+            : null;
+        $byNisn = filled($nisn)
+            ? Student::withTrashed()->where('nisn', $nisn)->first()
+            : null;
+        $byNik = filled($nik)
+            ? Student::withTrashed()->where('nik', $nik)->first()
+            : null;
+
+        $candidates = collect([$byEmisId, $byNisn, $byNik])->filter();
+        $uniqueIds = $candidates->map(fn (Student $s): string => $s->id)->unique()->values();
+
+        if ($uniqueIds->count() > 1) {
+            $hasConflict = true;
+
+            return $candidates->first();
+        }
+
+        return $candidates->first();
     }
 
     /**

@@ -3,8 +3,11 @@
 namespace App\Jobs;
 
 use App\Models\EmisGtkStaging;
+use App\Models\EmisImportBatch;
+use App\Models\EmisReconciliationItem;
 use App\Models\Staff;
 use App\Models\StaffChangeRequest;
+use App\Services\EmisReconciliationService;
 use App\Services\OutboxService;
 use App\Services\StaffChangeRequestService;
 use Illuminate\Bus\Queueable;
@@ -69,9 +72,35 @@ class CommitEmisGtkStagingJob implements ShouldQueue
 
     public $timeout = 600;
 
+    public function __construct(
+        public ?string $actorId = null,
+        public bool $allowOverwrite = false,
+        public bool $overwriteConfirmed = false,
+        public ?string $batchId = null,
+    ) {}
+
     public function handle(): void
     {
         Log::info('[EMIS GTK] Memulai commit data GTK dari staging...');
+
+        $reconciliationService = app(EmisReconciliationService::class);
+        $canOverwrite = $this->allowOverwrite && $this->overwriteConfirmed;
+
+        $batch = $this->batchId
+            ? EmisImportBatch::find($this->batchId)
+            : null;
+
+        $batch ??= $reconciliationService->createBatch(
+            entityType: 'staff',
+            sourceSystem: 'emis_gtk',
+            processType: EmisImportBatch::PROCESS_INITIAL_IMPORT,
+            actorId: $this->actorId,
+            allowOverwrite: $this->allowOverwrite,
+            overwriteConfirmed: $this->overwriteConfirmed,
+            notes: $canOverwrite
+                ? 'Import ulang EMIS GTK dengan konfirmasi overwrite eksplisit.'
+                : 'Import awal EMIS GTK (non-destructive terhadap master PINTU).',
+        );
 
         Cache::put('emis_gtk:commit:progress', ['progress' => 0, 'status' => 'Memulai sinkronisasi ke tabel staf...'], now()->addHours(2));
 
@@ -80,6 +109,7 @@ class CommitEmisGtkStagingJob implements ShouldQueue
             $total = $stagings->count();
 
             if ($total === 0) {
+                $batch->update(['total_rows' => 0]);
                 Cache::put('emis_gtk:commit:progress', ['progress' => 100, 'status' => 'Tidak ada data staging GTK untuk disimpan.'], now()->addHours(2));
 
                 return;
@@ -87,26 +117,120 @@ class CommitEmisGtkStagingJob implements ShouldQueue
 
             $processed = 0;
             $failed = 0;
+            $createdCount = 0;
+            $updatedCount = 0;
+            $skippedExistingCount = 0;
+            $matchedIdenticalCount = 0;
+            $differenceCount = 0;
+            $needsReviewCount = 0;
 
             foreach ($stagings as $staging) {
                 if (! $this->hasIdentity($staging)) {
                     $this->markFailed($staging, 'Identitas (NIK/NUPTK/NIP/NPK) tidak lengkap');
                     $failed++;
+                    $needsReviewCount++;
+
+                    EmisReconciliationItem::create([
+                        'batch_id' => $batch->id,
+                        'entity_type' => 'staff',
+                        'entity_id' => null,
+                        'staging_id' => $staging->id,
+                        'external_reference_id' => $staging->emis_gtk_id,
+                        'classification' => EmisReconciliationItem::CLASS_NEEDS_REVIEW,
+                        'review_notes' => 'Identitas (NIK/NUPTK/NIP/NPK) tidak lengkap.',
+                    ]);
 
                     continue;
                 }
 
-                $existing = $this->findExistingStaff($staging);
+                $hasConflict = false;
+                $existing = $this->findExistingStaff($staging, $hasConflict);
+
+                if ($hasConflict) {
+                    $this->markFailed($staging, 'Konflik identitas: NIK/NUPTK/NIP/NPK merujuk ke lebih dari satu GTK di master PINTU.');
+                    $failed++;
+                    $needsReviewCount++;
+
+                    EmisReconciliationItem::create([
+                        'batch_id' => $batch->id,
+                        'entity_type' => 'staff',
+                        'entity_id' => $existing?->id,
+                        'staging_id' => $staging->id,
+                        'external_reference_id' => $staging->emis_gtk_id ?: ($staging->nik ?: $staging->nuptk),
+                        'classification' => EmisReconciliationItem::CLASS_NEEDS_REVIEW,
+                        'review_notes' => 'Konflik identitas antara NIK, NUPTK, NIP, atau NPK pada master PINTU.',
+                    ]);
+
+                    continue;
+                }
+
                 $staffData = $this->staffData($staging);
 
                 try {
-                    DB::transaction(function () use ($existing, $staffData, &$failed, $staging): void {
-                        OutboxService::withoutObserver(function () use ($existing, $staffData, &$failed, $staging): void {
+                    DB::transaction(function () use (
+                        $existing,
+                        $staffData,
+                        &$failed,
+                        &$createdCount,
+                        &$updatedCount,
+                        &$skippedExistingCount,
+                        &$matchedIdenticalCount,
+                        &$differenceCount,
+                        &$needsReviewCount,
+                        $staging,
+                        $batch,
+                        $canOverwrite,
+                        $reconciliationService,
+                    ): void {
+                        OutboxService::withoutObserver(function () use (
+                            $existing,
+                            $staffData,
+                            &$failed,
+                            &$createdCount,
+                            &$updatedCount,
+                            &$skippedExistingCount,
+                            &$matchedIdenticalCount,
+                            &$differenceCount,
+                            &$needsReviewCount,
+                            $staging,
+                            $batch,
+                            $canOverwrite,
+                            $reconciliationService,
+                        ): void {
                             if ($existing) {
                                 $lockedStaff = Staff::withTrashed()->lockForUpdate()->findOrFail($existing->id);
 
                                 if ($lockedStaff->trashed()) {
                                     $lockedStaff->restore();
+                                }
+
+                                $differences = $reconciliationService->compareStaffWithStaging($lockedStaff, $staging);
+
+                                if ($differences === []) {
+                                    $matchedIdenticalCount++;
+                                    EmisReconciliationItem::create([
+                                        'batch_id' => $batch->id,
+                                        'entity_type' => 'staff',
+                                        'entity_id' => $lockedStaff->id,
+                                        'staging_id' => $staging->id,
+                                        'external_reference_id' => $lockedStaff->emis_gtk_id ?: ($lockedStaff->nik ?: $lockedStaff->nuptk),
+                                        'classification' => EmisReconciliationItem::CLASS_SAME,
+                                        'differences' => [],
+                                    ]);
+                                } else {
+                                    $differenceCount++;
+                                    EmisReconciliationItem::create([
+                                        'batch_id' => $batch->id,
+                                        'entity_type' => 'staff',
+                                        'entity_id' => $lockedStaff->id,
+                                        'staging_id' => $staging->id,
+                                        'external_reference_id' => $lockedStaff->emis_gtk_id ?: ($lockedStaff->nik ?: $lockedStaff->nuptk),
+                                        'classification' => EmisReconciliationItem::CLASS_DIFFERENT,
+                                        'differences' => $differences,
+                                        'review_notes' => $canOverwrite
+                                            ? 'Import ulang dengan konfirmasi overwrite.'
+                                            : 'Master PINTU dipertahankan sebagai SSOT; perbedaan dicatat sebagai temuan.',
+                                    ]);
                                 }
 
                                 // Rekonsiliasi pengajuan perubahan GTK yang berstatus pending_external_sync
@@ -116,14 +240,15 @@ class CommitEmisGtkStagingJob implements ShouldQueue
                                     ->lockForUpdate()
                                     ->get();
 
-                                $updatePayload = $this->buildStaffUpdatePayload(
-                                    $staging,
-                                    $staffData,
-                                    $pendingRequests,
-                                );
+                                $updatePayload = $canOverwrite
+                                    ? $this->buildStaffUpdatePayload($staging, $staffData, $pendingRequests)
+                                    : $this->buildNonDestructiveStaffFillPayload($lockedStaff, $staffData);
 
                                 if ($updatePayload !== []) {
                                     $lockedStaff->update($updatePayload);
+                                    $updatedCount++;
+                                } elseif ($differences !== []) {
+                                    $skippedExistingCount++;
                                 }
 
                                 foreach ($pendingRequests as $pendingReq) {
@@ -138,11 +263,13 @@ class CommitEmisGtkStagingJob implements ShouldQueue
                             if ($missing !== []) {
                                 $this->markFailed($staging, 'Data wajib belum lengkap: '.implode(', ', $missing));
                                 $failed++;
+                                $needsReviewCount++;
 
                                 return;
                             }
 
                             Staff::create($staffData);
+                            $createdCount++;
                         });
                     });
 
@@ -155,6 +282,7 @@ class CommitEmisGtkStagingJob implements ShouldQueue
                 } catch (\Throwable $e) {
                     $this->markFailed($staging, $e->getMessage());
                     $failed++;
+                    $needsReviewCount++;
                     Log::warning('[EMIS GTK] Gagal commit staging', [
                         'staging_id' => $staging->id,
                         'error' => $e->getMessage(),
@@ -170,9 +298,20 @@ class CommitEmisGtkStagingJob implements ShouldQueue
                 }
             }
 
+            $batch->update([
+                'total_rows' => $total,
+                'created_count' => $createdCount,
+                'updated_count' => $updatedCount,
+                'skipped_existing_count' => $skippedExistingCount,
+                'matched_identical_count' => $matchedIdenticalCount,
+                'difference_count' => $differenceCount,
+                'needs_review_count' => $needsReviewCount,
+            ]);
+
             Cache::put('emis_gtk:commit:progress', [
                 'progress' => 100,
                 'status' => "Selesai! {$processed} data GTK tersimpan, {$failed} gagal.",
+                'batch_id' => $batch->id,
             ], now()->addHours(2));
 
             Log::info("[EMIS GTK] Commit selesai. Berhasil: {$processed}, gagal: {$failed}");
@@ -187,10 +326,21 @@ class CommitEmisGtkStagingJob implements ShouldQueue
     }
 
     /**
-     * Cari staff yang sudah ada memakai kunci identitas berurutan.
+     * Cari staff yang sudah ada memakai ID EMIS GTK terlebih dahulu, lalu kunci identitas berurutan.
+     * Mendeteksi konflik apabila beberapa kunci identitas merujuk ke lebih dari satu GTK.
      */
-    private function findExistingStaff(EmisGtkStaging $staging): ?Staff
+    private function findExistingStaff(EmisGtkStaging $staging, ?bool &$hasConflict = false): ?Staff
     {
+        $hasConflict = false;
+        $candidates = collect();
+
+        if (filled($staging->emis_gtk_id)) {
+            $byEmisId = Staff::withTrashed()->where('emis_gtk_id', $staging->emis_gtk_id)->first();
+            if ($byEmisId) {
+                $candidates->push($byEmisId);
+            }
+        }
+
         foreach (self::IDENTITY_KEYS as $column) {
             $value = $staging->{$column};
 
@@ -201,11 +351,17 @@ class CommitEmisGtkStagingJob implements ShouldQueue
             $staff = Staff::withTrashed()->where($column, $value)->first();
 
             if ($staff) {
-                return $staff;
+                $candidates->push($staff);
             }
         }
 
-        return null;
+        $uniqueIds = $candidates->map(fn (Staff $s): string => $s->id)->unique()->values();
+
+        if ($uniqueIds->count() > 1) {
+            $hasConflict = true;
+        }
+
+        return $candidates->first();
     }
 
     private function hasIdentity(EmisGtkStaging $staging): bool
@@ -227,6 +383,7 @@ class CommitEmisGtkStagingJob implements ShouldQueue
     private function staffData(EmisGtkStaging $staging): array
     {
         $data = [
+            'emis_gtk_id' => $staging->emis_gtk_id,
             'nip' => $staging->nip,
             'nik' => $staging->nik,
             'npk' => $staging->npk,
@@ -255,6 +412,32 @@ class CommitEmisGtkStagingJob implements ShouldQueue
         }
 
         return $data;
+    }
+
+    /**
+     * Mode produksi non-destruktif (SSOT PINTU):
+     * Hanya mengisi atribut pada Staff yang masih kosong (null atau string kosong)
+     * dan tidak pernah menimpa nilai master PINTU yang sudah terisi.
+     *
+     * @param  array<string, mixed>  $staffData
+     * @return array<string, mixed>
+     */
+    private function buildNonDestructiveStaffFillPayload(Staff $staff, array $staffData): array
+    {
+        $payload = [];
+
+        foreach ($staffData as $field => $value) {
+            if ($value === null || $value === '') {
+                continue;
+            }
+
+            $currentValue = $staff->{$field};
+            if ($currentValue === null || trim((string) $currentValue) === '') {
+                $payload[$field] = $value;
+            }
+        }
+
+        return $payload;
     }
 
     /**

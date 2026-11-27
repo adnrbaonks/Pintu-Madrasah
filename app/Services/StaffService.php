@@ -30,6 +30,23 @@ class StaffService
             $changedFields = $this->logChange($staff, $filtered, $oldValues, $actorUserId);
 
             if (! empty($changedFields)) {
+                $changedPairs = [];
+                foreach ($changedFields as $changedField) {
+                    $changedPairs[$changedField] = [
+                        'old_value' => $oldValues[$changedField] ?? null,
+                        'new_value' => $staff->getAttribute($changedField),
+                    ];
+                }
+
+                app(EmisReconciliationService::class)->recordOutboundUpdateTask(
+                    entityType: 'staff',
+                    entityId: $staff->id,
+                    sourceType: 'direct_update',
+                    sourceId: null,
+                    changedFields: $changedPairs,
+                    actorId: $actorUserId ?? (auth()->id() ? (string) auth()->id() : null),
+                );
+
                 $payload = Webhook::staffPayload($staff, [
                     'changed_fields' => $changedFields,
                 ]);

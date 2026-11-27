@@ -115,13 +115,17 @@ class EmisGtkStagingTest extends TestCase
             'nik' => null,
             'nuptk' => '1234567890123456',
             'full_name_with_titles' => 'NAMA LAMA',
+            'phone' => null,
         ]);
 
         $staging = EmisGtkStaging::factory()->nuptkOnly()->create([
             'nuptk' => '1234567890123456',
             'full_name_with_titles' => 'NAMA BARU',
+            'phone' => '08123450000',
         ]);
 
+        // Mode produksi default (non-destructive SSOT): tidak menduplikasi staff,
+        // mengisi field kosong (phone), tetapi tidak menimpa nama master PINTU yang sudah terisi.
         (new CommitEmisGtkStagingJob)->handle();
 
         $staging->refresh();
@@ -129,6 +133,13 @@ class EmisGtkStagingTest extends TestCase
 
         $this->assertSame('committed', $staging->status);
         $this->assertSame(1, Staff::withTrashed()->count());
+        $this->assertSame('NAMA LAMA', $staff->full_name_with_titles);
+        $this->assertSame('08123450000', $staff->phone);
+
+        // Hanya jika overwrite dikonfirmasi eksplisit pada migrasi awal, nilai dapat ditimpa.
+        $staging->update(['status' => 'pending']);
+        (new CommitEmisGtkStagingJob(allowOverwrite: true, overwriteConfirmed: true))->handle();
+        $staff->refresh();
         $this->assertSame('NAMA BARU', $staff->full_name_with_titles);
     }
 
@@ -184,7 +195,7 @@ class EmisGtkStagingTest extends TestCase
             'birth_place' => 'Bandung',
         ]);
 
-        EmisGtkStaging::factory()->incomplete()->create([
+        $staging = EmisGtkStaging::factory()->incomplete()->create([
             'nik' => '3211250703820005',
             'phone' => null,
             'civil_rank' => null,
@@ -200,7 +211,16 @@ class EmisGtkStagingTest extends TestCase
             ],
         ]);
 
+        // Mode produksi default tidak menimpa master PINTU yang sudah terisi.
         (new CommitEmisGtkStagingJob)->handle();
+        $staff->refresh();
+        $this->assertSame('III/a', $staff->civil_rank);
+        $this->assertSame('08123456789', $staff->phone);
+
+        // Mode migrasi dengan konfirmasi overwrite menerapkan null eksplisit hanya untuk field yang diizinkan.
+        $staging->refresh();
+        $staging->update(['status' => 'pending']);
+        (new CommitEmisGtkStagingJob(allowOverwrite: true, overwriteConfirmed: true))->handle();
 
         $staff->refresh();
 

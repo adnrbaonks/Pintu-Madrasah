@@ -12,6 +12,8 @@ use App\Models\Setting;
 use App\Models\Student;
 use App\Models\StudentAcademicCohort;
 use App\Models\StudentMutation;
+use App\Services\DataOwnershipService;
+use App\Services\EmisReconciliationService;
 use App\Services\EmisService;
 use App\Services\FileCompressionService;
 use App\Support\Qr;
@@ -21,10 +23,26 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 
 class StudentController extends Controller
 {
+    public function __construct(
+        private DataOwnershipService $dataOwnershipService,
+        private EmisReconciliationService $reconciliationService,
+    ) {}
+
+    private function authorizeEditStudents(Request $request): void
+    {
+        abort_unless(
+            $request->user()?->can('edit_students'),
+            403,
+            'Anda tidak memiliki kewenangan untuk mengubah data master siswa.'
+        );
+    }
+
     /**
      * Display a listing of the students.
      */
@@ -89,11 +107,30 @@ class StudentController extends Controller
      */
     public function updateStatus(Request $request, Student $student)
     {
+        $this->authorizeEditStudents($request);
+
         $validated = $request->validate([
             'status' => 'required|in:active,graduated,mutated_out,dropped',
         ]);
 
+        $oldStatus = $student->status;
         $student->update($validated);
+
+        if ($oldStatus !== $validated['status']) {
+            $this->reconciliationService->recordOutboundUpdateTask(
+                entityType: 'student',
+                entityId: $student->id,
+                sourceType: 'student_status_update',
+                sourceId: null,
+                changedFields: [
+                    'status' => [
+                        'old_value' => $oldStatus,
+                        'new_value' => $validated['status'],
+                    ],
+                ],
+                actorId: $request->user()?->id,
+            );
+        }
 
         // Jika statusnya pindah/keluar/lulus, kita juga harus menghentikan status aktifnya di cohort terakhir
         if ($validated['status'] !== 'active') {
@@ -160,6 +197,8 @@ class StudentController extends Controller
      */
     public function uploadPhoto(Request $request, Student $student, FileCompressionService $compressionService)
     {
+        $this->authorizeEditStudents($request);
+
         $request->validate([
             'photo' => 'required|image|mimes:jpg,jpeg,png|max:5120', // max 5MB, will compress
         ]);
@@ -199,8 +238,10 @@ class StudentController extends Controller
     /**
      * Hapus foto profil siswa.
      */
-    public function deletePhoto(Student $student)
+    public function deletePhoto(Request $request, Student $student)
     {
+        $this->authorizeEditStudents($request);
+
         if ($student->profile_photo) {
             Storage::disk('local')->delete($student->profile_photo);
             $student->update([
@@ -401,68 +442,102 @@ class StudentController extends Controller
     /**
      * Sinkronisasi detail individu dari EMIS.
      */
-    public function edit(Student $student)
+    public function edit(Request $request, Student $student)
     {
+        $this->authorizeEditStudents($request);
+
         $student->current_rombel_name = $student->currentRombel()?->name;
 
         return Inertia::render('Students/Edit', [
             'student' => $student,
+            'ownership' => config('data_ownership.student', []),
         ]);
     }
 
     public function update(Request $request, Student $student)
     {
+        $this->authorizeEditStudents($request);
+
         $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'nis_local' => 'nullable|string|max:20',
-            'nisn' => 'nullable|string|max:20',
-            'nik' => 'nullable|string|max:20',
-            'gender' => 'required|in:L,P',
-            'birth_place' => 'required|string|max:100',
-            'birth_date' => 'required|date',
-            'religion' => 'required|string|max:50',
+            'name' => ['required', 'string', 'max:255'],
+            'nis_local' => ['nullable', 'string', 'max:20'],
+            'nisn' => ['nullable', 'regex:/^\d{10}$/', Rule::unique('students', 'nisn')->ignore($student->id)],
+            'nik' => ['nullable', 'regex:/^\d{16}$/', Rule::unique('students', 'nik')->ignore($student->id)],
+            'gender' => ['required', 'in:L,P'],
+            'birth_place' => ['required', 'string', 'max:100'],
+            'birth_date' => ['required', 'date'],
+            'religion' => ['nullable', 'string', 'max:50'],
+            'family_status' => ['nullable', 'string', 'max:50'],
+            'child_order' => ['nullable', 'integer', 'min:1'],
+            'child_number' => ['nullable', 'integer', 'min:1'],
+            'siblings_count' => ['nullable', 'integer', 'min:0'],
 
             // Alamat
-            'address' => 'nullable|string|max:500',
-            'rt' => 'nullable|string|max:10',
-            'rw' => 'nullable|string|max:10',
-            'village' => 'nullable|string|max:100',
-            'district' => 'nullable|string|max:100',
-            'regency' => 'nullable|string|max:100',
-            'postal_code' => 'nullable|string|max:10',
+            'address' => ['nullable', 'string', 'max:500'],
+            'rt' => ['nullable', 'string', 'max:10'],
+            'rw' => ['nullable', 'string', 'max:10'],
+            'rt_rw' => ['nullable', 'string', 'max:20'],
+            'village' => ['nullable', 'string', 'max:100'],
+            'district' => ['nullable', 'string', 'max:100'],
+            'city' => ['nullable', 'string', 'max:100'],
+            'regency' => ['nullable', 'string', 'max:100'],
+            'province' => ['nullable', 'string', 'max:100'],
+            'postal_code' => ['nullable', 'string', 'max:10'],
+            'residence_type' => ['nullable', 'string', 'max:50'],
+            'phone' => ['nullable', 'string', 'max:30'],
+            'email' => ['nullable', 'email', 'max:100'],
+            'parent_phone' => ['nullable', 'string', 'max:30'],
 
             // Ayah
-            'father_name' => 'nullable|string|max:255',
-            'father_nik' => 'nullable|string|max:20',
-            'father_job' => 'nullable|string|max:100',
-            'father_income' => 'nullable|string|max:50',
-            'father_phone' => 'nullable|string|max:30',
+            'father_name' => ['nullable', 'string', 'max:255'],
+            'father_nik' => ['nullable', 'regex:/^\d{16}$/'],
+            'father_birth_place' => ['nullable', 'string', 'max:100'],
+            'father_birth_date' => ['nullable', 'date'],
+            'father_education' => ['nullable', 'string', 'max:100'],
+            'father_job' => ['nullable', 'string', 'max:100'],
+            'father_occupation' => ['nullable', 'string', 'max:100'],
+            'father_income' => ['nullable', 'string', 'max:50'],
+            'father_phone' => ['nullable', 'string', 'max:30'],
 
             // Ibu
-            'mother_name' => 'nullable|string|max:255',
-            'mother_nik' => 'nullable|string|max:20',
-            'mother_job' => 'nullable|string|max:100',
-            'mother_income' => 'nullable|string|max:50',
-            'mother_phone' => 'nullable|string|max:30',
+            'mother_name' => ['nullable', 'string', 'max:255'],
+            'mother_nik' => ['nullable', 'regex:/^\d{16}$/'],
+            'mother_birth_place' => ['nullable', 'string', 'max:100'],
+            'mother_birth_date' => ['nullable', 'date'],
+            'mother_education' => ['nullable', 'string', 'max:100'],
+            'mother_job' => ['nullable', 'string', 'max:100'],
+            'mother_occupation' => ['nullable', 'string', 'max:100'],
+            'mother_income' => ['nullable', 'string', 'max:50'],
+            'mother_phone' => ['nullable', 'string', 'max:30'],
 
             // Wali
-            'guardian_name' => 'nullable|string|max:255',
-            'guardian_nik' => 'nullable|string|max:20',
-            'guardian_job' => 'nullable|string|max:100',
-            'guardian_phone' => 'nullable|string|max:30',
+            'guardian_name' => ['nullable', 'string', 'max:255'],
+            'guardian_nik' => ['nullable', 'regex:/^\d{16}$/'],
+            'guardian_job' => ['nullable', 'string', 'max:100'],
+            'guardian_occupation' => ['nullable', 'string', 'max:100'],
+            'guardian_phone' => ['nullable', 'string', 'max:30'],
+            'guardian_address' => ['nullable', 'string', 'max:500'],
 
             // Bantuan Sosial & Ekstra
-            'kip_number' => 'nullable|string|max:50',
-            'kk_number' => 'nullable|string|max:20',
-            'prev_school_name' => 'nullable|string|max:255',
-            'graduation_year' => 'nullable|integer',
-            'distance_to_school' => 'nullable|string|max:50',
-            'transportation' => 'nullable|string|max:50',
-            'enrollment_type' => 'nullable|string|max:50',
-            'pip_eligible' => 'nullable|boolean',
-            'pkh_eligible' => 'nullable|boolean',
-            'kks_eligible' => 'nullable|boolean',
+            'kip_number' => ['nullable', 'string', 'max:50'],
+            'kk_number' => ['nullable', 'regex:/^\d{16}$/'],
+            'prev_school_name' => ['nullable', 'string', 'max:255'],
+            'graduation_year' => ['nullable', 'integer'],
+            'distance_to_school' => ['nullable', 'string', 'max:50'],
+            'transportation' => ['nullable', 'string', 'max:50'],
+            'enrollment_type' => ['nullable', 'string', 'max:50'],
+            'pip_eligible' => ['nullable', 'boolean'],
+            'pkh_eligible' => ['nullable', 'boolean'],
+            'kks_eligible' => ['nullable', 'boolean'],
+
+            // Alasan perubahan identitas (wajib bila mengubah identitas siswa yang sudah terkunci/terverifikasi)
+            'identity_change_reason' => ['nullable', 'string', 'max:500'],
         ]);
+
+        $identityChangeReason = isset($validated['identity_change_reason'])
+            ? trim((string) $validated['identity_change_reason'])
+            : null;
+        unset($validated['identity_change_reason']);
 
         // Auto-uppercase nama siswa dan orang tua/wali
         $nameFields = ['name', 'father_name', 'mother_name', 'guardian_name'];
@@ -472,9 +547,108 @@ class StudentController extends Controller
             }
         }
 
-        $student->update($validated);
+        // Filter atribut sesuai matriks Data Ownership (mencegah modifikasi read_only seperti emis_student_id)
+        $allowedData = $this->dataOwnershipService->filterAllowedAttributes('student', $validated);
+
+        $changedPairs = [];
+        $changedDocumentRequiredFields = [];
+        $changedIdentityFields = [];
+        $identityBefore = [];
+        $identityAfter = [];
+
+        foreach ($allowedData as $field => $newValue) {
+            $oldRaw = $student->{$field};
+            $oldNorm = $this->normalizeStudentFieldValue($oldRaw);
+            $newNorm = $this->normalizeStudentFieldValue($newValue);
+
+            if ($oldNorm === $newNorm) {
+                continue;
+            }
+
+            $changedPairs[$field] = [
+                'old_value' => $oldNorm,
+                'new_value' => $newNorm,
+            ];
+
+            if ($this->dataOwnershipService->requiresVerification('student', $field)) {
+                $changedIdentityFields[] = $field;
+                $identityBefore[$field] = $oldNorm;
+                $identityAfter[$field] = $newNorm;
+            }
+
+            if ($oldNorm !== null && $this->dataOwnershipService->requiresDocument('student', $field)) {
+                $changedDocumentRequiredFields[] = $field;
+            }
+        }
+
+        if ($changedDocumentRequiredFields !== []) {
+            $hasSupportingDoc = $student->documents()
+                ->whereIn('document_type', ['kartu_keluarga', 'akta_kelahiran', 'ijazah', 'ktp_ortu', 'lainnya'])
+                ->exists();
+
+            if (! $hasSupportingDoc) {
+                $firstField = $changedDocumentRequiredFields[0];
+                $message = "Perubahan atribut identitas penting ({$firstField}) wajib didukung dokumen identitas siswa (KK/Akta/Ijazah) yang telah diunggah pada berkas siswa.";
+                throw ValidationException::withMessages([
+                    $firstField => $message,
+                    'identity_verification' => $message,
+                ]);
+            }
+        }
+
+        if ($changedIdentityFields !== [] && $student->isIdentityFieldProtected() && ($identityChangeReason === null || $identityChangeReason === '')) {
+            throw ValidationException::withMessages([
+                'identity_change_reason' => 'Identitas siswa telah terverifikasi/terkunci. Perubahan identitas wajib menyertakan alasan resmi perubahan data (identity_change_reason).',
+            ]);
+        }
+
+        DB::transaction(function () use ($request, $student, $allowedData, $changedPairs, $changedIdentityFields, $identityBefore, $identityAfter, $identityChangeReason): void {
+            $student->update($allowedData);
+
+            if ($changedIdentityFields !== []) {
+                ActivityLog::record(
+                    action: 'student_identity_updated',
+                    model: $student,
+                    before: $identityBefore,
+                    after: array_filter([
+                        ...$identityAfter,
+                        'identity_change_reason' => $identityChangeReason,
+                    ], fn ($v) => $v !== null && $v !== ''),
+                );
+            }
+
+            if ($changedPairs !== []) {
+                $this->reconciliationService->recordOutboundUpdateTask(
+                    entityType: 'student',
+                    entityId: $student->id,
+                    sourceType: 'student_operator_update',
+                    sourceId: null,
+                    changedFields: $changedPairs,
+                    actorId: $request->user()?->id,
+                );
+            }
+        });
 
         return back()->with('success', 'Data siswa berhasil diperbarui.');
+    }
+
+    private function normalizeStudentFieldValue(mixed $value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if ($value instanceof \DateTimeInterface) {
+            return $value->format('Y-m-d');
+        }
+
+        if (is_bool($value)) {
+            return $value ? '1' : '0';
+        }
+
+        $trimmed = trim((string) $value);
+
+        return $trimmed === '' ? null : $trimmed;
     }
 
     public function previewEmisDetail(Student $student, EmisService $emis)
@@ -701,16 +875,54 @@ class StudentController extends Controller
 
     public function commitEmisDetail(Request $request, Student $student)
     {
-        $updateData = $request->input('update_data', []);
-        if (! empty($updateData)) {
-            $student->update($updateData);
+        $this->authorizeEditStudents($request);
+
+        $updateData = (array) $request->input('update_data', []);
+        $allowedData = $this->dataOwnershipService->filterAllowedAttributes('student', $updateData);
+
+        // Kebijakan SSOT Produksi: EMIS tidak boleh menimpa atribut master PINTU yang sudah terisi secara otomatis.
+        // Hanya atribut yang masih kosong pada master PINTU yang dapat dilengkapi dari detail EMIS.
+        $fillEmptyOnly = [];
+        $skippedOverwrites = [];
+
+        foreach ($allowedData as $field => $emisValue) {
+            if ($emisValue === null || $emisValue === '') {
+                continue;
+            }
+
+            $currentNorm = $this->normalizeStudentFieldValue($student->{$field});
+            $emisNorm = $this->normalizeStudentFieldValue($emisValue);
+
+            if ($currentNorm === null) {
+                $fillEmptyOnly[$field] = $emisValue;
+            } elseif ($currentNorm !== $emisNorm) {
+                $skippedOverwrites[$field] = [
+                    'pintu_value' => $currentNorm,
+                    'emis_value' => $emisNorm,
+                ];
+            }
         }
 
-        return back()->with('success', 'Detail siswa berhasil diperbarui dari EMIS!');
+        if ($fillEmptyOnly !== []) {
+            $student->update($fillEmptyOnly);
+        }
+
+        if ($skippedOverwrites !== []) {
+            ActivityLog::record(
+                action: 'emis_detail_overwrite_blocked',
+                model: $student,
+                before: array_map(fn (array $pair) => $pair['pintu_value'], $skippedOverwrites),
+                after: array_map(fn (array $pair) => $pair['emis_value'], $skippedOverwrites),
+            );
+        }
+
+        return back()->with('success', 'Pelengkapan kolom kosong dari EMIS selesai (atribut master PINTU yang sudah terisi dipertahankan sebagai SSOT).');
     }
 
-    public function generateNismView()
+    public function generateNismView(Request $request)
     {
+        $this->authorizeEditStudents($request);
+
         $studentsWithoutNismCount = Student::where('status', 'active')
             ->where(function ($q) {
                 $q->whereNull('nis_local')->orWhere('nis_local', '');
@@ -722,8 +934,10 @@ class StudentController extends Controller
         ]);
     }
 
-    public function generateNism()
+    public function generateNism(Request $request)
     {
+        $this->authorizeEditStudents($request);
+
         $nsm = Setting::where('key', 'nsm')->value('value');
         if (! $nsm) {
             return back()->with('error', 'NSM belum diatur di pengaturan aplikasi.');

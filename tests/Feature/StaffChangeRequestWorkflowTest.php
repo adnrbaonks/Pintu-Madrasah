@@ -7,6 +7,7 @@ use App\Models\EmisGtkStaging;
 use App\Models\OutboxEvent;
 use App\Models\Staff;
 use App\Models\StaffChangeRequest;
+use App\Models\StaffChangeRequestItem;
 use App\Models\StaffDocument;
 use App\Models\User;
 use App\Services\StaffChangeRequestService;
@@ -168,12 +169,13 @@ class StaffChangeRequestWorkflowTest extends TestCase
             ->assertRedirect();
 
         $changeRequest->refresh();
-        $this->assertSame(StaffChangeRequest::STATUS_PENDING_EXTERNAL_SYNC, $changeRequest->status);
+        $this->assertSame(StaffChangeRequest::STATUS_COMPLETED, $changeRequest->status);
 
-        // Field lokal (phone) berubah, tetapi field EMIS (civil_rank) tetap III/a sampai sinkronisasi EMIS
+        // Kebijakan SSOT: PINTU adalah pemilik master data GTK. Setelah disetujui Kamad,
+        // perubahan diterapkan ke master GTK PINTU dan menghasilkan tugas pembaruan EMIS outbound.
         $staff->refresh();
         $this->assertSame('08123999999', $staff->phone);
-        $this->assertSame('III/a', $staff->civil_rank);
+        $this->assertSame('III/b', $staff->civil_rank);
 
         $this->assertDatabaseHas('staff_change_request_items', [
             'request_id' => $changeRequest->id,
@@ -183,7 +185,14 @@ class StaffChangeRequestWorkflowTest extends TestCase
         $this->assertDatabaseHas('staff_change_request_items', [
             'request_id' => $changeRequest->id,
             'field' => 'civil_rank',
-            'apply_status' => 'pending_external_sync',
+            'apply_status' => 'applied',
+        ]);
+        $this->assertDatabaseHas('emis_update_tasks', [
+            'entity_type' => 'staff',
+            'entity_id' => $staff->id,
+            'source_type' => 'staff_change_request',
+            'source_id' => $changeRequest->id,
+            'status' => 'pending',
         ]);
     }
 
@@ -514,34 +523,38 @@ class StaffChangeRequestWorkflowTest extends TestCase
             'civil_rank' => 'III/a',
         ]);
         $guru = User::factory()->create(['role' => 'guru', 'staff_id' => $staff->id]);
-        $kaurTu = User::factory()->create(['role' => 'kaur_tu']);
-        $kamad = User::factory()->create(['role' => 'kepala_madrasah']);
 
-        $this->actingAs($guru)->post('/profil-gtk/pengajuan', [
-            'reason' => 'Update kepangkatan EMIS',
-            'changes' => ['civil_rank' => 'III/b'],
-            'submit_now' => true,
-        ])->assertRedirect();
+        $changeRequest = StaffChangeRequest::create([
+            'staff_id' => $staff->id,
+            'requester_user_id' => $guru->id,
+            'status' => StaffChangeRequest::STATUS_PENDING_EXTERNAL_SYNC,
+            'reason' => 'Legacy pending external sync',
+            'submitted_at' => now()->subDay(),
+            'current_stage' => 'done',
+            'decided_at' => now()->subHour(),
+            'created_by' => $guru->id,
+        ]);
 
-        $changeRequest = StaffChangeRequest::where('staff_id', $staff->id)->firstOrFail();
-        $this->actingAs($kaurTu)->post("/verifikasi-gtk/{$changeRequest->id}/verify")->assertRedirect();
-        $this->actingAs($kamad)->post("/persetujuan-gtk/{$changeRequest->id}/approve")->assertRedirect();
+        $item = StaffChangeRequestItem::create([
+            'request_id' => $changeRequest->id,
+            'field' => 'civil_rank',
+            'old_value' => 'III/a',
+            'proposed_value' => 'III/b',
+            'owner_system_snapshot' => 'emis',
+            'sync_direction_snapshot' => 'inbound',
+            'change_policy_snapshot' => 'read_only',
+            'apply_status' => 'pending_external_sync',
+        ]);
 
-        $changeRequest->refresh();
-        $this->assertSame(StaffChangeRequest::STATUS_PENDING_EXTERNAL_SYNC, $changeRequest->status);
-
-        // Mensimulasikan hasil sinkronisasi EMIS (master data diperbarui ke nilai proposed)
+        // Mensimulasikan hasil sinkronisasi EMIS legacy (master data diperbarui ke nilai proposed)
         $staff->update(['civil_rank' => 'III/b']);
 
-        // Panggil rekonsiliasi
         $service = app(StaffChangeRequestService::class);
         $service->reconcileExternalSync($changeRequest);
 
         $changeRequest->refresh();
         $this->assertSame(StaffChangeRequest::STATUS_COMPLETED, $changeRequest->status);
-
-        $item = $changeRequest->items()->where('field', 'civil_rank')->first();
-        $this->assertSame('applied', $item->apply_status);
+        $this->assertSame('applied', $item->fresh()->apply_status);
     }
 
     public function test_commit_emis_gtk_staging_job_reconciles_matching_and_conflicting_pending_external_sync_requests(): void
@@ -562,19 +575,29 @@ class StaffChangeRequestWorkflowTest extends TestCase
         $guru1 = User::factory()->create(['role' => 'guru', 'staff_id' => $staffMatch->id]);
         $guru2 = User::factory()->create(['role' => 'guru', 'staff_id' => $staffConflict->id]);
         $guru3 = User::factory()->create(['role' => 'guru', 'staff_id' => $staffTimeout->id]);
-        $kaurTu = User::factory()->create(['role' => 'kaur_tu']);
-        $kamad = User::factory()->create(['role' => 'kepala_madrasah']);
 
         foreach ([[$guru1, $staffMatch, 'III/b'], [$guru2, $staffConflict, 'III/b'], [$guru3, $staffTimeout, 'III/b']] as [$guru, $staff, $proposed]) {
-            $this->actingAs($guru)->post('/profil-gtk/pengajuan', [
-                'reason' => 'Pengajuan pangkat EMIS',
-                'changes' => ['civil_rank' => $proposed],
-                'submit_now' => true,
-            ])->assertRedirect();
+            $req = StaffChangeRequest::create([
+                'staff_id' => $staff->id,
+                'requester_user_id' => $guru->id,
+                'status' => StaffChangeRequest::STATUS_PENDING_EXTERNAL_SYNC,
+                'reason' => 'Pengajuan pangkat legacy EMIS',
+                'submitted_at' => now()->subDay(),
+                'current_stage' => 'done',
+                'decided_at' => now()->subHour(),
+                'created_by' => $guru->id,
+            ]);
 
-            $req = StaffChangeRequest::where('staff_id', $staff->id)->firstOrFail();
-            $this->actingAs($kaurTu)->post("/verifikasi-gtk/{$req->id}/verify")->assertRedirect();
-            $this->actingAs($kamad)->post("/persetujuan-gtk/{$req->id}/approve")->assertRedirect();
+            StaffChangeRequestItem::create([
+                'request_id' => $req->id,
+                'field' => 'civil_rank',
+                'old_value' => 'III/a',
+                'proposed_value' => $proposed,
+                'owner_system_snapshot' => 'emis',
+                'sync_direction_snapshot' => 'inbound',
+                'change_policy_snapshot' => 'read_only',
+                'apply_status' => 'pending_external_sync',
+            ]);
         }
 
         $reqMatch = StaffChangeRequest::where('staff_id', $staffMatch->id)->firstOrFail();
@@ -618,7 +641,7 @@ class StaffChangeRequestWorkflowTest extends TestCase
             'status' => 'pending',
         ]);
 
-        (new CommitEmisGtkStagingJob)->handle();
+        (new CommitEmisGtkStagingJob(allowOverwrite: true, overwriteConfirmed: true))->handle();
 
         $this->assertSame(StaffChangeRequest::STATUS_COMPLETED, $reqMatch->fresh()->status);
         $this->assertSame('applied', $reqMatch->items()->first()->apply_status);
@@ -643,7 +666,7 @@ class StaffChangeRequestWorkflowTest extends TestCase
         $kaurTu = User::factory()->create(['role' => 'kaur_tu']);
         $kamad = User::factory()->create(['role' => 'kepala_madrasah']);
 
-        // Mengajukan pengosongan field lokal (phone) dan field otoritas EMIS (civil_rank) sekaligus
+        // Mengajukan pengosongan field phone dan civil_rank sekaligus
         $this->actingAs($guru)->post('/profil-gtk/pengajuan', [
             'reason' => 'Koreksi status non-PNS tanpa golongan dan hapus telepon lama',
             'changes' => [
@@ -657,34 +680,10 @@ class StaffChangeRequestWorkflowTest extends TestCase
         $this->actingAs($kaurTu)->post("/verifikasi-gtk/{$changeRequest->id}/verify")->assertRedirect();
         $this->actingAs($kamad)->post("/persetujuan-gtk/{$changeRequest->id}/approve")->assertRedirect();
 
-        // Field lokal langsung menjadi null, sedangkan field EMIS menunggu sinkronisasi eksternal
+        // Kebijakan SSOT: kedua field langsung dikosongkan pada master PINTU setelah disetujui Kamad
         $staff->refresh();
         $changeRequest->refresh();
         $this->assertNull($staff->phone);
-        $this->assertSame('III/a', $staff->civil_rank);
-        $this->assertSame(StaffChangeRequest::STATUS_PENDING_EXTERNAL_SYNC, $changeRequest->status);
-
-        // Staging EMIS masuk dengan civil_rank = null
-        EmisGtkStaging::create([
-            'nik' => '3201000000000099',
-            'full_name_with_titles' => $staff->full_name_with_titles,
-            'gender' => $staff->gender,
-            'birth_place' => $staff->birth_place,
-            'birth_date' => $staff->birth_date,
-            'employment_status' => $staff->employment_status,
-            'civil_rank' => null,
-            'raw_data' => [
-                'nik' => '3201000000000099',
-                'civil_rank' => null,
-            ],
-            'status' => 'pending',
-        ]);
-
-        (new CommitEmisGtkStagingJob)->handle();
-
-        $staff->refresh();
-        $changeRequest->refresh();
-
         $this->assertNull($staff->civil_rank);
         $this->assertSame(StaffChangeRequest::STATUS_COMPLETED, $changeRequest->status);
         $this->assertSame(

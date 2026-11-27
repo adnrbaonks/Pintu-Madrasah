@@ -24,10 +24,28 @@ use Illuminate\Validation\ValidationException;
 
 class StaffChangeRequestService
 {
+    /**
+     * Atribut identitas penting GTK yang wajib menyertakan dokumen bukti saat diajukan.
+     *
+     * @var array<int, string>
+     */
+    public const MANDATORY_DOCUMENT_IDENTITY_FIELDS = [
+        'nik',
+        'nip',
+        'nuptk',
+        'npk',
+        'full_name_with_titles',
+        'birth_place',
+        'birth_date',
+    ];
+
     public function __construct(
         private DataOwnershipService $dataOwnershipService,
         private OrganizationService $organizationService,
-    ) {}
+        private ?EmisReconciliationService $emisReconciliationService = null,
+    ) {
+        $this->emisReconciliationService ??= app(EmisReconciliationService::class);
+    }
 
     /**
      * Buat draf pengajuan perubahan data GTK beserta item perubahan dan lampiran bukti.
@@ -147,6 +165,18 @@ class StaffChangeRequestService
             if ($lockedRequest->items()->count() === 0) {
                 throw ValidationException::withMessages([
                     'items' => 'Pengajuan perubahan data harus memiliki minimal satu field yang diajukan.',
+                ]);
+            }
+
+            $requestedFields = $lockedRequest->items()->pluck('field')->all();
+            $missingDocFields = array_values(array_intersect($requestedFields, self::MANDATORY_DOCUMENT_IDENTITY_FIELDS));
+
+            if ($missingDocFields !== [] && ! $lockedRequest->attachments()->exists()) {
+                throw ValidationException::withMessages([
+                    'attachments' => sprintf(
+                        'Perubahan data identitas penting (%s) wajib dilampiri dokumen pendukung.',
+                        implode(', ', $missingDocFields)
+                    ),
                 ]);
             }
 
@@ -555,6 +585,23 @@ class StaffChangeRequestService
                     'ip_address' => request()?->ip(),
                     'user_agent' => request()?->userAgent(),
                 ]);
+
+                $changedPairs = [];
+                foreach ($afterPayload as $changedField => $newVal) {
+                    $changedPairs[$changedField] = [
+                        'old_value' => $beforePayload[$changedField] ?? null,
+                        'new_value' => $newVal,
+                    ];
+                }
+
+                $this->emisReconciliationService?->recordOutboundUpdateTask(
+                    entityType: 'staff',
+                    entityId: $lockedStaff->id,
+                    sourceType: 'staff_change_request',
+                    sourceId: $lockedRequest->id,
+                    changedFields: $changedPairs,
+                    actorId: $actorId ? (string) $actorId : null,
+                );
 
                 $eventPayload = [
                     'id' => $lockedStaff->id,

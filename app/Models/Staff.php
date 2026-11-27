@@ -16,6 +16,7 @@ class Staff extends Model
     public $incrementing = false;
 
     protected $fillable = [
+        'emis_gtk_id',
         'nip', 'nik', 'npk', 'nuptk',
         'full_name_with_titles', 'first_title', 'last_title',
         'gender', 'birth_place', 'birth_date', 'phone', 'email',
@@ -67,6 +68,12 @@ class Staff extends Model
     public function changeRequests()
     {
         return $this->hasMany(StaffChangeRequest::class);
+    }
+
+    public function emisUpdateTasks()
+    {
+        return $this->hasMany(EmisUpdateTask::class, 'entity_id')
+            ->where('entity_type', 'staff');
     }
 
     // ── Computed Attributes ───────────────────────────────────────────

@@ -9,20 +9,27 @@ use App\Jobs\PullEmisGtkDataJob;
 use App\Jobs\PullEmisStudentDataJob;
 use App\Models\AcademicYear;
 use App\Models\EmisGtkStaging;
+use App\Models\EmisImportBatch;
 use App\Models\EmisStaging;
+use App\Models\EmisUpdateTask;
 use App\Models\IntegrationLog;
 use App\Models\Staff;
 use App\Models\Student;
+use App\Services\EmisReconciliationService;
 use App\Services\EmisService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
 
 class EmisController extends Controller
 {
-    public function __construct(private readonly EmisService $emis) {}
+    public function __construct(
+        private readonly EmisService $emis,
+        private readonly EmisReconciliationService $reconciliation,
+    ) {}
 
     // ── Terima Token EMIS Siswa dari Bookmarklet ──────────────────────
 
@@ -284,6 +291,18 @@ class EmisController extends Controller
      */
     public function commitStaging(Request $request): JsonResponse
     {
+        $allowOverwrite = filter_var($request->input('allow_overwrite', false), FILTER_VALIDATE_BOOLEAN);
+        $overwriteConfirmed = filter_var($request->input('overwrite_confirmed', false), FILTER_VALIDATE_BOOLEAN);
+
+        if ($allowOverwrite && ! $overwriteConfirmed) {
+            return response()->json([
+                'success' => false,
+                'code' => 'OVERWRITE_CONFIRMATION_REQUIRED',
+                'message' => 'Import ulang yang menimpa data master PINTU wajib menyertakan konfirmasi eksplisit (overwrite_confirmed=true).',
+                'error' => ['code' => 'OVERWRITE_CONFIRMATION_REQUIRED'],
+            ], 422);
+        }
+
         $activeYear = AcademicYear::active();
         if (! $activeYear) {
             return response()->json(['success' => false, 'message' => 'Tahun Ajaran Aktif belum diatur.'], 422);
@@ -291,10 +310,16 @@ class EmisController extends Controller
 
         Cache::forget('emis:commit:progress');
 
-        CommitEmisStagingJob::dispatch()->onQueue('emis');
+        CommitEmisStagingJob::dispatch(
+            actorId: $request->user()?->id,
+            allowOverwrite: $allowOverwrite,
+            overwriteConfirmed: $overwriteConfirmed,
+        )->onQueue('emis');
 
         IntegrationLog::record('emis_siswa', 'emis_siswa.commit_triggered', 'success', [
             'academic_year_id' => $activeYear->id,
+            'allow_overwrite' => $allowOverwrite,
+            'overwrite_confirmed' => $overwriteConfirmed,
         ]);
 
         return response()->json([
@@ -390,15 +415,153 @@ class EmisController extends Controller
 
     public function commitGtkStaging(Request $request): JsonResponse
     {
+        $allowOverwrite = filter_var($request->input('allow_overwrite', false), FILTER_VALIDATE_BOOLEAN);
+        $overwriteConfirmed = filter_var($request->input('overwrite_confirmed', false), FILTER_VALIDATE_BOOLEAN);
+
+        if ($allowOverwrite && ! $overwriteConfirmed) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Import ulang yang menimpa data master GTK PINTU wajib menyertakan konfirmasi eksplisit (overwrite_confirmed=true).',
+                'error' => ['code' => 'OVERWRITE_CONFIRMATION_REQUIRED'],
+            ], 422);
+        }
+
         Cache::forget('emis_gtk:commit:progress');
 
-        CommitEmisGtkStagingJob::dispatch()->onQueue('emis');
+        CommitEmisGtkStagingJob::dispatch(
+            actorId: $request->user()?->id,
+            allowOverwrite: $allowOverwrite,
+            overwriteConfirmed: $overwriteConfirmed,
+        )->onQueue('emis');
 
-        IntegrationLog::record('emis_gtk', 'emis_gtk.commit_triggered', 'success');
+        IntegrationLog::record('emis_gtk', 'emis_gtk.commit_triggered', 'success', [
+            'allow_overwrite' => $allowOverwrite,
+            'overwrite_confirmed' => $overwriteConfirmed,
+        ]);
 
         return response()->json([
             'success' => true,
             'message' => 'Menyimpan data GTK ke database utama...',
+        ]);
+    }
+
+    /**
+     * POST /api/emis/reconcile
+     * Rekonsiliasi non-destruktif data Siswa antara master PINTU (SSOT) dan staging EMIS.
+     */
+    public function reconcileStudents(Request $request): JsonResponse
+    {
+        $batch = $this->reconciliation->reconcileStudents(
+            actorId: $request->user()?->id,
+            notes: $request->input('notes'),
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Rekonsiliasi data Siswa selesai tanpa mengubah master PINTU.',
+            'batch' => $batch,
+            'data' => $batch,
+        ]);
+    }
+
+    /**
+     * POST /api/emis-gtk/reconcile
+     * Rekonsiliasi non-destruktif data GTK antara master PINTU (SSOT) dan staging EMIS GTK.
+     */
+    public function reconcileGtk(Request $request): JsonResponse
+    {
+        $batch = $this->reconciliation->reconcileStaff(
+            actorId: $request->user()?->id,
+            notes: $request->input('notes'),
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Rekonsiliasi data GTK selesai tanpa mengubah master PINTU.',
+            'batch' => $batch,
+            'data' => $batch,
+        ]);
+    }
+
+    /**
+     * GET /api/emis/reconciliation-batches
+     */
+    public function reconciliationBatches(Request $request): JsonResponse
+    {
+        $query = EmisImportBatch::with('items')->orderByDesc('created_at');
+
+        if ($request->filled('entity_type')) {
+            $query->where('entity_type', $request->input('entity_type'));
+        }
+
+        if ($request->filled('process_type')) {
+            $query->where('process_type', $request->input('process_type'));
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $query->limit(50)->get(),
+        ]);
+    }
+
+    /**
+     * GET /api/emis/update-tasks
+     * Daftar perubahan master PINTU yang perlu diperbarui oleh operator ke EMIS.
+     */
+    public function updateTasks(Request $request): JsonResponse
+    {
+        $query = EmisUpdateTask::query()->orderByDesc('created_at');
+
+        if ($request->filled('entity_type')) {
+            $query->where('entity_type', $request->input('entity_type'));
+        }
+
+        if ($request->filled('entity_id')) {
+            $query->where('entity_id', $request->input('entity_id'));
+        }
+
+        if ($request->filled('status')) {
+            $query->where('status', $request->input('status'));
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $query->limit(100)->get(),
+        ]);
+    }
+
+    /**
+     * PATCH /api/emis/update-tasks/{task}
+     * Operator EMIS mencatat status pembaruan eksternal di EMIS tanpa mengubah master PINTU.
+     */
+    public function updateTaskStatus(Request $request, EmisUpdateTask $task): JsonResponse
+    {
+        $user = $request->user();
+        if (! $user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Hanya operator terautentikasi yang dapat memperbarui status sinkronisasi EMIS.',
+            ], 403);
+        }
+
+        $validated = $request->validate([
+            'status' => ['required', 'string', Rule::in(EmisUpdateTask::VALID_STATUSES)],
+            'operator_notes' => ['nullable', 'string', 'max:2000'],
+            'confirmation_reference' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        $updated = $this->reconciliation->updateTaskStatus(
+            task: $task,
+            status: $validated['status'],
+            operatorNotes: $validated['operator_notes'] ?? null,
+            confirmationReference: $validated['confirmation_reference'] ?? null,
+            actor: $user,
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Status pembaruan EMIS berhasil dicatat.',
+            'data' => $updated,
         ]);
     }
 
