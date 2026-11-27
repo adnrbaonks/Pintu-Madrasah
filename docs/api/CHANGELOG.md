@@ -105,3 +105,10 @@ Dokumen ini mencatat riwayat perubahan kontrak API v1 dan Webhook pada **PINTU M
 - `GET .../update-tasks` terpaginasi (`per_page` maks 100); respons memuat `meta`.
 - PII pada snapshot, `differences`, `changed_fields`, `match_value`, dan staging list disanitasi rekursif berdasarkan data ownership dictionary. Token integrasi: seluruh PII (termasuk nama/tgl lahir) disamarkan; operator sesi: identifier dimasking, nama/tgl lahir tetap terlihat.
 - `GET .../reconciliation-batches` kini menyertakan `items_count` per batch (tanpa memuat item) agar konsumen bisa memutuskan kapan memanggil endpoint items.
+
+## WP0.5.12
+
+- `POST /api/emis/reconcile` dan `POST /api/emis-gtk/reconcile` kini mengembalikan ringkasan batch (`batch`, `data`) tanpa relasi `items`; field `items_count` ditambahkan. Item diambil lewat `GET .../reconciliation-batches/{batch}/items` (tersanitasi, terpaginasi).
+- `GET /api/emis/staging` dan `GET /api/emis-gtk/staging` terpaginasi (`per_page` default 50, maks 200, `page`); `data` tetap array dan ditambah `meta` (`current_page`, `per_page`, `total`, `last_page`). PII disanitasi sesuai level (token: seluruh PII dimasking; sesi: identifier dimasking parsial).
+- Permission baru `reconcile_emis` (operator, admin). Matriks: lihat = `view_emis`; rekonsiliasi = `reconcile_emis`; pull/cancel/commit/import/ubah update-task = `sync_emis`. Token integrasi tetap dibatasi purpose (`emis_siswa` vs `emis_gtk`) dan tidak dapat commit/ubah task.
+- Fallback sesi tidak lagi meloloskan role (`staf`, `kaur_tu`, dll.) tanpa permission eksplisit.

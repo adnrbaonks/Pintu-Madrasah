@@ -283,3 +283,7 @@ Status: **aktif dan terverifikasi** via `gh api repos/adnrbaonks/Pintu-Madrasah/
 - Required status checks (strict/up-to-date): `Validate & format`, `Tests (SQLite)`, `Tests (MySQL 8 + Redis)`, `Build frontend assets`.
 - Force push dan penghapusan branch diblokir; berlaku juga untuk administrator.
 - Jumlah approval wajib = 0 (repo satu maintainer); naikkan bila tim bertambah.
+
+## 14. Catatan deploy WP0.5.12
+
+Jalankan `php artisan db:seed --class=RolesAndPermissionsSeeder --force` agar permission `reconcile_emis` terbentuk dan diberikan ke operator/admin. Tanpa itu, rekonsiliasi dari sesi akan ditolak 403. Klien yang membaca `data.items` dari respons reconcile harus pindah ke endpoint `/reconciliation-batches/{batch}/items`.
