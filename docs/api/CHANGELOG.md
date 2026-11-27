@@ -20,6 +20,23 @@ Dokumen ini mencatat riwayat perubahan kontrak API v1 dan Webhook pada **PINTU M
 
 ## Riwayat Rilis
 
+### v1.2.1 — 2026-11-27 (WP0.5.10 — Data Ownership Enforcement)
+#### Diperketat & Diperbaiki
+- **Kunci Mutasi EMIS di Mode Produksi & Prosedur Break-Glass (`P1.1`):**
+  - Penambahan `lifecycle_mode` (`development` | `migration` | `production`, default `production` via `PINTU_LIFECYCLE_MODE`) dan konfigurasi `break_glass` di `config/data_ownership.php`.
+  - Pada mode `production`, endpoint `POST /api/emis/commit`, `POST /api/emis-gtk/commit`, `CommitEmisStagingJob`, `CommitEmisGtkStagingJob`, dan `StudentController::commitEmisDetail()` menolak pembuatan record baru, *smart-fill* kolom kosong, maupun overwrite master data PINTU (`403 EMIS_COMMIT_DISABLED_IN_PRODUCTION`).
+  - Token integrasi (`X-Integration-Token` / Bearer `pm_int_...`) dilarang memicu endpoint commit (`403 INTEGRATION_TOKEN_COMMIT_FORBIDDEN`).
+  - Prosedur darurat *Break-Glass Migration* di produksi hanya aktif bila `PINTU_EMIS_BREAK_GLASS_ENABLED=true`, dieksekusi oleh pengguna manusia ber-permission `sync_emis` + `break_glass_emis_import`, serta menyertakan `break_glass=true`, `break_glass_confirmed=true`, dan `break_glass_reason` >= 15 karakter dengan pencatatan audit `emis_break_glass_commit_authorized`.
+- **Penutupan Bypass Edit Langsung pada Master GTK (`P1.2`):**
+  - `DataOwnershipService::isEditable()` dan `getEditableFields()` kini memeriksa `change_policy === 'direct'` **dan** `approval_required === false`.
+  - Seluruh atribut identitas, biodata, kepangkatan, pendidikan, dan kepegawaian GTK di `config/data_ownership.php` memiliki `change_policy = approval_required` dan `approval_required = true`, sehingga `PUT /gtk/{staff}` (`StaffController::update()`) tidak dapat digunakan untuk mem-bypass alur persetujuan 2 tingkat (GTK → Kaur TU → Kepala Madrasah). Hanya `is_active` yang tetap `direct`.
+- **Isolasi Domain EMIS Siswa vs GTK, Otorisasi Update Task, & Minimisasi PII (`P1.3`, `P2.1`):**
+  - `/api/emis/*` dikunci hanya untuk `entity_type = student` (`emis_siswa`) dan `/api/emis-gtk/*` dikunci hanya untuk `entity_type = staff` (`emis_gtk`); akses lintas domain ditolak dengan `403 FORBIDDEN_ENTITY_SCOPE`.
+  - `PATCH /api/emis*/update-tasks/{task}` menolak token integrasi (`403 INTEGRATION_TOKEN_TASK_UPDATE_FORBIDDEN`), mewajibkan sesi pengguna manusia dengan permission `sync_emis`, dan mengunci task `completed` dari pembukaan ulang tanpa `reopen_confirmed=true` + `operator_notes` >= 10 karakter (`422 INVALID_TASK_STATUS_TRANSITION`).
+  - Snapshot `pintu_snapshot` dan `emis_snapshot` pada `GET /reconciliation-batches` menyamarkan (*masking*) atribut PII sensitif.
+- **Peningkatan Kualitas Rekonsiliasi, Verifikasi Dokumen Siswa, & Pelestarian Riwayat (`P2.2`–`P2.7`):**
+  - Prioritas pencocokan siswa `emis_student_id -> nisn -> nik` dengan deteksi konflik multi-kandidat (`needs_review`), indeks hash $O(1)$ per chunk, semantik `diff_type` eksplisit (`emis_missing_value`, `pintu_missing_value`, `value_mismatch`), kewajiban `StudentDocument` berstatus `verified` saat mengubah identitas siswa, jejak audit `student_master_updated`, serta pelestarian baris `EmisStaging` (`status = committed`) dan snapshot rekonsiliasi.
+
 ### v1.2.0 — 2026-11-27 (Revisi Data Ownership SSOT & Final Security/Integrity Hardening)
 #### Ditambahkan & Diperketat
 - **Revisi Data Ownership — PINTU MADRASAH sebagai Production SSOT (`config/data_ownership.php`, `DataOwnershipService`):**

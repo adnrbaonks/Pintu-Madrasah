@@ -144,8 +144,14 @@ Seluruh kegagalan autentikasi, otorisasi scope, validasi, maupun `404` mengembal
 | `403` | `API_KEY_REVOKED` | API key telah dinonaktifkan atau dicabut |
 | `403` | `API_KEY_EXPIRED` | Masa berlaku API key telah habis |
 | `403` | `FORBIDDEN_SCOPE` | API key tidak memiliki scope yang disyaratkan endpoint |
+| `403` | `FORBIDDEN_PERMISSION` | Pengguna sesi tidak memiliki permission yang disyaratkan (`view_emis` / `sync_emis`) |
+| `403` | `FORBIDDEN_ENTITY_SCOPE` | Upaya mengakses entitas lintas domain EMIS (`student` pada `/api/emis-gtk/*` atau `staff` pada `/api/emis/*`) |
+| `403` | `EMIS_COMMIT_DISABLED_IN_PRODUCTION` | Mutasi master data dari EMIS dinonaktifkan pada mode `production` (`PINTU_LIFECYCLE_MODE=production`) |
+| `403` | `INTEGRATION_TOKEN_COMMIT_FORBIDDEN` | Token integrasi bookmarklet tidak diizinkan memicu commit master data |
+| `403` | `INTEGRATION_TOKEN_TASK_UPDATE_FORBIDDEN` | Token integrasi tidak diizinkan mengubah status `EmisUpdateTask` |
 | `404` | `RESOURCE_NOT_FOUND` | Data atau endpoint tidak ditemukan |
 | `422` | `VALIDATION_ERROR` | Parameter input tidak valid |
+| `422` | `INVALID_TASK_STATUS_TRANSITION` | Pembukaan ulang task `completed` tanpa `reopen_confirmed=true` dan `operator_notes` >= 10 karakter |
 | `429` | `RATE_LIMIT_EXCEEDED` | Melebihi batas 120 request/menit |
 
 ---
@@ -293,23 +299,27 @@ export function verifyPintuWebhook(rawBodyBuffer, headers, secret, toleranceSeco
 
 ## 8. Keamanan & Tata Kelola Endpoint Integrasi EMIS (`/api/emis/*` & `/api/emis-gtk/*`)
 
-1. **Kebijakan Single Source of Truth (SSOT) Produksi:**
-   - **PINTU MADRASAH adalah Single Source of Truth (SSOT)** untuk master data Siswa, GTK, dan Struktur Akademik ketika sistem telah berproduksi (`config/data_ownership.php` menetapkan `owner_system = local`).
-   - EMIS Kemenag berperan sebagai sumber seeding awal saat development/migrasi, sistem pembanding untuk rekonsiliasi non-destruktif, serta sistem eksternal tujuan pembaruan outbound oleh operator.
+1. **Kebijakan Single Source of Truth (SSOT) & Siklus Hidup Produksi (`PINTU_LIFECYCLE_MODE=production`):**
+   - **PINTU MADRASAH adalah Single Source of Truth (SSOT)** untuk master data Siswa, GTK, dan Struktur Akademik ketika sistem telah berproduksi (`config/data_ownership.php` menetapkan `owner_system = local` dan `lifecycle_mode = production`).
+   - Pada mode `production`, mutasi master data dari EMIS (`POST /api/emis/commit`, `POST /api/emis-gtk/commit`, `CommitEmisStagingJob`, `CommitEmisGtkStagingJob`, `POST /students/{student}/commit-emis`) **dinonaktifkan secara tegas (`403 EMIS_COMMIT_DISABLED_IN_PRODUCTION`)** — tidak membuat record baru, tidak melakukan *smart-fill* kolom kosong, dan tidak melakukan overwrite.
+   - Prosedur darurat *Break-Glass Migration* hanya dapat dijalankan apabila `PINTU_EMIS_BREAK_GLASS_ENABLED=true`, oleh pengguna manusia terautentikasi sesi web dengan permission `sync_emis` + `break_glass_emis_import`, serta menyertakan `break_glass=true`, `break_glass_confirmed=true`, dan `break_glass_reason` (minimal 15 karakter).
    - Lihat dokumen lengkap: [`docs/DATA-OWNERSHIP-AND-EMIS-GOVERNANCE.md`](DATA-OWNERSHIP-AND-EMIS-GOVERNANCE.md).
-2. **Pemisahan Tiga Endpoint Operasional EMIS:**
-   - **A. Import Awal (`POST /api/emis/commit`, `POST /api/emis-gtk/commit`):**
-     - Mencatat batch pada `emis_import_batches` (`process_type = initial_import`).
-     - Secara default (`allow_overwrite = false`), **tidak pernah menimpa** nilai master PINTU yang sudah terisi (hanya membuat record baru atau mengisi kolom kosong). Jika `allow_overwrite = true` dikirim tanpa `overwrite_confirmed = true`, server menolak dengan `422 OVERWRITE_CONFIRMATION_REQUIRED`.
-   - **B. Rekonsiliasi Non-Destruktif (`POST /api/emis/reconcile`, `POST /api/emis-gtk/reconcile`, `GET /api/emis*/reconciliation-batches`):**
-     - Membandingkan master PINTU terhadap staging EMIS tanpa mengubah data master PINTU, serta menyimpan temuan di `emis_reconciliation_items` dengan klasifikasi `same`, `different`, `pintu_only`, `emis_only`, atau `needs_review`.
+2. **Isolasi Domain (`emis_siswa` vs `emis_gtk`) & Minimisasi PII:**
+   - `/api/emis/*` dikunci hanya untuk `entity_type = student` (`purpose = emis_siswa`); `/api/emis-gtk/*` dikunci hanya untuk `entity_type = staff` (`purpose = emis_gtk`). Permintaan lintas domain ditolak dengan `403 FORBIDDEN_ENTITY_SCOPE`.
+   - Snapshot pada `GET /reconciliation-batches` menyamarkan (*masking*) atribut PII sensitif (`nik`, `kk_number`, `nip`, `nuptk`, `npk`, `address`, `phone`, `email`).
+3. **Pemisahan Tiga Endpoint Operasional EMIS:**
+   - **A. Import Awal (`POST /api/emis/commit`, `POST /api/emis-gtk/commit` — Khusus Mode `development`/`migration`):**
+     - Wajib sesi pengguna manusia ber-permission `sync_emis` (token integrasi ditolak dengan `403 INTEGRATION_TOKEN_COMMIT_FORBIDDEN`).
+     - Mencatat batch pada `emis_import_batches` (`process_type = initial_import`) dan mempertahankan baris staging (`status = committed`) beserta `pintu_snapshot`/`emis_snapshot`.
+   - **B. Rekonsiliasi Non-Destruktif (`POST /api/emis/reconcile`, `POST /api/emis-gtk/reconcile`, `GET /api/emis*/reconciliation-batches` — Aktif di Produksi):**
+     - Membandingkan master PINTU terhadap staging EMIS secara *read-only* menggunakan hash index $O(1)$ (prioritas Siswa: `emis_student_id -> nisn -> nik`; prioritas GTK: `emis_gtk_id -> nik -> nuptk -> nip -> npk`), serta menyimpan temuan di `emis_reconciliation_items` dengan klasifikasi `same`, `different`, `pintu_only`, `emis_only`, atau `needs_review`.
    - **C. Antrean Pembaruan Outbound EMIS (`GET /api/emis*/update-tasks`, `PATCH /api/emis*/update-tasks/{task}`):**
      - Menampilkan daftar perubahan master PINTU (`emis_update_tasks`) yang harus diperbarui oleh operator ke EMIS beserta status (`pending`, `in_progress`, `completed`, `failed`), catatan operator (`operator_notes`), dan referensi bukti (`confirmation_reference`).
-3. **Token Integrasi Terkelola (`integration_tokens`):**
+     - Endpoint `PATCH /update-tasks/{task}` wajib menggunakan sesi pengguna manusia ber-permission `sync_emis` (`403 INTEGRATION_TOKEN_TASK_UPDATE_FORBIDDEN` untuk token integrasi) dan menolak pembukaan ulang task `completed` tanpa `reopen_confirmed=true` serta `operator_notes` >= 10 karakter (`422 INVALID_TASK_STATUS_TRANSITION`).
+4. **Token Integrasi Terkelola (`integration_tokens`) & Middleware `AuthenticateIntegrationToken`:**
    - Setiap bookmarklet EMIS menyematkan token integrasi berformat `pm_int_<prefix8>_<secret40>` yang diterbitkan khusus untuk pengguna operator (`purpose`: `emis_siswa` atau `emis_gtk`) dengan masa berlaku terbatas dan dapat dicabut (*revoke*) kapan saja dari UI.
-4. **Middleware `AuthenticateIntegrationToken`:**
    - Memeriksa Bearer token (`Authorization: Bearer pm_int_...` atau header `X-Integration-Token`), memverifikasi hash SHA-256, memastikan `purpose` sesuai dan belum kedaluwarsa/dicabut.
-   - **Transisi Same-Origin Session:** Pemanggilan internal dari UI browser operator yang sudah login (sesi web terautentikasi dengan role `admin`, `kaur_tu`, `staf`, `operator`) tetap diizinkan sebagai fallback.
+   - Pemanggilan dari sesi web pengguna terautentikasi wajib memiliki permission `view_emis` atau `sync_emis` (`403 FORBIDDEN_PERMISSION` bila tidak berwenang).
 5. **Higiene Log & Validasi JWT:**
    - Token JWT EMIS maupun cookie `sessionid` **dilarang keras** ditulis ke file log.
    - Validasi JWT memeriksa struktur 3 segmen (`header.payload.signature`) serta klaim waktu kedaluwarsa `exp` pada payload JSON.
