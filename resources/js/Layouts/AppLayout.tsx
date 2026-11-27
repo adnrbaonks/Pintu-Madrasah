@@ -35,7 +35,8 @@ interface SharedProps {
         } | null;
     };
     flash: {
-        success?: string;
+        error?: string;
+        warning?: string;
         error?: string;
     };
     appName: string;
@@ -301,14 +302,15 @@ export default function AppLayout({ children }: AppLayoutProps) {
     // Show flash messages — sekali per pesan (bukan tiap render)
     const shownFlash = useRef<string | null>(null);
     useEffect(() => {
-        const key = flash?.success ? `ok:${flash.success}` : flash?.error ? `err:${flash.error}` : null;
+        const key = flash?.success ? `ok:${flash.success}` : flash?.warning ? `warn:${flash.warning}` : flash?.error ? `err:${flash.error}` : null;
         if (key && shownFlash.current !== key) {
             shownFlash.current = key;
             if (flash?.success) toast.success(flash.success);
+            else if (flash?.warning) toast.warning(flash.warning, { duration: 10000 });
             else if (flash?.error) toast.error(flash.error);
         }
         if (!key) shownFlash.current = null;
-    }, [flash?.success, flash?.error]);
+    }, [flash?.success, flash?.warning, flash?.error]);
 
     const toggleMenu = (label: string) => {
         setExpandedMenus((prev) =>

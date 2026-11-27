@@ -105,7 +105,9 @@ class StaffMasterCrudTest extends TestCase
                 'nik' => '9999999999999999',
             ])
             ->assertRedirect("/gtk/{$staff->id}")
-            ->assertSessionHas('success');
+            ->assertSessionMissing('success')
+            ->assertSessionHas('warning')
+            ->assertSessionHas('rejected_fields', fn ($f) => in_array('nik', $f, true) && in_array('phone', $f, true));
 
         $staff->refresh();
 

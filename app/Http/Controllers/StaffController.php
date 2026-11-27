@@ -105,6 +105,12 @@ class StaffController extends Controller
 
         $this->staffService->update($staff, $allowedAttributes, auth()->id());
 
+        if ($attemptedProtectedFields !== []) {
+            return redirect()->route('gtk.show', $staff->id)
+                ->with('warning', 'Sebagian perubahan disimpan ('.implode(', ', array_keys($allowedAttributes)).'). Field berikut DITOLAK dan tidak diubah karena wajib melalui alur pengajuan berjenjang (GTK -> Kaur TU -> Kepala Madrasah): '.implode(', ', $attemptedProtectedFields).'.')
+                ->with('rejected_fields', $attemptedProtectedFields);
+        }
+
         return redirect()->route('gtk.show', $staff->id)
             ->with('success', 'Data pegawai GTK berhasil diperbarui.');
     }
