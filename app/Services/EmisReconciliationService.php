@@ -111,9 +111,6 @@ class EmisReconciliationService
                 notes: $notes ?? 'Rekonsiliasi produksi PINTU (SSOT) vs EMIS Siswa',
             );
 
-            $students = Student::query()->get();
-            $studentIndex = $this->buildStudentLookupIndex($students);
-
             $matchedStudentIds = [];
             $sameCount = 0;
             $diffCount = 0;
@@ -123,7 +120,6 @@ class EmisReconciliationService
 
             EmisStaging::query()->orderBy('id')->chunk(500, function (Collection $stagings) use (
                 $batch,
-                $studentIndex,
                 &$matchedStudentIds,
                 &$sameCount,
                 &$diffCount,
@@ -131,6 +127,9 @@ class EmisReconciliationService
                 &$needsReviewCount,
                 &$totalRows,
             ): void {
+                // Lookup terindeks per chunk (whereIn) — master tidak dimuat seluruhnya ke memori.
+                $studentIndex = $this->buildStudentLookupIndex($this->fetchStudentsForChunk($stagings));
+
                 foreach ($stagings as $staging) {
                     $totalRows++;
                     $resolution = $this->resolveStudentMatch($staging, $studentIndex);
@@ -213,25 +212,27 @@ class EmisReconciliationService
             });
 
             $pintuOnlyCount = 0;
-            foreach ($students as $student) {
-                if (isset($matchedStudentIds[$student->id])) {
-                    continue;
-                }
+            Student::query()->orderBy('id')->chunkById(500, function (Collection $students) use ($batch, &$matchedStudentIds, &$pintuOnlyCount): void {
+                foreach ($students as $student) {
+                    if (isset($matchedStudentIds[$student->id])) {
+                        continue;
+                    }
 
-                $pintuOnlyCount++;
-                EmisReconciliationItem::create([
-                    'batch_id' => $batch->id,
-                    'entity_type' => 'student',
-                    'entity_id' => $student->id,
-                    'staging_id' => null,
-                    'external_reference_id' => $student->emis_student_id ?: $student->nisn,
-                    'classification' => EmisReconciliationItem::CLASS_PINTU_ONLY,
-                    'differences' => null,
-                    'pintu_snapshot' => $this->studentSnapshot($student),
-                    'emis_snapshot' => null,
-                    'review_notes' => 'Data ada di master PINTU namun tidak ditemukan pada dataset pembanding EMIS.',
-                ]);
-            }
+                    $pintuOnlyCount++;
+                    EmisReconciliationItem::create([
+                        'batch_id' => $batch->id,
+                        'entity_type' => 'student',
+                        'entity_id' => $student->id,
+                        'staging_id' => null,
+                        'external_reference_id' => $student->emis_student_id ?: $student->nisn,
+                        'classification' => EmisReconciliationItem::CLASS_PINTU_ONLY,
+                        'differences' => null,
+                        'pintu_snapshot' => $this->studentSnapshot($student),
+                        'emis_snapshot' => null,
+                        'review_notes' => 'Data ada di master PINTU namun tidak ditemukan pada dataset pembanding EMIS.',
+                    ]);
+                }
+            });
 
             $batch->update([
                 'total_rows' => $totalRows,
@@ -242,7 +243,7 @@ class EmisReconciliationService
                 'needs_review_count' => $needsReviewCount,
             ]);
 
-            return $batch->fresh(['items']);
+            return $batch->fresh();
         });
     }
 
@@ -261,9 +262,6 @@ class EmisReconciliationService
                 notes: $notes ?? 'Rekonsiliasi produksi PINTU (SSOT) vs EMIS GTK',
             );
 
-            $staffMembers = Staff::query()->get();
-            $staffIndex = $this->buildStaffLookupIndex($staffMembers);
-
             $matchedStaffIds = [];
             $sameCount = 0;
             $diffCount = 0;
@@ -273,7 +271,6 @@ class EmisReconciliationService
 
             EmisGtkStaging::query()->orderBy('id')->chunk(500, function (Collection $stagings) use (
                 $batch,
-                $staffIndex,
                 &$matchedStaffIds,
                 &$sameCount,
                 &$diffCount,
@@ -281,6 +278,8 @@ class EmisReconciliationService
                 &$needsReviewCount,
                 &$totalRows,
             ): void {
+                $staffIndex = $this->buildStaffLookupIndex($this->fetchStaffForChunk($stagings));
+
                 foreach ($stagings as $staging) {
                     $totalRows++;
                     $resolution = $this->resolveStaffMatch($staging, $staffIndex);
@@ -363,25 +362,27 @@ class EmisReconciliationService
             });
 
             $pintuOnlyCount = 0;
-            foreach ($staffMembers as $staff) {
-                if (isset($matchedStaffIds[$staff->id])) {
-                    continue;
-                }
+            Staff::query()->orderBy('id')->chunkById(500, function (Collection $staffMembers) use ($batch, &$matchedStaffIds, &$pintuOnlyCount): void {
+                foreach ($staffMembers as $staff) {
+                    if (isset($matchedStaffIds[$staff->id])) {
+                        continue;
+                    }
 
-                $pintuOnlyCount++;
-                EmisReconciliationItem::create([
-                    'batch_id' => $batch->id,
-                    'entity_type' => 'staff',
-                    'entity_id' => $staff->id,
-                    'staging_id' => null,
-                    'external_reference_id' => $staff->emis_gtk_id ?: ($staff->nik ?: ($staff->nuptk ?: ($staff->nip ?: $staff->npk))),
-                    'classification' => EmisReconciliationItem::CLASS_PINTU_ONLY,
-                    'differences' => null,
-                    'pintu_snapshot' => $this->staffSnapshot($staff),
-                    'emis_snapshot' => null,
-                    'review_notes' => 'Data ada di master PINTU namun tidak ditemukan pada dataset pembanding EMIS GTK.',
-                ]);
-            }
+                    $pintuOnlyCount++;
+                    EmisReconciliationItem::create([
+                        'batch_id' => $batch->id,
+                        'entity_type' => 'staff',
+                        'entity_id' => $staff->id,
+                        'staging_id' => null,
+                        'external_reference_id' => $staff->emis_gtk_id ?: ($staff->nik ?: ($staff->nuptk ?: ($staff->nip ?: $staff->npk))),
+                        'classification' => EmisReconciliationItem::CLASS_PINTU_ONLY,
+                        'differences' => null,
+                        'pintu_snapshot' => $this->staffSnapshot($staff),
+                        'emis_snapshot' => null,
+                        'review_notes' => 'Data ada di master PINTU namun tidak ditemukan pada dataset pembanding EMIS GTK.',
+                    ]);
+                }
+            });
 
             $batch->update([
                 'total_rows' => $totalRows,
@@ -392,7 +393,7 @@ class EmisReconciliationService
                 'needs_review_count' => $needsReviewCount,
             ]);
 
-            return $batch->fresh(['items']);
+            return $batch->fresh();
         });
     }
 
@@ -572,6 +573,68 @@ class EmisReconciliationService
      * @param  Collection<int, Student>  $students
      * @return array{emis_student_id: array<string, Student>, nisn: array<string, Student>, nik: array<string, Student>}
      */
+    private function fetchStudentsForChunk(Collection $stagings): Collection
+    {
+        $keys = ['emis_student_id' => [], 'nisn' => [], 'nik' => []];
+        foreach ($stagings as $staging) {
+            $vals = [
+                'emis_student_id' => trim((string) $this->extractStudentStagingValue($staging, 'emis_student_id')),
+                'nisn' => trim((string) $staging->nisn),
+                'nik' => trim((string) $staging->nik),
+            ];
+            foreach ($vals as $k => $v) {
+                if ($v !== '') {
+                    $keys[$k][$v] = true;
+                }
+            }
+        }
+
+        $keys = array_map(fn (array $m): array => array_keys($m), $keys);
+        if (array_filter($keys) === []) {
+            return collect();
+        }
+
+        return Student::query()
+            ->where(function ($q) use ($keys): void {
+                foreach ($keys as $col => $list) {
+                    if ($list !== []) {
+                        $q->orWhereIn($col, $list);
+                    }
+                }
+            })
+            ->orderBy('id')
+            ->get();
+    }
+
+    private function fetchStaffForChunk(Collection $stagings): Collection
+    {
+        $keys = ['emis_gtk_id' => [], 'nik' => [], 'nuptk' => [], 'nip' => [], 'npk' => []];
+        foreach ($stagings as $staging) {
+            foreach (array_keys($keys) as $k) {
+                $v = trim((string) $staging->{$k});
+                if ($v !== '') {
+                    $keys[$k][$v] = true;
+                }
+            }
+        }
+
+        $keys = array_map(fn (array $m): array => array_keys($m), $keys);
+        if (array_filter($keys) === []) {
+            return collect();
+        }
+
+        return Staff::query()
+            ->where(function ($q) use ($keys): void {
+                foreach ($keys as $col => $list) {
+                    if ($list !== []) {
+                        $q->orWhereIn($col, $list);
+                    }
+                }
+            })
+            ->orderBy('id')
+            ->get();
+    }
+
     private function buildStudentLookupIndex(Collection $students): array
     {
         $index = [

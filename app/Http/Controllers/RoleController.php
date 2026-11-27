@@ -112,6 +112,7 @@ class RoleController extends Controller
                 'label' => 'Integrasi & Sistem',
                 'permissions' => [
                     'view_emis' => 'Lihat Staging Sinkronisasi EMIS',
+                    'reconcile_emis' => 'Jalankan Rekonsiliasi EMIS (non-destruktif)',
                     'sync_emis' => 'Jalankan Tarik & Commit Data EMIS',
                     'manage_api_clients' => 'Kelola API Key Satelit',
                     'manage_webhooks' => 'Kelola Webhook Subscription',

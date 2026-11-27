@@ -15,6 +15,20 @@ import { toast } from 'sonner';
 
 type Step = 'idle' | 'pulling' | 'pull_done' | 'review' | 'committing' | 'commit_done' | 'error';
 
+async function fetchAllStaging(): Promise<any[]> {
+    const rows: any[] = [];
+    let page = 1;
+    let last = 1;
+    do {
+        const res = await fetch(`/api/emis/staging?per_page=200&page=${page}`);
+        const json = await res.json();
+        rows.push(...(json.data || []));
+        last = json.meta?.last_page ?? 1;
+        page++;
+    } while (page <= last);
+    return rows;
+}
+
 export default function EmisSiswaSync({
     integrationTokens = [],
 }: {
@@ -104,9 +118,7 @@ export default function EmisSiswaSync({
         setLoadingStaging(true);
         setReviewPage(1);
         try {
-            const res = await fetch('/api/emis/staging');
-            const data = await res.json();
-            setStagingData(data.data || []);
+            setStagingData(await fetchAllStaging());
             setStep('review');
         } catch (e) {
             toast.error('Gagal mengambil data review.');

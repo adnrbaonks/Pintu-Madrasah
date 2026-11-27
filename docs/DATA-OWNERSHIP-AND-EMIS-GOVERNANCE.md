@@ -116,3 +116,10 @@ Apabila pada masa transisi produksi diperlukan import darurat dari staging EMIS:
 - `PUT /gtk/{staff}` dengan field campuran: field direct disimpan, field approval_required ditolak dan dilaporkan lewat flash `warning`/`rejected_fields` (bukan `success`).
 - Guard test: setiap kolom `students`/`staff` wajib terdaftar di dictionary, dan kolom pribadi (nik, nisn, phone, email, alamat, data orang tua/wali, dll.) wajib `sensitive` agar disamarkan; kolom baru yang belum diklasifikasi menggagalkan CI.
 - Operator sesi tetap melihat NISN/nama utuh di `GET /api/emis/staging` (kebutuhan review UI); token integrasi selalu disamarkan.
+
+## WP0.5.12 — Respons rekonsiliasi, staging, permission
+
+- Respons reconcile berupa ringkasan batch tanpa items (mencegah PII mentah lolos); item hanya lewat endpoint items yang disanitasi `EmisPiiSanitizer`.
+- Staging dipaginasi dengan bulk lookup (tanpa N+1).
+- Rekonsiliasi memuat master per chunk staging (whereIn indeks emis_id/nisn/nik) dan menghitung `pintu_only` dengan `chunkById`; seluruh proses tetap dalam satu transaksi agar batch tidak setengah jadi. Prioritas match EMIS ID → NISN → NIK tidak berubah; hasil idempotent (teruji melintasi batas chunk 500).
+- Matriks permission: operator (`view_emis`, `reconcile_emis`, `sync_emis`); staf/kaur_tu/kepala_madrasah hanya `view_emis`; admin tidak otomatis memiliki hak persetujuan substantif.

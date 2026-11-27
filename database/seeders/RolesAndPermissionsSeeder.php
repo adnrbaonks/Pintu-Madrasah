@@ -51,7 +51,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'view_letters', 'manage_letters',
             'print_documents',
             // Integrasi & EMIS
-            'view_emis', 'sync_emis', 'break_glass_emis_import',
+            'view_emis', 'reconcile_emis', 'sync_emis', 'break_glass_emis_import',
             'manage_api_clients', 'manage_webhooks',
             // Sistem
             'view_audit_logs', 'manage_users', 'manage_settings',
@@ -123,7 +123,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'view_ppdb', 'manage_ppdb', 'view_ppdb_documents', 'view_mutation_documents',
             'view_letters',
             'print_documents',
-            'view_emis', 'sync_emis',
+            'view_emis', 'reconcile_emis', 'sync_emis',
             'validate_tpg',
         ]);
 

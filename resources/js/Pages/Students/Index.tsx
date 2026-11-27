@@ -70,9 +70,7 @@ function EmisSyncModal({ children }: { children: React.ReactNode }) {
 
                     if (data.emis_siswa?.progress?.is_staging_done && stagingData.length === 0 && !isLoadingStaging) {
                         setIsLoadingStaging(true);
-                        const stageRes = await fetch('/api/emis/staging');
-                        const stageData = await stageRes.json();
-                        setStagingData(stageData.data || []);
+                        setStagingData(await fetchAllStaging());
                         setIsLoadingStaging(false);
                     }
                 } catch {
@@ -253,6 +251,20 @@ function EmisSyncModal({ children }: { children: React.ReactNode }) {
             </DialogContent>
         </Dialog>
     );
+}
+
+async function fetchAllStaging(): Promise<any[]> {
+    const rows: any[] = [];
+    let page = 1;
+    let last = 1;
+    do {
+        const res = await fetch(`/api/emis/staging?per_page=200&page=${page}`);
+        const json = await res.json();
+        rows.push(...(json.data || []));
+        last = json.meta?.last_page ?? 1;
+        page++;
+    } while (page <= last);
+    return rows;
 }
 
 export default function Index({ students, filters, rombels }: { students: PaginationProps, filters: any, rombels: any[] }) {

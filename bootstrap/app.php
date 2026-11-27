@@ -4,6 +4,7 @@ use App\Http\Middleware\ApiDeprecation;
 use App\Http\Middleware\AuthenticateIntegrationToken;
 use App\Http\Middleware\CheckApiKey;
 use App\Http\Middleware\CheckApiScope;
+use App\Http\Middleware\EnsureEmisAbility;
 use App\Http\Middleware\ForceJson;
 use App\Http\Middleware\HandleInertiaRequests;
 use App\Http\Middleware\IdempotencyKey;
@@ -44,6 +45,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'api.deprecation' => ApiDeprecation::class,
             'api.idempotent' => IdempotencyKey::class,
             'integration.token' => AuthenticateIntegrationToken::class,
+            'emis.ability' => EnsureEmisAbility::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
