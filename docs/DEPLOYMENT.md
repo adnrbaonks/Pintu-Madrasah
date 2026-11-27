@@ -277,13 +277,9 @@ menutup pola umum, tetapi tetap periksa `git status` sebelum commit.
 
 ## 13. Branch protection `main` (WP0.5.11)
 
-Status: **belum diverifikasi/diterapkan dari repo ini** (`gh` CLI tidak tersedia). Terapkan manual di
-GitHub → Settings → Branches → Add branch ruleset untuk `main`:
+Status: **aktif dan terverifikasi** via `gh api repos/adnrbaonks/Pintu-Madrasah/branches/main/protection`:
 
-- Require a pull request before merging (minimal 1 approval; dismiss stale approvals).
-- Require status checks to pass, dan branch up to date. Required checks (nama job di `.github/workflows/ci.yml`):
-  `Validate & format`, `Tests (SQLite)`, `Tests (MySQL 8 + Redis)`, `Build frontend assets`.
-- Block force pushes dan block deletions.
-- Include administrators (tanpa bypass).
-
-Verifikasi setelah diterapkan: `gh api repos/adnrbaonks/Pintu-Madrasah/branches/main/protection`.
+- Pull request wajib sebelum merge (stale approval di-dismiss, conversation harus resolved).
+- Required status checks (strict/up-to-date): `Validate & format`, `Tests (SQLite)`, `Tests (MySQL 8 + Redis)`, `Build frontend assets`.
+- Force push dan penghapusan branch diblokir; berlaku juga untuk administrator.
+- Jumlah approval wajib = 0 (repo satu maintainer); naikkan bila tim bertambah.

@@ -114,3 +114,5 @@ Apabila pada masa transisi produksi diperlukan import darurat dari staging EMIS:
 ## WP0.5.11 — PII, UX direct edit GTK, pagination
 - `App\Services\EmisPiiSanitizer` menurunkan daftar PII dari flag `sensitive` di `config/data_ownership.php` (+ nama/gelar/pendidikan) dan menyanitasi rekursif.
 - `PUT /gtk/{staff}` dengan field campuran: field direct disimpan, field approval_required ditolak dan dilaporkan lewat flash `warning`/`rejected_fields` (bukan `success`).
+- Guard test: setiap kolom `students`/`staff` wajib terdaftar di dictionary, dan kolom pribadi (nik, nisn, phone, email, alamat, data orang tua/wali, dll.) wajib `sensitive` agar disamarkan; kolom baru yang belum diklasifikasi menggagalkan CI.
+- Operator sesi tetap melihat NISN/nama utuh di `GET /api/emis/staging` (kebutuhan review UI); token integrasi selalu disamarkan.

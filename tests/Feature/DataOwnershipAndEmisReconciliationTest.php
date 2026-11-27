@@ -19,6 +19,7 @@ use App\Services\EmisPiiSanitizer;
 use App\Services\IntegrationTokenService;
 use Illuminate\Foundation\Testing\LazilyRefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
@@ -649,6 +650,7 @@ class DataOwnershipAndEmisReconciliationTest extends TestCase
             ->assertOk()
             ->assertJsonStructure(['meta' => ['current_page', 'per_page', 'total', 'last_page']]);
         $this->assertNull($batchRes->json('data.0.items'));
+        $this->assertSame(1, $batchRes->json('data.0.items_count'));
 
         $batchId = $batchRes->json('data.0.id');
         $itemsRes = $this->actingAs($operator)
@@ -772,6 +774,12 @@ class DataOwnershipAndEmisReconciliationTest extends TestCase
             }
         }
 
+        // Operator sesi tetap melihat NISN & nama utuh di staging untuk review UI
+        $stagingOp = $this->actingAs($operator)->getJson('/api/emis/staging')->assertOk();
+        $this->assertSame('4000000002', $stagingOp->json('data.0.nisn'));
+        $this->assertSame('Rahasia Nama Siswa Berbeda', $stagingOp->json('data.0.name'));
+        auth()->forgetGuards();
+
         // Respons token tetap usable: struktur & klasifikasi tersedia
         $items = $this->getJson("/api/emis/reconciliation-batches/{$batchId}/items", $headers)->assertOk();
         $this->assertNotEmpty($items->json('data.0.classification'));
@@ -793,5 +801,28 @@ class DataOwnershipAndEmisReconciliationTest extends TestCase
         $this->assertStringNotContainsString('3201000011112222', json_encode($sanitized));
 
         $this->assertNotNull($task->id);
+    }
+
+    public function test_every_student_and_staff_column_is_classified_and_personal_columns_are_sensitive(): void
+    {
+        $technical = [
+            'id', 'created_at', 'updated_at', 'deleted_at', 'is_verified_by_ai', 'is_locked', 'profile_photo',
+            'gdrive_photo_id', 'gdrive_photo_url', 'photo_upload_status', 'photo_upload_retries',
+        ];
+        $ownership = app(DataOwnershipService::class);
+        $sanitizer = app(EmisPiiSanitizer::class);
+
+        foreach (['student' => 'students', 'staff' => 'staff'] as $entity => $table) {
+            foreach (Schema::getColumnListing($table) as $column) {
+                if (in_array($column, $technical, true)) {
+                    continue;
+                }
+                $this->assertNotNull($ownership->getFieldConfig($entity, $column), "Kolom {$table}.{$column} belum ada di data ownership dictionary");
+
+                if (preg_match('/(nik|nisn|nip|nuptk|npk|phone|email|address|birth|father_|mother_|guardian_)/', $column)) {
+                    $this->assertTrue($sanitizer->isSensitiveKey($column), "Kolom pribadi {$table}.{$column} belum disamarkan");
+                }
+            }
+        }
     }
 }
