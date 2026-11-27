@@ -30,6 +30,7 @@ Route::prefix('emis')->middleware(['throttle:60,1', 'integration.token:emis_sisw
     Route::post('/commit', [EmisController::class, 'commitStaging']);
     Route::post('/reconcile', [EmisController::class, 'reconcileStudents']);
     Route::get('/reconciliation-batches', [EmisController::class, 'reconciliationBatches']);
+    Route::get('/reconciliation-batches/{batch}/items', [EmisController::class, 'reconciliationBatchItems']);
     Route::get('/update-tasks', [EmisController::class, 'updateTasks']);
     Route::patch('/update-tasks/{task}', [EmisController::class, 'updateTaskStatus']);
 });
@@ -42,6 +43,7 @@ Route::prefix('emis-gtk')->middleware(['throttle:60,1', 'integration.token:emis_
     Route::post('/commit', [EmisController::class, 'commitGtkStaging']);
     Route::post('/reconcile', [EmisController::class, 'reconcileGtk']);
     Route::get('/reconciliation-batches', [EmisController::class, 'reconciliationBatches']);
+    Route::get('/reconciliation-batches/{batch}/items', [EmisController::class, 'reconciliationBatchItems']);
     Route::get('/update-tasks', [EmisController::class, 'updateTasks']);
     Route::patch('/update-tasks/{task}', [EmisController::class, 'updateTaskStatus']);
     Route::get('/progress', [EmisController::class, 'gtkProgress']);

@@ -17,8 +17,10 @@ use App\Models\IntegrationLog;
 use App\Models\Staff;
 use App\Models\Student;
 use App\Services\DataOwnershipService;
+use App\Services\EmisPiiSanitizer;
 use App\Services\EmisReconciliationService;
 use App\Services\EmisService;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -28,30 +30,11 @@ use Illuminate\Validation\Rule;
 
 class EmisController extends Controller
 {
-    /**
-     * Atribut PII sensitif yang disamarkan pada respons API rekonsiliasi/batch.
-     *
-     * @var array<int, string>
-     */
-    private const SENSITIVE_SNAPSHOT_KEYS = [
-        'nik',
-        'kk_number',
-        'no_kk',
-        'nip',
-        'nuptk',
-        'npk',
-        'address',
-        'phone',
-        'email',
-        'father_nik',
-        'mother_nik',
-        'guardian_nik',
-    ];
-
     public function __construct(
         private readonly EmisService $emis,
         private readonly EmisReconciliationService $reconciliation,
         private readonly DataOwnershipService $ownership,
+        private readonly EmisPiiSanitizer $pii,
     ) {}
 
     // ── Terima Token EMIS Siswa dari Bookmarklet ──────────────────────
@@ -304,7 +287,7 @@ class EmisController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $results,
+            'data' => $this->sanitizeStagingRows($request, $results->all(), ['nisn', 'name', 'existing_name']),
         ]);
     }
 
@@ -442,7 +425,7 @@ class EmisController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $results,
+            'data' => $this->sanitizeStagingRows($request, $results->all(), ['full_name_with_titles', 'existing_name']),
         ]);
     }
 
@@ -534,7 +517,7 @@ class EmisController extends Controller
             return $denied;
         }
 
-        $query = EmisImportBatch::with('items')
+        $query = EmisImportBatch::query()
             ->where('entity_type', $boundEntityType)
             ->orderByDesc('created_at');
 
@@ -542,37 +525,44 @@ class EmisController extends Controller
             $query->where('process_type', $request->input('process_type'));
         }
 
-        $batches = $query->limit(50)->get()->map(function (EmisImportBatch $batch): array {
-            $payload = $batch->toArray();
-            $payload['items'] = collect($payload['items'] ?? [])
-                ->map(function (array $item): array {
-                    $item['pintu_snapshot'] = $this->sanitizeSnapshotPii($item['pintu_snapshot'] ?? null);
-                    $item['emis_snapshot'] = $this->sanitizeSnapshotPii($item['emis_snapshot'] ?? null);
-
-                    if (is_string($item['match_key'] ?? null) && in_array($item['match_key'], self::SENSITIVE_SNAPSHOT_KEYS, true)) {
-                        $item['match_value'] = $this->maskSensitiveValue($item['match_key'], $item['match_value'] ?? null);
-                    }
-
-                    if (is_array($item['differences'] ?? null)) {
-                        foreach ($item['differences'] as $field => $diff) {
-                            if (in_array($field, self::SENSITIVE_SNAPSHOT_KEYS, true) && is_array($diff)) {
-                                $item['differences'][$field]['pintu_value'] = $this->maskSensitiveValue($field, $diff['pintu_value'] ?? null);
-                                $item['differences'][$field]['emis_value'] = $this->maskSensitiveValue($field, $diff['emis_value'] ?? null);
-                            }
-                        }
-                    }
-
-                    return $item;
-                })
-                ->values()
-                ->all();
-
-            return $payload;
-        });
+        $paginator = $query->paginate($this->resolvePerPage($request, 20, 50));
 
         return response()->json([
             'success' => true,
-            'data' => $batches,
+            'data' => $paginator->items(),
+            'meta' => $this->paginationMeta($paginator),
+        ]);
+    }
+
+    /**
+     * GET /api/emis/reconciliation-batches/{batch}/items | GET /api/emis-gtk/reconciliation-batches/{batch}/items
+     * Item rekonsiliasi per batch (paginasi), dengan PII disanitasi sesuai level autentikasi.
+     */
+    public function reconciliationBatchItems(Request $request, EmisImportBatch $batch): JsonResponse
+    {
+        $boundEntityType = $this->resolveBoundEntityType($request);
+        if ($denied = $this->ensureEntityScopeMatches($request, $boundEntityType, $batch->entity_type)) {
+            return $denied;
+        }
+
+        $query = $batch->items()->orderBy('id');
+
+        if ($request->filled('classification')) {
+            $query->where('classification', $request->input('classification'));
+        }
+
+        $paginator = $query->paginate($this->resolvePerPage($request, 50, 200));
+        $level = $this->piiLevel($request);
+
+        $items = collect($paginator->items())
+            ->map(fn ($item): array => $this->pii->sanitizeItem($item->toArray(), $level))
+            ->values()
+            ->all();
+
+        return response()->json([
+            'success' => true,
+            'data' => $items,
+            'meta' => $this->paginationMeta($paginator),
         ]);
     }
 
@@ -599,27 +589,18 @@ class EmisController extends Controller
             $query->where('status', $request->input('status'));
         }
 
-        $isTokenAuth = $request->attributes->get('integration_auth_method') === 'token'
-            || $request->attributes->get('integration_token') !== null;
+        $paginator = $query->paginate($this->resolvePerPage($request, 50, 100));
+        $level = $this->piiLevel($request);
 
-        $tasks = $query->limit(100)->get()->map(function (EmisUpdateTask $task) use ($isTokenAuth): array {
-            $payload = $task->toArray();
-
-            if ($isTokenAuth && is_array($payload['changed_fields'] ?? null)) {
-                foreach ($payload['changed_fields'] as $field => $change) {
-                    if (in_array($field, self::SENSITIVE_SNAPSHOT_KEYS, true) && is_array($change)) {
-                        $payload['changed_fields'][$field]['old_value'] = $this->maskSensitiveValue($field, $change['old_value'] ?? null);
-                        $payload['changed_fields'][$field]['new_value'] = $this->maskSensitiveValue($field, $change['new_value'] ?? null);
-                    }
-                }
-            }
-
-            return $payload;
-        });
+        $tasks = collect($paginator->items())
+            ->map(fn (EmisUpdateTask $task): array => $this->pii->sanitize($task->toArray(), $level))
+            ->values()
+            ->all();
 
         return response()->json([
             'success' => true,
             'data' => $tasks,
+            'meta' => $this->paginationMeta($paginator),
         ]);
     }
 
@@ -825,45 +806,57 @@ class EmisController extends Controller
         return null;
     }
 
-    /**
-     * Samarkan atribut PII sensitif pada snapshot rekonsiliasi sebelum dikirim melalui respons JSON.
-     *
-     * @param  array<string, mixed>|null  $snapshot
-     * @return array<string, mixed>|null
-     */
-    private function sanitizeSnapshotPii(?array $snapshot): ?array
+    private function isTokenAuth(Request $request): bool
     {
-        if (! is_array($snapshot)) {
-            return null;
-        }
-
-        foreach ($snapshot as $field => $value) {
-            if (in_array((string) $field, self::SENSITIVE_SNAPSHOT_KEYS, true)) {
-                $snapshot[$field] = $this->maskSensitiveValue((string) $field, $value);
-            }
-        }
-
-        return $snapshot;
+        return $request->attributes->get('integration_auth_method') === 'token'
+            || $request->attributes->get('integration_token') !== null;
     }
 
-    private function maskSensitiveValue(string $field, mixed $value): mixed
+    private function piiLevel(Request $request): string
     {
-        if ($value === null || $value === '') {
-            return $value;
-        }
+        return $this->isTokenAuth($request)
+            ? EmisPiiSanitizer::LEVEL_INTEGRATION
+            : EmisPiiSanitizer::LEVEL_OPERATOR;
+    }
 
-        $str = (string) $value;
+    /**
+     * Staging list: token integrasi selalu disamarkan; operator sesi tetap melihat kolom
+     * pengenal yang dibutuhkan untuk review ($operatorVisible), selain itu disanitasi.
+     *
+     * @param  array<int, array<string, mixed>>  $rows
+     * @param  array<int, string>  $operatorVisible
+     * @return array<int, array<string, mixed>>
+     */
+    private function sanitizeStagingRows(Request $request, array $rows, array $operatorVisible): array
+    {
+        $isToken = $this->isTokenAuth($request);
 
-        if (in_array($field, ['address', 'email'], true)) {
-            return '[REDACTED]';
-        }
+        return array_map(function (array $row) use ($isToken, $operatorVisible): array {
+            $kept = $isToken ? [] : array_intersect_key($row, array_flip($operatorVisible));
 
-        $len = mb_strlen($str);
-        if ($len <= 6) {
-            return str_repeat('*', $len);
-        }
+            return array_merge(
+                $this->pii->sanitize($row, EmisPiiSanitizer::LEVEL_INTEGRATION),
+                $kept
+            );
+        }, $rows);
+    }
 
-        return mb_substr($str, 0, 4).str_repeat('*', max(4, $len - 8)).mb_substr($str, -4);
+    private function resolvePerPage(Request $request, int $default, int $max): int
+    {
+        return max(1, min($max, (int) $request->input('per_page', $default)));
+    }
+
+    /**
+     * @return array<string, int>
+     */
+    private function paginationMeta(LengthAwarePaginator $paginator): array
+    {
+        return [
+            'current_page' => $paginator->currentPage(),
+            'per_page' => $paginator->perPage(),
+            'total' => $paginator->total(),
+            'last_page' => $paginator->lastPage(),
+        ];
     }
 
     /**

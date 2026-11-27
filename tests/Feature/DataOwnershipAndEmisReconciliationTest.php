@@ -15,6 +15,7 @@ use App\Models\Student;
 use App\Models\StudentDocument;
 use App\Models\User;
 use App\Services\DataOwnershipService;
+use App\Services\EmisPiiSanitizer;
 use App\Services\IntegrationTokenService;
 use Illuminate\Foundation\Testing\LazilyRefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -645,9 +646,16 @@ class DataOwnershipAndEmisReconciliationTest extends TestCase
 
         $batchRes = $this->actingAs($operator)
             ->getJson('/api/emis/reconciliation-batches')
+            ->assertOk()
+            ->assertJsonStructure(['meta' => ['current_page', 'per_page', 'total', 'last_page']]);
+        $this->assertNull($batchRes->json('data.0.items'));
+
+        $batchId = $batchRes->json('data.0.id');
+        $itemsRes = $this->actingAs($operator)
+            ->getJson("/api/emis/reconciliation-batches/{$batchId}/items")
             ->assertOk();
 
-        $firstItem = $batchRes->json('data.0.items.0');
+        $firstItem = $itemsRes->json('data.0');
         $this->assertNotNull($firstItem);
         $this->assertNotSame('3201999988887777', $firstItem['pintu_snapshot']['nik'] ?? null);
         $this->assertStringEndsWith('7777', (string) ($firstItem['pintu_snapshot']['nik'] ?? ''));
@@ -710,5 +718,80 @@ class DataOwnershipAndEmisReconciliationTest extends TestCase
             ])
             ->assertOk()
             ->assertJsonPath('data.status', EmisUpdateTask::STATUS_IN_PROGRESS);
+    }
+
+    public function test_emis_api_masks_pii_in_snapshots_differences_changed_fields_and_staging_lists(): void
+    {
+        $operator = User::factory()->create(['role' => 'operator']);
+        $studentToken = app(IntegrationTokenService::class)->issue($operator, 'emis_siswa', 'Token Siswa PII');
+
+        $student = Student::factory()->create([
+            'nisn' => '4000000002',
+            'nik' => '3201888877776666',
+            'kk_number' => '3201555544443333',
+            'name' => 'Rahasia Nama Siswa',
+            'birth_date' => '2010-03-04',
+            'father_name' => 'Ayah Rahasia',
+            'mother_name' => 'Ibu Rahasia',
+            'guardian_nik' => '3201111122223333',
+        ]);
+
+        EmisStaging::create([
+            'source' => 'bulk',
+            'nisn' => '4000000002',
+            'nik' => '3201888877776666',
+            'name' => 'Rahasia Nama Siswa Berbeda',
+            'status' => 'pending',
+            'raw_data' => [],
+        ]);
+
+        $this->actingAs($operator)->postJson('/api/emis/reconcile')->assertOk();
+
+        $batchId = $this->actingAs($operator)->getJson('/api/emis/reconciliation-batches')->json('data.0.id');
+
+        $task = EmisUpdateTask::create([
+            'entity_type' => 'student',
+            'entity_id' => $student->id,
+            'source_type' => 'student_manual_edit',
+            'changed_fields' => [
+                'nik' => ['old_value' => '3201000000000000', 'new_value' => '3201888877776666'],
+                'name' => ['old_value' => 'Rahasia Lama', 'new_value' => 'Rahasia Nama Siswa'],
+                'birth_date' => ['old_value' => '2009-01-01', 'new_value' => '2010-03-04'],
+                'father_name' => ['old_value' => 'Ayah Lama', 'new_value' => 'Ayah Rahasia'],
+            ],
+            'status' => EmisUpdateTask::STATUS_PENDING,
+        ]);
+
+        $leaks = ['3201888877776666', '3201555544443333', '3201111122223333', '4000000002', 'Rahasia Nama Siswa', '2010-03-04', 'Ayah Rahasia', 'Ibu Rahasia', '3201000000000000', 'Ayah Lama', '2009-01-01'];
+        $headers = ['X-Integration-Token' => $studentToken['plain_token']];
+
+        foreach (["/api/emis/reconciliation-batches/{$batchId}/items", '/api/emis/update-tasks', '/api/emis/staging'] as $url) {
+            $body = $this->getJson($url, $headers)->assertOk()->getContent();
+            foreach ($leaks as $leak) {
+                $this->assertStringNotContainsString($leak, $body, "PII bocor di {$url}: {$leak}");
+            }
+        }
+
+        // Respons token tetap usable: struktur & klasifikasi tersedia
+        $items = $this->getJson("/api/emis/reconciliation-batches/{$batchId}/items", $headers)->assertOk();
+        $this->assertNotEmpty($items->json('data.0.classification'));
+        $this->assertNotNull($items->json('data.0.id'));
+
+        // Operator sesi: identifier tetap dimasking, nama tetap terlihat untuk rekonsiliasi
+        $opBody = $this->actingAs($operator)->getJson("/api/emis/reconciliation-batches/{$batchId}/items")->assertOk()->getContent();
+        foreach (['3201888877776666', '3201555544443333', '3201111122223333', 'Ayah Rahasia'] as $leak) {
+            $this->assertStringNotContainsString($leak, $opBody);
+        }
+        $this->assertStringContainsString('Rahasia Nama Siswa', $opBody);
+
+        // Nested array
+        $sanitized = app(EmisPiiSanitizer::class)->sanitize([
+            'a' => ['b' => ['nik' => '3201888877776666', 'father_nik' => '3201000011112222', 'ok' => 'visible']],
+        ], 'integration');
+        $this->assertSame('visible', $sanitized['a']['b']['ok']);
+        $this->assertStringNotContainsString('3201888877776666', json_encode($sanitized));
+        $this->assertStringNotContainsString('3201000011112222', json_encode($sanitized));
+
+        $this->assertNotNull($task->id);
     }
 }
