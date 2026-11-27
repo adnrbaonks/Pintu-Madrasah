@@ -62,7 +62,7 @@ class StaffMasterCrudTest extends TestCase
             );
     }
 
-    public function test_staff_update_allows_local_fields_filters_emis_fields_and_records_audit_and_outbox(): void
+    public function test_staff_update_allows_direct_administrative_fields_blocks_approval_required_fields_and_records_audit_and_outbox(): void
     {
         $admin = User::factory()->admin()->create();
         $staff = Staff::factory()->create([
@@ -71,30 +71,48 @@ class StaffMasterCrudTest extends TestCase
             'full_name_with_titles' => 'Nama Lama',
             'phone' => '0811111111',
             'employment_status' => 'GTT',
+            'is_active' => true,
         ]);
 
-        // Kirim request update, termasuk mencoba manipulasi NIK & NIP (yang berstatus read-only EMIS)
+        // 1. Percobaan bypass: mengirim HANYA field approval_required tanpa field direct -> wajib ditolak!
         $this->actingAs($admin)
+            ->from("/gtk/{$staff->id}/edit")
             ->put("/gtk/{$staff->id}", [
                 'full_name_with_titles' => 'Nama Baru, S.Pd.',
                 'phone' => '0899999999',
                 'employment_status' => 'PNS',
-                'nik' => '9999999999999999', // Harus difilter / diabaikan
-                'nip' => '8888888888888888', // Harus difilter / diabaikan
+                'nik' => '9999999999999999',
+                'nip' => '8888888888888888',
+            ])
+            ->assertRedirect("/gtk/{$staff->id}/edit")
+            ->assertSessionHasErrors('approval_required');
+
+        $staff->refresh();
+        $this->assertSame('Nama Lama', $staff->full_name_with_titles);
+        $this->assertSame('0811111111', $staff->phone);
+        $this->assertSame('GTT', $staff->employment_status);
+        $this->assertSame('3201010101010001', $staff->nik);
+        $this->assertSame('197501012000031001', $staff->nip);
+        $this->assertTrue($staff->is_active);
+
+        // 2. Mengubah field direct (is_active) disertai field approval_required:
+        // Hanya is_active yang diterapkan, sedangkan field approval_required & read_only diabaikan.
+        $this->actingAs($admin)
+            ->put("/gtk/{$staff->id}", [
+                'is_active' => false,
+                'full_name_with_titles' => 'Nama Bypass',
+                'phone' => '0899999999',
+                'nik' => '9999999999999999',
             ])
             ->assertRedirect("/gtk/{$staff->id}")
             ->assertSessionHas('success');
 
         $staff->refresh();
 
-        // Field lokal berhasil terupdate
-        $this->assertSame('Nama Baru, S.Pd.', $staff->full_name_with_titles);
-        $this->assertSame('0899999999', $staff->phone);
-        $this->assertSame('PNS', $staff->employment_status);
-
-        // Field terproteksi EMIS tidak terpengaruh sama sekali
+        $this->assertFalse($staff->is_active);
+        $this->assertSame('Nama Lama', $staff->full_name_with_titles);
+        $this->assertSame('0811111111', $staff->phone);
         $this->assertSame('3201010101010001', $staff->nik);
-        $this->assertSame('197501012000031001', $staff->nip);
 
         // Verifikasi audit log tercatat di activity_logs
         $this->assertDatabaseHas('activity_logs', [
@@ -113,9 +131,8 @@ class StaffMasterCrudTest extends TestCase
 
         $this->assertNotNull($outbox);
         $this->assertSame('pending', $outbox->status);
-        $this->assertSame('Nama Baru, S.Pd.', $outbox->payload['name'] ?? null);
         $this->assertArrayNotHasKey('nik', $outbox->payload);
-        $this->assertContains('full_name_with_titles', $outbox->payload['changed_fields'] ?? []);
+        $this->assertContains('is_active', $outbox->payload['changed_fields'] ?? []);
     }
 
     public function test_staff_document_can_be_uploaded_and_deleted_in_private_storage(): void
@@ -189,8 +206,9 @@ class StaffMasterCrudTest extends TestCase
     {
         $service = new DataOwnershipService;
 
-        $this->assertTrue($service->isEditable('staff', 'phone'));
-        $this->assertTrue($service->isEditable('staff', 'full_name_with_titles'));
+        $this->assertTrue($service->isEditable('staff', 'is_active'));
+        $this->assertFalse($service->isEditable('staff', 'phone'));
+        $this->assertFalse($service->isEditable('staff', 'full_name_with_titles'));
 
         $this->assertFalse($service->isEditable('staff', 'nik'));
         $this->assertFalse($service->isEditable('staff', 'nip'));

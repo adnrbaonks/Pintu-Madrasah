@@ -32,6 +32,26 @@ return [
 
     'ssot_system' => 'PINTU MADRASAH',
 
+    /*
+    |--------------------------------------------------------------------------
+    | Mode Siklus Hidup Data Ownership (Lifecycle Mode)
+    |--------------------------------------------------------------------------
+    | - 'development' / 'migration' : Mengizinkan initial import dari EMIS ke PINTU
+    |   (membuat record baru, mengisi field kosong, dan controlled overwrite terotorisasi).
+    | - 'production' (DEFAULT)      : PINTU adalah SSOT penuh. Endpoint commit EMIS,
+    |   job commit EMIS, dan commit detail EMIS diblokir dari memodifikasi master data
+    |   PINTU (tidak boleh membuat record baru, tidak boleh mengisi field kosong, dan
+    |   tidak boleh melakukan overwrite), kecuali mekanisme darurat break-glass diaktifkan
+    |   secara eksplisit dan dieksekusi oleh pengguna manusia pemegang permission khusus.
+    */
+    'lifecycle_mode' => env('PINTU_LIFECYCLE_MODE', env('PINTU_DATA_OWNERSHIP_MODE', 'production')),
+
+    'break_glass' => [
+        'enabled' => (bool) env('PINTU_EMIS_BREAK_GLASS_ENABLED', false),
+        'permission' => 'break_glass_emis_import',
+        'min_reason_length' => 15,
+    ],
+
     'staff' => [
         // ── Identitas Teknis Integrasi Eksternal ──
         'emis_gtk_id' => [
@@ -202,7 +222,7 @@ return [
             'risk_level' => 'high',
         ],
 
-        // ── Atribut Nama, Kepegawaian, Akademik & Kontak GTK (SSOT PINTU) ──
+        // ── Atribut Nama, Kepegawaian, Akademik & Kontak GTK (SSOT PINTU — Wajib Alur Pengajuan Berjenjang) ──
         'full_name_with_titles' => [
             'label' => 'Nama Lengkap & Gelar',
             'owner_system' => 'local',
@@ -211,7 +231,7 @@ return [
             'target_system' => 'EMIS GTK',
             'production_sync_direction' => 'manual_outbound',
             'sync_direction' => 'outbound',
-            'change_policy' => 'direct',
+            'change_policy' => 'approval_required',
             'approval_required' => true,
             'verification_required' => true,
             'document_required' => true,
@@ -226,7 +246,7 @@ return [
             'target_system' => 'EMIS GTK',
             'production_sync_direction' => 'manual_outbound',
             'sync_direction' => 'outbound',
-            'change_policy' => 'direct',
+            'change_policy' => 'approval_required',
             'approval_required' => true,
             'verification_required' => true,
             'document_required' => false,
@@ -241,7 +261,7 @@ return [
             'target_system' => 'EMIS GTK',
             'production_sync_direction' => 'manual_outbound',
             'sync_direction' => 'outbound',
-            'change_policy' => 'direct',
+            'change_policy' => 'approval_required',
             'approval_required' => true,
             'verification_required' => true,
             'document_required' => false,
@@ -256,7 +276,7 @@ return [
             'target_system' => 'EMIS GTK',
             'production_sync_direction' => 'manual_outbound',
             'sync_direction' => 'outbound',
-            'change_policy' => 'direct',
+            'change_policy' => 'approval_required',
             'approval_required' => true,
             'verification_required' => true,
             'document_required' => false,
@@ -271,7 +291,7 @@ return [
             'target_system' => 'EMIS GTK',
             'production_sync_direction' => 'manual_outbound',
             'sync_direction' => 'outbound',
-            'change_policy' => 'direct',
+            'change_policy' => 'approval_required',
             'approval_required' => true,
             'verification_required' => true,
             'document_required' => false,
@@ -286,7 +306,7 @@ return [
             'target_system' => 'EMIS GTK',
             'production_sync_direction' => 'manual_outbound',
             'sync_direction' => 'outbound',
-            'change_policy' => 'direct',
+            'change_policy' => 'approval_required',
             'approval_required' => true,
             'verification_required' => true,
             'document_required' => false,
@@ -301,7 +321,7 @@ return [
             'target_system' => 'EMIS GTK',
             'production_sync_direction' => 'manual_outbound',
             'sync_direction' => 'outbound',
-            'change_policy' => 'direct',
+            'change_policy' => 'approval_required',
             'approval_required' => true,
             'verification_required' => true,
             'document_required' => false,
@@ -316,7 +336,7 @@ return [
             'target_system' => 'EMIS GTK',
             'production_sync_direction' => 'manual_outbound',
             'sync_direction' => 'outbound',
-            'change_policy' => 'direct',
+            'change_policy' => 'approval_required',
             'approval_required' => true,
             'verification_required' => true,
             'document_required' => false,
@@ -331,7 +351,7 @@ return [
             'target_system' => 'EMIS GTK',
             'production_sync_direction' => 'manual_outbound',
             'sync_direction' => 'outbound',
-            'change_policy' => 'direct',
+            'change_policy' => 'approval_required',
             'approval_required' => true,
             'verification_required' => true,
             'document_required' => false,
@@ -346,7 +366,7 @@ return [
             'target_system' => 'EMIS GTK',
             'production_sync_direction' => 'manual_outbound',
             'sync_direction' => 'outbound',
-            'change_policy' => 'direct',
+            'change_policy' => 'approval_required',
             'approval_required' => true,
             'verification_required' => true,
             'document_required' => false,
@@ -361,7 +381,7 @@ return [
             'target_system' => 'EMIS GTK',
             'production_sync_direction' => 'manual_outbound',
             'sync_direction' => 'outbound',
-            'change_policy' => 'direct',
+            'change_policy' => 'approval_required',
             'approval_required' => true,
             'verification_required' => true,
             'document_required' => false,

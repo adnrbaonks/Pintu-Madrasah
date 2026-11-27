@@ -51,7 +51,7 @@ class RolesAndPermissionsSeeder extends Seeder
             'view_letters', 'manage_letters',
             'print_documents',
             // Integrasi & EMIS
-            'view_emis', 'sync_emis',
+            'view_emis', 'sync_emis', 'break_glass_emis_import',
             'manage_api_clients', 'manage_webhooks',
             // Sistem
             'view_audit_logs', 'manage_users', 'manage_settings',
@@ -176,7 +176,7 @@ class RolesAndPermissionsSeeder extends Seeder
         // KECUALI kewenangan pejabat substantif madrasah (verifikasi Kaur TU & persetujuan Kepala Madrasah)
         // sesuai aturan WP0.5 TAHAP 3 bahwa admin teknis tidak otomatis menjadi pejabat pemutus.
         $admin = Role::findOrCreate('admin');
-        $substantiveDecisionPermissions = ['verify_staff_changes', 'approve_staff_changes'];
+        $substantiveDecisionPermissions = ['verify_staff_changes', 'approve_staff_changes', 'break_glass_emis_import'];
         $admin->syncPermissions(
             Permission::whereNotIn('name', $substantiveDecisionPermissions)->get()
         );

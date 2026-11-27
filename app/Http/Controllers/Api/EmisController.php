@@ -8,6 +8,7 @@ use App\Jobs\CommitEmisStagingJob;
 use App\Jobs\PullEmisGtkDataJob;
 use App\Jobs\PullEmisStudentDataJob;
 use App\Models\AcademicYear;
+use App\Models\ActivityLog;
 use App\Models\EmisGtkStaging;
 use App\Models\EmisImportBatch;
 use App\Models\EmisStaging;
@@ -15,6 +16,7 @@ use App\Models\EmisUpdateTask;
 use App\Models\IntegrationLog;
 use App\Models\Staff;
 use App\Models\Student;
+use App\Services\DataOwnershipService;
 use App\Services\EmisReconciliationService;
 use App\Services\EmisService;
 use Illuminate\Http\JsonResponse;
@@ -26,9 +28,30 @@ use Illuminate\Validation\Rule;
 
 class EmisController extends Controller
 {
+    /**
+     * Atribut PII sensitif yang disamarkan pada respons API rekonsiliasi/batch.
+     *
+     * @var array<int, string>
+     */
+    private const SENSITIVE_SNAPSHOT_KEYS = [
+        'nik',
+        'kk_number',
+        'no_kk',
+        'nip',
+        'nuptk',
+        'npk',
+        'address',
+        'phone',
+        'email',
+        'father_nik',
+        'mother_nik',
+        'guardian_nik',
+    ];
+
     public function __construct(
         private readonly EmisService $emis,
         private readonly EmisReconciliationService $reconciliation,
+        private readonly DataOwnershipService $ownership,
     ) {}
 
     // ── Terima Token EMIS Siswa dari Bookmarklet ──────────────────────
@@ -287,12 +310,18 @@ class EmisController extends Controller
 
     /**
      * POST /api/emis/commit
-     * Eksekusi upsert dari staging ke tabel students utama
+     * Eksekusi upsert dari staging ke tabel students utama (hanya diizinkan pada mode development/migration
+     * atau melalui prosedur break-glass terotorisasi).
      */
     public function commitStaging(Request $request): JsonResponse
     {
+        if ($denied = $this->authorizeCommitRequest($request, 'emis_siswa', 'student')) {
+            return $denied;
+        }
+
         $allowOverwrite = filter_var($request->input('allow_overwrite', false), FILTER_VALIDATE_BOOLEAN);
         $overwriteConfirmed = filter_var($request->input('overwrite_confirmed', false), FILTER_VALIDATE_BOOLEAN);
+        $isBreakGlass = filter_var($request->input('break_glass', false), FILTER_VALIDATE_BOOLEAN);
 
         if ($allowOverwrite && ! $overwriteConfirmed) {
             return response()->json([
@@ -314,16 +343,20 @@ class EmisController extends Controller
             actorId: $request->user()?->id,
             allowOverwrite: $allowOverwrite,
             overwriteConfirmed: $overwriteConfirmed,
+            isBreakGlass: $isBreakGlass,
         )->onQueue('emis');
 
         IntegrationLog::record('emis_siswa', 'emis_siswa.commit_triggered', 'success', [
             'academic_year_id' => $activeYear->id,
             'allow_overwrite' => $allowOverwrite,
             'overwrite_confirmed' => $overwriteConfirmed,
+            'lifecycle_mode' => $this->ownership->lifecycleMode(),
+            'is_break_glass' => $isBreakGlass,
         ]);
 
         return response()->json([
             'success' => true,
+            'break_glass' => $isBreakGlass,
             'message' => 'Menyimpan data siswa dan menempatkan ke rombel...',
         ]);
     }
@@ -415,8 +448,13 @@ class EmisController extends Controller
 
     public function commitGtkStaging(Request $request): JsonResponse
     {
+        if ($denied = $this->authorizeCommitRequest($request, 'emis_gtk', 'staff')) {
+            return $denied;
+        }
+
         $allowOverwrite = filter_var($request->input('allow_overwrite', false), FILTER_VALIDATE_BOOLEAN);
         $overwriteConfirmed = filter_var($request->input('overwrite_confirmed', false), FILTER_VALIDATE_BOOLEAN);
+        $isBreakGlass = filter_var($request->input('break_glass', false), FILTER_VALIDATE_BOOLEAN);
 
         if ($allowOverwrite && ! $overwriteConfirmed) {
             return response()->json([
@@ -432,11 +470,14 @@ class EmisController extends Controller
             actorId: $request->user()?->id,
             allowOverwrite: $allowOverwrite,
             overwriteConfirmed: $overwriteConfirmed,
+            isBreakGlass: $isBreakGlass,
         )->onQueue('emis');
 
         IntegrationLog::record('emis_gtk', 'emis_gtk.commit_triggered', 'success', [
             'allow_overwrite' => $allowOverwrite,
             'overwrite_confirmed' => $overwriteConfirmed,
+            'lifecycle_mode' => $this->ownership->lifecycleMode(),
+            'is_break_glass' => $isBreakGlass,
         ]);
 
         return response()->json([
@@ -484,37 +525,71 @@ class EmisController extends Controller
     }
 
     /**
-     * GET /api/emis/reconciliation-batches
+     * GET /api/emis/reconciliation-batches | GET /api/emis-gtk/reconciliation-batches
      */
     public function reconciliationBatches(Request $request): JsonResponse
     {
-        $query = EmisImportBatch::with('items')->orderByDesc('created_at');
-
-        if ($request->filled('entity_type')) {
-            $query->where('entity_type', $request->input('entity_type'));
+        $boundEntityType = $this->resolveBoundEntityType($request);
+        if ($denied = $this->ensureEntityScopeMatches($request, $boundEntityType)) {
+            return $denied;
         }
+
+        $query = EmisImportBatch::with('items')
+            ->where('entity_type', $boundEntityType)
+            ->orderByDesc('created_at');
 
         if ($request->filled('process_type')) {
             $query->where('process_type', $request->input('process_type'));
         }
 
+        $batches = $query->limit(50)->get()->map(function (EmisImportBatch $batch): array {
+            $payload = $batch->toArray();
+            $payload['items'] = collect($payload['items'] ?? [])
+                ->map(function (array $item): array {
+                    $item['pintu_snapshot'] = $this->sanitizeSnapshotPii($item['pintu_snapshot'] ?? null);
+                    $item['emis_snapshot'] = $this->sanitizeSnapshotPii($item['emis_snapshot'] ?? null);
+
+                    if (is_string($item['match_key'] ?? null) && in_array($item['match_key'], self::SENSITIVE_SNAPSHOT_KEYS, true)) {
+                        $item['match_value'] = $this->maskSensitiveValue($item['match_key'], $item['match_value'] ?? null);
+                    }
+
+                    if (is_array($item['differences'] ?? null)) {
+                        foreach ($item['differences'] as $field => $diff) {
+                            if (in_array($field, self::SENSITIVE_SNAPSHOT_KEYS, true) && is_array($diff)) {
+                                $item['differences'][$field]['pintu_value'] = $this->maskSensitiveValue($field, $diff['pintu_value'] ?? null);
+                                $item['differences'][$field]['emis_value'] = $this->maskSensitiveValue($field, $diff['emis_value'] ?? null);
+                            }
+                        }
+                    }
+
+                    return $item;
+                })
+                ->values()
+                ->all();
+
+            return $payload;
+        });
+
         return response()->json([
             'success' => true,
-            'data' => $query->limit(50)->get(),
+            'data' => $batches,
         ]);
     }
 
     /**
-     * GET /api/emis/update-tasks
+     * GET /api/emis/update-tasks | GET /api/emis-gtk/update-tasks
      * Daftar perubahan master PINTU yang perlu diperbarui oleh operator ke EMIS.
      */
     public function updateTasks(Request $request): JsonResponse
     {
-        $query = EmisUpdateTask::query()->orderByDesc('created_at');
-
-        if ($request->filled('entity_type')) {
-            $query->where('entity_type', $request->input('entity_type'));
+        $boundEntityType = $this->resolveBoundEntityType($request);
+        if ($denied = $this->ensureEntityScopeMatches($request, $boundEntityType)) {
+            return $denied;
         }
+
+        $query = EmisUpdateTask::query()
+            ->where('entity_type', $boundEntityType)
+            ->orderByDesc('created_at');
 
         if ($request->filled('entity_id')) {
             $query->where('entity_id', $request->input('entity_id'));
@@ -524,31 +599,84 @@ class EmisController extends Controller
             $query->where('status', $request->input('status'));
         }
 
+        $isTokenAuth = $request->attributes->get('integration_auth_method') === 'token'
+            || $request->attributes->get('integration_token') !== null;
+
+        $tasks = $query->limit(100)->get()->map(function (EmisUpdateTask $task) use ($isTokenAuth): array {
+            $payload = $task->toArray();
+
+            if ($isTokenAuth && is_array($payload['changed_fields'] ?? null)) {
+                foreach ($payload['changed_fields'] as $field => $change) {
+                    if (in_array($field, self::SENSITIVE_SNAPSHOT_KEYS, true) && is_array($change)) {
+                        $payload['changed_fields'][$field]['old_value'] = $this->maskSensitiveValue($field, $change['old_value'] ?? null);
+                        $payload['changed_fields'][$field]['new_value'] = $this->maskSensitiveValue($field, $change['new_value'] ?? null);
+                    }
+                }
+            }
+
+            return $payload;
+        });
+
         return response()->json([
             'success' => true,
-            'data' => $query->limit(100)->get(),
+            'data' => $tasks,
         ]);
     }
 
     /**
-     * PATCH /api/emis/update-tasks/{task}
+     * PATCH /api/emis/update-tasks/{task} | PATCH /api/emis-gtk/update-tasks/{task}
      * Operator EMIS mencatat status pembaruan eksternal di EMIS tanpa mengubah master PINTU.
      */
     public function updateTaskStatus(Request $request, EmisUpdateTask $task): JsonResponse
     {
-        $user = $request->user();
-        if (! $user) {
+        if (
+            $request->attributes->get('integration_auth_method') === 'token'
+            || $request->attributes->get('integration_token') !== null
+        ) {
             return response()->json([
                 'success' => false,
-                'message' => 'Hanya operator terautentikasi yang dapat memperbarui status sinkronisasi EMIS.',
+                'message' => 'Token integrasi tidak diizinkan mengubah status tugas pembaruan EMIS.',
+                'error' => ['code' => 'INTEGRATION_TOKEN_TASK_UPDATE_FORBIDDEN'],
             ], 403);
+        }
+
+        $user = $request->user();
+        if (! $user || ! $user->can('sync_emis')) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Hanya operator terautentikasi dengan izin sync_emis yang dapat memperbarui status sinkronisasi EMIS.',
+                'error' => ['code' => 'FORBIDDEN_PERMISSION'],
+            ], 403);
+        }
+
+        $boundEntityType = $this->resolveBoundEntityType($request);
+        if ($denied = $this->ensureEntityScopeMatches($request, $boundEntityType, $task->entity_type)) {
+            return $denied;
         }
 
         $validated = $request->validate([
             'status' => ['required', 'string', Rule::in(EmisUpdateTask::VALID_STATUSES)],
             'operator_notes' => ['nullable', 'string', 'max:2000'],
             'confirmation_reference' => ['nullable', 'string', 'max:255'],
+            'reopen_confirmed' => ['nullable', 'boolean'],
         ]);
+
+        // Tugas yang sudah completed tidak boleh dibuka kembali secara sembarangan tanpa alasan & konfirmasi eksplisit.
+        if (
+            $task->status === EmisUpdateTask::STATUS_COMPLETED
+            && $validated['status'] !== EmisUpdateTask::STATUS_COMPLETED
+        ) {
+            $reopenConfirmed = filter_var($request->input('reopen_confirmed', false), FILTER_VALIDATE_BOOLEAN);
+            $notes = trim((string) ($validated['operator_notes'] ?? ''));
+
+            if (! $reopenConfirmed || mb_strlen($notes) < 10) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Tugas sinkronisasi EMIS yang sudah selesai (completed) tidak dapat dibuka kembali tanpa konfirmasi eksplisit (reopen_confirmed=true) dan alasan minimal 10 karakter.',
+                    'error' => ['code' => 'INVALID_TASK_STATUS_TRANSITION'],
+                ], 422);
+            }
+        }
 
         $updated = $this->reconciliation->updateTaskStatus(
             task: $task,
@@ -563,6 +691,179 @@ class EmisController extends Controller
             'message' => 'Status pembaruan EMIS berhasil dicatat.',
             'data' => $updated,
         ]);
+    }
+
+    /**
+     * Validasi otorisasi & kebijakan siklus hidup sistem sebelum mengizinkan commit EMIS ke master PINTU.
+     */
+    private function authorizeCommitRequest(Request $request, string $purpose, string $entityType): ?JsonResponse
+    {
+        if (
+            $request->attributes->get('integration_auth_method') === 'token'
+            || $request->attributes->get('integration_token') !== null
+        ) {
+            IntegrationLog::record($purpose, "{$purpose}.commit_rejected", 'failed', [
+                'reason' => 'integration_token_forbidden',
+                'entity_type' => $entityType,
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Token integrasi tidak diizinkan memicu mutasi data master PINTU.',
+                'error' => ['code' => 'INTEGRATION_TOKEN_COMMIT_FORBIDDEN'],
+            ], 403);
+        }
+
+        $user = $request->user();
+        if (! $user || ! $user->can('sync_emis')) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Anda tidak memiliki izin (sync_emis) untuk mengeksekusi commit data EMIS.',
+                'error' => ['code' => 'FORBIDDEN_PERMISSION'],
+            ], 403);
+        }
+
+        if (! $this->ownership->isProductionMode()) {
+            return null;
+        }
+
+        $isBreakGlass = filter_var($request->input('break_glass', false), FILTER_VALIDATE_BOOLEAN);
+
+        if (! $isBreakGlass) {
+            ActivityLog::record('emis_commit_blocked_in_production', null, after: [
+                'purpose' => $purpose,
+                'entity_type' => $entityType,
+                'lifecycle_mode' => $this->ownership->lifecycleMode(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Mutasi data master PINTU dari EMIS dinonaktifkan pada mode produksi. Gunakan endpoint rekonsiliasi non-destruktif.',
+                'error' => ['code' => 'EMIS_COMMIT_DISABLED_IN_PRODUCTION'],
+            ], 403);
+        }
+
+        if (! $this->ownership->isBreakGlassEnabled()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Prosedur break-glass migrasi EMIS tidak diaktifkan pada lingkungan produksi ini.',
+                'error' => ['code' => 'BREAK_GLASS_DISABLED'],
+            ], 403);
+        }
+
+        $requiredPermission = $this->ownership->breakGlassPermission();
+        if (! $user->can($requiredPermission)) {
+            return response()->json([
+                'success' => false,
+                'message' => "Prosedur break-glass membutuhkan izin khusus ({$requiredPermission}).",
+                'error' => ['code' => 'FORBIDDEN_BREAK_GLASS_PERMISSION'],
+            ], 403);
+        }
+
+        $confirmed = filter_var($request->input('break_glass_confirmed', false), FILTER_VALIDATE_BOOLEAN);
+        $reason = trim((string) $request->input('break_glass_reason', ''));
+        $minLength = $this->ownership->breakGlassMinReasonLength();
+
+        if (! $confirmed || mb_strlen($reason) < $minLength) {
+            return response()->json([
+                'success' => false,
+                'message' => "Break-glass wajib menyertakan konfirmasi (break_glass_confirmed=true) dan alasan tertulis minimal {$minLength} karakter.",
+                'error' => ['code' => 'BREAK_GLASS_REASON_REQUIRED'],
+            ], 422);
+        }
+
+        ActivityLog::record('emis_break_glass_commit_authorized', null, after: [
+            'purpose' => $purpose,
+            'entity_type' => $entityType,
+            'break_glass_reason' => $reason,
+            'allow_overwrite' => filter_var($request->input('allow_overwrite', false), FILTER_VALIDATE_BOOLEAN),
+        ]);
+
+        IntegrationLog::record($purpose, "{$purpose}.break_glass_authorized", 'success', [
+            'user_id' => $user->id,
+            'entity_type' => $entityType,
+            'reason' => $reason,
+        ]);
+
+        return null;
+    }
+
+    /**
+     * Tentukan domain entitas ('student' atau 'staff') berdasarkan rute / purpose token.
+     */
+    private function resolveBoundEntityType(Request $request): string
+    {
+        $purpose = $request->attributes->get('integration_purpose');
+        if ($purpose === 'emis_gtk' || str_starts_with($request->path(), 'api/emis-gtk')) {
+            return 'staff';
+        }
+
+        return 'student';
+    }
+
+    /**
+     * Tolak permintaan lintas domain antara EMIS Siswa dan EMIS GTK.
+     */
+    private function ensureEntityScopeMatches(Request $request, string $boundEntityType, ?string $targetEntityType = null): ?JsonResponse
+    {
+        if ($request->filled('entity_type') && (string) $request->input('entity_type') !== $boundEntityType) {
+            return response()->json([
+                'success' => false,
+                'message' => "Endpoint ini terikat pada domain '{$boundEntityType}' dan tidak mengizinkan akses ke '{$request->input('entity_type')}'.",
+                'error' => ['code' => 'FORBIDDEN_ENTITY_SCOPE'],
+            ], 403);
+        }
+
+        if ($targetEntityType !== null && $targetEntityType !== $boundEntityType) {
+            return response()->json([
+                'success' => false,
+                'message' => "Resource milik domain '{$targetEntityType}' tidak dapat diakses melalui endpoint domain '{$boundEntityType}'.",
+                'error' => ['code' => 'FORBIDDEN_ENTITY_SCOPE'],
+            ], 403);
+        }
+
+        return null;
+    }
+
+    /**
+     * Samarkan atribut PII sensitif pada snapshot rekonsiliasi sebelum dikirim melalui respons JSON.
+     *
+     * @param  array<string, mixed>|null  $snapshot
+     * @return array<string, mixed>|null
+     */
+    private function sanitizeSnapshotPii(?array $snapshot): ?array
+    {
+        if (! is_array($snapshot)) {
+            return null;
+        }
+
+        foreach ($snapshot as $field => $value) {
+            if (in_array((string) $field, self::SENSITIVE_SNAPSHOT_KEYS, true)) {
+                $snapshot[$field] = $this->maskSensitiveValue((string) $field, $value);
+            }
+        }
+
+        return $snapshot;
+    }
+
+    private function maskSensitiveValue(string $field, mixed $value): mixed
+    {
+        if ($value === null || $value === '') {
+            return $value;
+        }
+
+        $str = (string) $value;
+
+        if (in_array($field, ['address', 'email'], true)) {
+            return '[REDACTED]';
+        }
+
+        $len = mb_strlen($str);
+        if ($len <= 6) {
+            return str_repeat('*', $len);
+        }
+
+        return mb_substr($str, 0, 4).str_repeat('*', max(4, $len - 8)).mb_substr($str, -4);
     }
 
     /**

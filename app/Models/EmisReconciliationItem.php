@@ -14,7 +14,11 @@ class EmisReconciliationItem extends Model
 
     public const CLASS_PINTU_ONLY = 'pintu_only';
 
+    public const CLASS_ONLY_IN_PINTU = self::CLASS_PINTU_ONLY;
+
     public const CLASS_EMIS_ONLY = 'emis_only';
+
+    public const CLASS_ONLY_IN_EMIS = self::CLASS_EMIS_ONLY;
 
     public const CLASS_NEEDS_REVIEW = 'needs_review';
 

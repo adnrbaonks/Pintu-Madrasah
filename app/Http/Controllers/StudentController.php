@@ -582,17 +582,29 @@ class StudentController extends Controller
         }
 
         if ($changedDocumentRequiredFields !== []) {
-            $hasSupportingDoc = $student->documents()
-                ->whereIn('document_type', ['kartu_keluarga', 'akta_kelahiran', 'ijazah', 'ktp_ortu', 'lainnya'])
-                ->exists();
+            $fieldDocTypeMap = [
+                'nisn' => ['ijazah', 'skhun', 'kartu_keluarga', 'akta_kelahiran'],
+                'nik' => ['kartu_keluarga', 'akta_kelahiran', 'ktp_ortu'],
+                'kk_number' => ['kartu_keluarga'],
+                'name' => ['kartu_keluarga', 'akta_kelahiran', 'ijazah'],
+                'birth_place' => ['kartu_keluarga', 'akta_kelahiran', 'ijazah'],
+                'birth_date' => ['kartu_keluarga', 'akta_kelahiran', 'ijazah'],
+            ];
 
-            if (! $hasSupportingDoc) {
-                $firstField = $changedDocumentRequiredFields[0];
-                $message = "Perubahan atribut identitas penting ({$firstField}) wajib didukung dokumen identitas siswa (KK/Akta/Ijazah) yang telah diunggah pada berkas siswa.";
-                throw ValidationException::withMessages([
-                    $firstField => $message,
-                    'identity_verification' => $message,
-                ]);
+            foreach ($changedDocumentRequiredFields as $docField) {
+                $allowedDocTypes = $fieldDocTypeMap[$docField] ?? ['kartu_keluarga', 'akta_kelahiran', 'ijazah', 'ktp_ortu'];
+                $hasVerifiedDoc = $student->documents()
+                    ->where('status', 'verified')
+                    ->whereIn('document_type', $allowedDocTypes)
+                    ->exists();
+
+                if (! $hasVerifiedDoc) {
+                    $message = "Perubahan atribut identitas penting ({$docField}) wajib didukung dokumen identitas siswa yang relevan dan telah berstatus terverifikasi (verified).";
+                    throw ValidationException::withMessages([
+                        $docField => $message,
+                        'identity_verification' => $message,
+                    ]);
+                }
             }
         }
 
@@ -614,6 +626,13 @@ class StudentController extends Controller
                         ...$identityAfter,
                         'identity_change_reason' => $identityChangeReason,
                     ], fn ($v) => $v !== null && $v !== ''),
+                );
+            } elseif ($changedPairs !== []) {
+                ActivityLog::record(
+                    action: 'student_master_updated',
+                    model: $student,
+                    before: array_map(fn (array $pair) => $pair['old_value'], $changedPairs),
+                    after: array_map(fn (array $pair) => $pair['new_value'], $changedPairs),
                 );
             }
 
@@ -876,6 +895,21 @@ class StudentController extends Controller
     public function commitEmisDetail(Request $request, Student $student)
     {
         $this->authorizeEditStudents($request);
+
+        if (! $this->dataOwnershipService->canImportFromEmis()) {
+            ActivityLog::record(
+                action: 'emis_detail_commit_blocked_in_production',
+                model: $student,
+                after: [
+                    'lifecycle_mode' => $this->dataOwnershipService->lifecycleMode(),
+                    'requested_fields' => array_keys((array) $request->input('update_data', [])),
+                ],
+            );
+
+            return back()->withErrors([
+                'emis_sync' => 'Mutasi data master Siswa dari EMIS dinonaktifkan pada mode produksi. PINTU MADRASAH adalah sumber kebenaran utama (SSOT).',
+            ]);
+        }
 
         $updateData = (array) $request->input('update_data', []);
         $allowedData = $this->dataOwnershipService->filterAllowedAttributes('student', $updateData);

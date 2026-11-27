@@ -2,11 +2,13 @@
 
 namespace App\Jobs;
 
+use App\Models\ActivityLog;
 use App\Models\EmisGtkStaging;
 use App\Models\EmisImportBatch;
 use App\Models\EmisReconciliationItem;
 use App\Models\Staff;
 use App\Models\StaffChangeRequest;
+use App\Services\DataOwnershipService;
 use App\Services\EmisReconciliationService;
 use App\Services\OutboxService;
 use App\Services\StaffChangeRequestService;
@@ -77,10 +79,28 @@ class CommitEmisGtkStagingJob implements ShouldQueue
         public bool $allowOverwrite = false,
         public bool $overwriteConfirmed = false,
         public ?string $batchId = null,
+        public bool $isBreakGlass = false,
     ) {}
 
     public function handle(): void
     {
+        $ownershipService = app(DataOwnershipService::class);
+        if (! $ownershipService->canImportFromEmis($this->isBreakGlass)) {
+            Log::warning('[EMIS GTK] CommitEmisGtkStagingJob ditolak pada mode produksi (PINTU adalah SSOT)');
+            ActivityLog::record(
+                'emis_gtk_commit_blocked_in_production',
+                null,
+                before: null,
+                after: [
+                    'lifecycle_mode' => $ownershipService->lifecycleMode(),
+                    'allow_overwrite' => $this->allowOverwrite,
+                    'is_break_glass' => $this->isBreakGlass,
+                ],
+            );
+
+            return;
+        }
+
         Log::info('[EMIS GTK] Memulai commit data GTK dari staging...');
 
         $reconciliationService = app(EmisReconciliationService::class);
@@ -137,6 +157,7 @@ class CommitEmisGtkStagingJob implements ShouldQueue
                         'staging_id' => $staging->id,
                         'external_reference_id' => $staging->emis_gtk_id,
                         'classification' => EmisReconciliationItem::CLASS_NEEDS_REVIEW,
+                        'emis_snapshot' => $staging->only(['emis_gtk_id', 'nik', 'nuptk', 'nip', 'npk', 'full_name_with_titles', 'gender', 'birth_place', 'birth_date', 'employment_status']),
                         'review_notes' => 'Identitas (NIK/NUPTK/NIP/NPK) tidak lengkap.',
                     ]);
 
@@ -158,6 +179,8 @@ class CommitEmisGtkStagingJob implements ShouldQueue
                         'staging_id' => $staging->id,
                         'external_reference_id' => $staging->emis_gtk_id ?: ($staging->nik ?: $staging->nuptk),
                         'classification' => EmisReconciliationItem::CLASS_NEEDS_REVIEW,
+                        'pintu_snapshot' => $existing?->only(['id', 'emis_gtk_id', 'nik', 'nuptk', 'nip', 'npk', 'full_name_with_titles']),
+                        'emis_snapshot' => $staging->only(['emis_gtk_id', 'nik', 'nuptk', 'nip', 'npk', 'full_name_with_titles', 'gender', 'birth_place', 'birth_date', 'employment_status']),
                         'review_notes' => 'Konflik identitas antara NIK, NUPTK, NIP, atau NPK pada master PINTU.',
                     ]);
 
@@ -197,6 +220,8 @@ class CommitEmisGtkStagingJob implements ShouldQueue
                             $canOverwrite,
                             $reconciliationService,
                         ): void {
+                            $emisSnapshot = $staging->only(['emis_gtk_id', 'nik', 'nuptk', 'nip', 'npk', 'full_name_with_titles', 'gender', 'birth_place', 'birth_date', 'employment_status']);
+
                             if ($existing) {
                                 $lockedStaff = Staff::withTrashed()->lockForUpdate()->findOrFail($existing->id);
 
@@ -205,6 +230,7 @@ class CommitEmisGtkStagingJob implements ShouldQueue
                                 }
 
                                 $differences = $reconciliationService->compareStaffWithStaging($lockedStaff, $staging);
+                                $pintuSnapshot = $lockedStaff->only(['id', 'emis_gtk_id', 'nik', 'nuptk', 'nip', 'npk', 'full_name_with_titles', 'gender', 'birth_place', 'birth_date', 'employment_status']);
 
                                 if ($differences === []) {
                                     $matchedIdenticalCount++;
@@ -216,6 +242,8 @@ class CommitEmisGtkStagingJob implements ShouldQueue
                                         'external_reference_id' => $lockedStaff->emis_gtk_id ?: ($lockedStaff->nik ?: $lockedStaff->nuptk),
                                         'classification' => EmisReconciliationItem::CLASS_SAME,
                                         'differences' => [],
+                                        'pintu_snapshot' => $pintuSnapshot,
+                                        'emis_snapshot' => $emisSnapshot,
                                     ]);
                                 } else {
                                     $differenceCount++;
@@ -227,6 +255,8 @@ class CommitEmisGtkStagingJob implements ShouldQueue
                                         'external_reference_id' => $lockedStaff->emis_gtk_id ?: ($lockedStaff->nik ?: $lockedStaff->nuptk),
                                         'classification' => EmisReconciliationItem::CLASS_DIFFERENT,
                                         'differences' => $differences,
+                                        'pintu_snapshot' => $pintuSnapshot,
+                                        'emis_snapshot' => $emisSnapshot,
                                         'review_notes' => $canOverwrite
                                             ? 'Import ulang dengan konfirmasi overwrite.'
                                             : 'Master PINTU dipertahankan sebagai SSOT; perbedaan dicatat sebagai temuan.',
@@ -268,8 +298,20 @@ class CommitEmisGtkStagingJob implements ShouldQueue
                                 return;
                             }
 
-                            Staff::create($staffData);
+                            $createdStaff = Staff::create(array_filter($staffData, fn ($value) => $value !== null));
                             $createdCount++;
+
+                            EmisReconciliationItem::create([
+                                'batch_id' => $batch->id,
+                                'entity_type' => 'staff',
+                                'entity_id' => $createdStaff->id,
+                                'staging_id' => $staging->id,
+                                'external_reference_id' => $createdStaff->emis_gtk_id ?: ($createdStaff->nik ?: $createdStaff->nuptk),
+                                'classification' => EmisReconciliationItem::CLASS_ONLY_IN_EMIS,
+                                'pintu_snapshot' => $createdStaff->only(['id', 'emis_gtk_id', 'nik', 'nuptk', 'nip', 'npk', 'full_name_with_titles', 'gender', 'birth_place', 'birth_date', 'employment_status']),
+                                'emis_snapshot' => $emisSnapshot,
+                                'review_notes' => 'Record GTK baru diimpor ke master PINTU.',
+                            ]);
                         });
                     });
 

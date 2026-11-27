@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Jobs\CommitEmisStagingJob;
+use App\Models\AcademicYear;
 use App\Models\ActivityLog;
 use App\Models\EmisImportBatch;
 use App\Models\EmisReconciliationItem;
@@ -14,6 +15,7 @@ use App\Models\Student;
 use App\Models\StudentDocument;
 use App\Models\User;
 use App\Services\DataOwnershipService;
+use App\Services\IntegrationTokenService;
 use Illuminate\Foundation\Testing\LazilyRefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
@@ -44,11 +46,18 @@ class DataOwnershipAndEmisReconciliationTest extends TestCase
         $this->assertFalse($service->isOwnedByPintu('staff', 'emis_gtk_id'));
         $this->assertFalse($service->isEditable('staff', 'emis_gtk_id'));
 
-        // Identitas penting GTK dimiliki PINTU, namun melalui mekanisme approval_required (bukan direct edit bebas)
-        foreach (['nik', 'nip', 'nuptk', 'npk', 'gender', 'birth_place', 'birth_date', 'civil_rank'] as $staffField) {
+        // Semua atribut substantif & identitas GTK dimiliki PINTU, namun melalui mekanisme approval_required (bukan direct edit bebas)
+        foreach ([
+            'nik', 'nip', 'nuptk', 'npk', 'gender', 'birth_place', 'birth_date', 'civil_rank',
+            'full_name_with_titles', 'first_title', 'last_title', 'phone', 'email',
+            'employment_status', 'functional_position', 'highest_education',
+        ] as $staffField) {
             $this->assertTrue($service->isOwnedByPintu('staff', $staffField), "Field staff.{$staffField} harus dimiliki PINTU.");
-            $this->assertFalse($service->isEditable('staff', $staffField), "Field staff.{$staffField} wajib melalui alur persetujuan.");
+            $this->assertFalse($service->isEditable('staff', $staffField), "Field staff.{$staffField} wajib melalui alur persetujuan (approval_required=true).");
         }
+
+        // Hanya field administratif non-substantif (is_active) yang direct editable tanpa approval berjenjang
+        $this->assertTrue($service->isEditable('staff', 'is_active'));
 
         // Data transaksi satelit tetap mengikuti kepemilikan aplikasi satelit
         $this->assertSame('rdm', config('data_ownership.academic.student_grades.owner_system'));
@@ -98,13 +107,31 @@ class DataOwnershipAndEmisReconciliationTest extends TestCase
 
         $this->assertSame('Ahmad Fauzi', $student->fresh()->name);
 
-        // Unggah dokumen pendukung siswa (KK/Akta)
-        StudentDocument::create([
+        // Unggah dokumen pendukung siswa dengan status masih uploaded (belum diverifikasi) -> harus tetap ditolak (P2.4)
+        $doc = StudentDocument::create([
             'student_id' => $student->id,
             'document_type' => 'kartu_keluarga',
             'file_path' => 'archives/student_document/kk-ahmad.pdf',
-            'status' => 'verified',
+            'status' => 'uploaded',
         ]);
+
+        $this->actingAs($operator)
+            ->from("/students/{$student->id}/edit")
+            ->put("/students/{$student->id}", [
+                'nisn' => '0012345699',
+                'nik' => '3201012010010099',
+                'name' => 'Ahmad Fauzi Resmi',
+                'gender' => 'L',
+                'birth_place' => 'Bandung',
+                'birth_date' => '2012-05-11',
+                'status' => $student->status,
+                'identity_change_reason' => 'Perbaikan sesuai KK.',
+            ])
+            ->assertRedirect("/students/{$student->id}/edit")
+            ->assertSessionHasErrors('identity_verification');
+
+        // Setelah dokumen berstatus verified, validasi dokumen lulus
+        $doc->update(['status' => 'verified']);
 
         // Siswa terkunci (is_locked=true) tetap wajib menyertakan alasan perubahan identitas
         $this->actingAs($operator)
@@ -400,9 +427,10 @@ class DataOwnershipAndEmisReconciliationTest extends TestCase
             'nik' => '3201000000000101',
             'name' => 'Nama Resmi Di PINTU',
             'birth_place' => 'Sumedang',
+            'mother_name' => null,
         ]);
 
-        EmisStaging::create([
+        $staging = EmisStaging::create([
             'source' => 'bulk',
             'nisn' => '2000000001',
             'nik' => '3201000000000101',
@@ -410,10 +438,41 @@ class DataOwnershipAndEmisReconciliationTest extends TestCase
             'status' => 'pending',
             'raw_data' => [
                 'birth_place' => 'Cirebon',
+                'mother_name' => 'Ibu Dari EMIS',
             ],
         ]);
 
-        // Permintaan commit dengan allow_overwrite=true tetapi tanpa overwrite_confirmed=true harus ditolak 422
+        // 1. Mode PRODUCTION (default): endpoint commit wajib ditolak 403 bahkan dengan allow_overwrite=true
+        config(['data_ownership.lifecycle_mode' => 'production']);
+
+        $this->actingAs($operator)
+            ->postJson('/api/emis/commit', [
+                'allow_overwrite' => true,
+                'overwrite_confirmed' => true,
+            ])
+            ->assertStatus(403)
+            ->assertJsonPath('error.code', 'EMIS_COMMIT_DISABLED_IN_PRODUCTION');
+
+        // Job commit yang dipanggil langsung di mode production juga tidak boleh membuat/mengisi/menimpa data
+        (new CommitEmisStagingJob(actorId: $operator->id))->handle();
+        $student->refresh();
+        $this->assertSame('Nama Resmi Di PINTU', $student->name);
+        $this->assertSame('Sumedang', $student->birth_place);
+        $this->assertNull($student->mother_name);
+
+        // Endpoint commitEmisDetail pada StudentController juga ditolak di mode production
+        $this->actingAs($operator)
+            ->from("/students/{$student->id}/edit")
+            ->post("/students/{$student->id}/commit-emis-detail", [
+                'mother_name' => 'Ibu Dari EMIS',
+            ])
+            ->assertRedirect("/students/{$student->id}/edit")
+            ->assertSessionHasErrors('emis_sync');
+        $this->assertNull($student->fresh()->mother_name);
+
+        // 2. Mode MIGRATION: allow_overwrite=true tanpa overwrite_confirmed=true wajib ditolak 422
+        config(['data_ownership.lifecycle_mode' => 'migration']);
+
         $this->actingAs($operator)
             ->postJson('/api/emis/commit', [
                 'allow_overwrite' => true,
@@ -422,16 +481,19 @@ class DataOwnershipAndEmisReconciliationTest extends TestCase
             ->assertStatus(422)
             ->assertJsonPath('error.code', 'OVERWRITE_CONFIRMATION_REQUIRED');
 
-        // Jalankan job import default (mode produksi non-destructive)
+        // Jalankan job import default di mode migrasi (non-destructive: mengisi mother_name yang kosong, menjaga name/birth_place yang sudah ada)
         (new CommitEmisStagingJob(actorId: $operator->id))->handle();
 
-        // Master PINTU tidak tertimpa dan tidak terjadi duplikasi siswa
         $student->refresh();
+        $staging->refresh();
         $this->assertSame(1, Student::count());
         $this->assertSame('Nama Resmi Di PINTU', $student->name);
         $this->assertSame('Sumedang', $student->birth_place);
+        $this->assertSame('Ibu Dari EMIS', $student->mother_name);
 
-        // Metadata batch import awal dan temuan perbedaan tercatat
+        // Baris staging tetap dipreservasi dengan status committed (P2.7)
+        $this->assertSame('committed', $staging->status);
+
         $batch = EmisImportBatch::where('entity_type', 'student')
             ->where('process_type', EmisImportBatch::PROCESS_INITIAL_IMPORT)
             ->latest()
@@ -440,5 +502,213 @@ class DataOwnershipAndEmisReconciliationTest extends TestCase
         $this->assertSame(0, $batch->created_count);
         $this->assertSame(1, $batch->skipped_existing_count);
         $this->assertSame(1, $batch->difference_count);
+
+        $reconcileItem = EmisReconciliationItem::where('batch_id', $batch->id)->firstOrFail();
+        $this->assertNotEmpty($reconcileItem->pintu_snapshot);
+        $this->assertNotEmpty($reconcileItem->emis_snapshot);
+    }
+
+    public function test_production_break_glass_and_integration_token_restrictions_on_emis_commit(): void
+    {
+        config([
+            'data_ownership.lifecycle_mode' => 'production',
+            'data_ownership.break_glass.enabled' => false,
+        ]);
+
+        $operator = User::factory()->create(['role' => 'operator']);
+        $studentToken = app(IntegrationTokenService::class)->issue($operator, 'emis_siswa', 'Token Siswa');
+
+        // 1. Integration token tidak pernah boleh memicu commit (bahkan di mode migration atau dengan break_glass)
+        config(['data_ownership.lifecycle_mode' => 'migration']);
+        $this->postJson('/api/emis/commit', [
+            'break_glass' => true,
+            'break_glass_confirmed' => true,
+            'break_glass_reason' => 'Percobaan bypass lewat integration token.',
+        ], [
+            'X-Integration-Token' => $studentToken['plain_token'],
+        ])
+            ->assertStatus(403)
+            ->assertJsonPath('error.code', 'INTEGRATION_TOKEN_COMMIT_FORBIDDEN');
+
+        // 2. Di mode production dengan break_glass.enabled=false -> ditolak 403 BREAK_GLASS_DISABLED
+        config(['data_ownership.lifecycle_mode' => 'production']);
+        $this->actingAs($operator)
+            ->postJson('/api/emis/commit', [
+                'break_glass' => true,
+                'break_glass_confirmed' => true,
+                'break_glass_reason' => 'Migrasi darurat data awal siswa madrasah.',
+            ])
+            ->assertStatus(403)
+            ->assertJsonPath('error.code', 'BREAK_GLASS_DISABLED');
+
+        // 3. Aktifkan break_glass di config, tetapi user belum punya permission break_glass_emis_import -> 403
+        config(['data_ownership.break_glass.enabled' => true]);
+        $this->actingAs($operator)
+            ->postJson('/api/emis/commit', [
+                'break_glass' => true,
+                'break_glass_confirmed' => true,
+                'break_glass_reason' => 'Migrasi darurat data awal siswa madrasah.',
+            ])
+            ->assertStatus(403)
+            ->assertJsonPath('error.code', 'FORBIDDEN_BREAK_GLASS_PERMISSION');
+
+        // 4. Berikan permission break_glass_emis_import, tetapi alasan kosong/pendek -> 422
+        $operator->givePermissionTo('break_glass_emis_import');
+        $this->actingAs($operator)
+            ->postJson('/api/emis/commit', [
+                'break_glass' => true,
+                'break_glass_confirmed' => true,
+                'break_glass_reason' => 'Terlalu pendek',
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('error.code', 'BREAK_GLASS_REASON_REQUIRED');
+
+        // 5. Dengan permission, konfirmasi, dan alasan valid -> diizinkan dan tercatat di ActivityLog
+        AcademicYear::create([
+            'year' => '2026/2027',
+            'semester' => 'Ganjil',
+            'is_active' => true,
+        ]);
+
+        EmisStaging::create([
+            'source' => 'bulk',
+            'nisn' => '3000000001',
+            'nik' => '3201000000000301',
+            'name' => 'Siswa Break Glass',
+            'gender' => 'L',
+            'status' => 'pending',
+            'raw_data' => [],
+        ]);
+
+        $this->actingAs($operator)
+            ->postJson('/api/emis/commit', [
+                'break_glass' => true,
+                'break_glass_confirmed' => true,
+                'break_glass_reason' => 'Migrasi darurat batch siswa pindahan awal tahun ajaran.',
+            ])
+            ->assertOk()
+            ->assertJsonPath('break_glass', true);
+
+        $this->assertDatabaseHas('activity_logs', [
+            'action' => 'emis_break_glass_commit_authorized',
+            'user_id' => $operator->id,
+        ]);
+    }
+
+    public function test_emis_student_and_gtk_endpoints_enforce_domain_isolation_pii_minimization_and_task_update_rules(): void
+    {
+        $operator = User::factory()->create(['role' => 'operator']);
+        $guru = User::factory()->create(['role' => 'guru']);
+
+        $studentToken = app(IntegrationTokenService::class)->issue($operator, 'emis_siswa', 'Token Siswa');
+        $gtkToken = app(IntegrationTokenService::class)->issue($operator, 'emis_gtk', 'Token GTK');
+
+        // 1. Token emis_siswa tidak bisa mengakses endpoint /api/emis-gtk/* dan sebaliknya
+        $this->getJson('/api/emis-gtk/reconciliation-batches', [
+            'X-Integration-Token' => $studentToken['plain_token'],
+        ])
+            ->assertStatus(401);
+
+        $this->getJson('/api/emis/reconciliation-batches', [
+            'X-Integration-Token' => $gtkToken['plain_token'],
+        ])
+            ->assertStatus(401);
+
+        // 2. Endpoint /api/emis/* menolak filter entity_type=staff (403 FORBIDDEN_ENTITY_SCOPE)
+        $this->actingAs($operator)
+            ->getJson('/api/emis/reconciliation-batches?entity_type=staff')
+            ->assertStatus(403)
+            ->assertJsonPath('error.code', 'FORBIDDEN_ENTITY_SCOPE');
+
+        $this->actingAs($operator)
+            ->getJson('/api/emis-gtk/update-tasks?entity_type=student')
+            ->assertStatus(403)
+            ->assertJsonPath('error.code', 'FORBIDDEN_ENTITY_SCOPE');
+
+        // 3. Rekonsiliasi menghasilkan snapshot yang dimasking pada respons API (P1.3 PII minimization)
+        $student = Student::factory()->create([
+            'nisn' => '4000000001',
+            'nik' => '3201999988887777',
+            'name' => 'Siswa Uji Masking',
+        ]);
+
+        EmisStaging::create([
+            'source' => 'bulk',
+            'nisn' => '4000000001',
+            'nik' => '3201999988887777',
+            'name' => 'Siswa Uji Masking EMIS',
+            'status' => 'pending',
+            'raw_data' => [],
+        ]);
+
+        $this->actingAs($operator)->postJson('/api/emis/reconcile')->assertOk();
+
+        $batchRes = $this->actingAs($operator)
+            ->getJson('/api/emis/reconciliation-batches')
+            ->assertOk();
+
+        $firstItem = $batchRes->json('data.0.items.0');
+        $this->assertNotNull($firstItem);
+        $this->assertNotSame('3201999988887777', $firstItem['pintu_snapshot']['nik'] ?? null);
+        $this->assertStringEndsWith('7777', (string) ($firstItem['pintu_snapshot']['nik'] ?? ''));
+
+        // 4. Task update rules (P2.1):
+        $studentTask = EmisUpdateTask::create([
+            'entity_type' => 'student',
+            'entity_id' => $student->id,
+            'source_type' => 'student_manual_edit',
+            'changed_fields' => ['nik' => ['old_value' => '3201000000000000', 'new_value' => '3201999988887777']],
+            'status' => EmisUpdateTask::STATUS_PENDING,
+        ]);
+
+        // Integration token ditolak untuk mengubah status task
+        $this->patchJson("/api/emis/update-tasks/{$studentTask->id}", [
+            'status' => EmisUpdateTask::STATUS_COMPLETED,
+        ], [
+            'X-Integration-Token' => $studentToken['plain_token'],
+        ])
+            ->assertStatus(403)
+            ->assertJsonPath('error.code', 'INTEGRATION_TOKEN_TASK_UPDATE_FORBIDDEN');
+
+        // User tanpa sync_emis (guru) ditolak
+        $this->actingAs($guru)
+            ->patchJson("/api/emis/update-tasks/{$studentTask->id}", [
+                'status' => EmisUpdateTask::STATUS_COMPLETED,
+            ])
+            ->assertStatus(403);
+
+        // Endpoint lintas domain (/api/emis-gtk/* untuk task student) ditolak
+        $this->actingAs($operator)
+            ->patchJson("/api/emis-gtk/update-tasks/{$studentTask->id}", [
+                'status' => EmisUpdateTask::STATUS_COMPLETED,
+            ])
+            ->assertStatus(403)
+            ->assertJsonPath('error.code', 'FORBIDDEN_ENTITY_SCOPE');
+
+        // Operator menyelesaikan task
+        $this->actingAs($operator)
+            ->patchJson("/api/emis/update-tasks/{$studentTask->id}", [
+                'status' => EmisUpdateTask::STATUS_COMPLETED,
+                'operator_notes' => 'Selesai diupdate di EMIS Siswa.',
+            ])
+            ->assertOk();
+
+        // Membuka kembali task yang sudah completed tanpa reopen_confirmed & alasan wajib ditolak 422
+        $this->actingAs($operator)
+            ->patchJson("/api/emis/update-tasks/{$studentTask->id}", [
+                'status' => EmisUpdateTask::STATUS_IN_PROGRESS,
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath('error.code', 'INVALID_TASK_STATUS_TRANSITION');
+
+        // Dengan reopen_confirmed=true dan alasan >= 10 karakter -> berhasil dibuka kembali
+        $this->actingAs($operator)
+            ->patchJson("/api/emis/update-tasks/{$studentTask->id}", [
+                'status' => EmisUpdateTask::STATUS_IN_PROGRESS,
+                'reopen_confirmed' => true,
+                'operator_notes' => 'Koreksi ulang karena verifikasi kanwil.',
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.status', EmisUpdateTask::STATUS_IN_PROGRESS);
     }
 }

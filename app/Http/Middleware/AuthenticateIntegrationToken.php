@@ -38,14 +38,28 @@ class AuthenticateIntegrationToken
             }
 
             $request->attributes->set('integration_token', $token);
+            $request->attributes->set('integration_purpose', $purpose ?? $token->purpose);
+            $request->attributes->set('integration_auth_method', 'token');
 
             return $next($request);
         }
 
         // 2. Fallback transisi same-origin session: user operator/admin yang sudah login di aplikasi web
         $user = $request->user() ?: Auth::guard('web')->user();
-        if ($user && $user->hasAnyRole(self::ALLOWED_ROLES)) {
-            return $next($request);
+        if ($user) {
+            if ($user->can('view_emis') || $user->can('sync_emis') || $user->hasAnyRole(self::ALLOWED_ROLES)) {
+                $request->attributes->set('integration_purpose', $purpose);
+                $request->attributes->set('integration_auth_method', 'session');
+
+                return $next($request);
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Anda tidak memiliki izin untuk mengakses endpoint integrasi EMIS.',
+                'error' => ['code' => 'FORBIDDEN_PERMISSION'],
+                'request_id' => $request->attributes->get('request_id'),
+            ], 403);
         }
 
         return response()->json([

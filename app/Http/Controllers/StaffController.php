@@ -83,7 +83,27 @@ class StaffController extends Controller
 
     public function update(UpdateStaffRequest $request, Staff $staff): RedirectResponse
     {
-        $this->staffService->update($staff, $request->validated(), auth()->id());
+        $protectedFields = array_unique(array_merge(
+            $this->dataOwnershipService->getApprovalRequiredFields('staff'),
+            $this->dataOwnershipService->getReadOnlyFields('staff'),
+        ));
+
+        $attemptedProtectedFields = [];
+        foreach ($protectedFields as $field) {
+            if ($request->exists($field) && (string) ($request->input($field) ?? '') !== (string) ($staff->getAttribute($field) ?? '')) {
+                $attemptedProtectedFields[] = $field;
+            }
+        }
+
+        $allowedAttributes = $this->dataOwnershipService->filterAllowedAttributes('staff', $request->validated());
+
+        if ($attemptedProtectedFields !== [] && $allowedAttributes === []) {
+            return redirect()->back()->withErrors([
+                'approval_required' => 'Perubahan atribut substantif GTK ('.implode(', ', $attemptedProtectedFields).') wajib melalui alur pengajuan berjenjang (GTK -> Kaur TU -> Kepala Madrasah).',
+            ]);
+        }
+
+        $this->staffService->update($staff, $allowedAttributes, auth()->id());
 
         return redirect()->route('gtk.show', $staff->id)
             ->with('success', 'Data pegawai GTK berhasil diperbarui.');

@@ -19,6 +19,52 @@ use InvalidArgumentException;
 
 class EmisReconciliationService
 {
+    /**
+     * Daftar eksplisit atribut rekonsiliasi Siswa antara PINTU (SSOT) dan EMIS.
+     *
+     * @var array<int, string>
+     */
+    public const STUDENT_RECONCILIATION_FIELDS = [
+        'nisn',
+        'nik',
+        'kk_number',
+        'name',
+        'gender',
+        'birth_place',
+        'birth_date',
+        'mother_name',
+        'father_name',
+        'address',
+    ];
+
+    /**
+     * Daftar eksplisit atribut rekonsiliasi GTK antara PINTU (SSOT) dan EMIS GTK.
+     *
+     * @var array<int, string>
+     */
+    public const STAFF_RECONCILIATION_FIELDS = [
+        'nik',
+        'nip',
+        'nuptk',
+        'npk',
+        'full_name_with_titles',
+        'first_title',
+        'last_title',
+        'gender',
+        'birth_place',
+        'birth_date',
+        'phone',
+        'email',
+        'employment_status',
+        'civil_rank',
+        'civil_rank_tmt',
+        'functional_position',
+        'highest_education',
+        'university_name',
+        'study_program',
+        'graduation_year',
+    ];
+
     public function __construct(
         private DataOwnershipService $ownershipService,
     ) {}
@@ -65,93 +111,106 @@ class EmisReconciliationService
                 notes: $notes ?? 'Rekonsiliasi produksi PINTU (SSOT) vs EMIS Siswa',
             );
 
-            $stagings = EmisStaging::query()->orderBy('created_at')->get();
             $students = Student::query()->get();
+            $studentIndex = $this->buildStudentLookupIndex($students);
 
             $matchedStudentIds = [];
             $sameCount = 0;
             $diffCount = 0;
             $emisOnlyCount = 0;
             $needsReviewCount = 0;
+            $totalRows = 0;
 
-            foreach ($stagings as $staging) {
-                $resolution = $this->resolveStudentMatch($staging, $students);
+            EmisStaging::query()->orderBy('id')->chunk(500, function (Collection $stagings) use (
+                $batch,
+                $studentIndex,
+                &$matchedStudentIds,
+                &$sameCount,
+                &$diffCount,
+                &$emisOnlyCount,
+                &$needsReviewCount,
+                &$totalRows,
+            ): void {
+                foreach ($stagings as $staging) {
+                    $totalRows++;
+                    $resolution = $this->resolveStudentMatch($staging, $studentIndex);
 
-                if ($resolution['status'] === 'needs_review') {
-                    $needsReviewCount++;
-                    EmisReconciliationItem::create([
-                        'batch_id' => $batch->id,
-                        'entity_type' => 'student',
-                        'entity_id' => $resolution['student']?->id,
-                        'staging_id' => $staging->id,
-                        'external_reference_id' => $staging->nisn,
-                        'classification' => EmisReconciliationItem::CLASS_NEEDS_REVIEW,
-                        'differences' => $resolution['differences'] ?? null,
-                        'pintu_snapshot' => $resolution['student'] ? $this->studentSnapshot($resolution['student']) : null,
-                        'emis_snapshot' => $this->studentStagingSnapshot($staging),
-                        'review_notes' => $resolution['reason'],
-                    ]);
+                    if ($resolution['status'] === 'needs_review') {
+                        $needsReviewCount++;
+                        EmisReconciliationItem::create([
+                            'batch_id' => $batch->id,
+                            'entity_type' => 'student',
+                            'entity_id' => $resolution['student']?->id,
+                            'staging_id' => $staging->id,
+                            'external_reference_id' => $this->extractStudentStagingValue($staging, 'emis_student_id') ?: $staging->nisn,
+                            'classification' => EmisReconciliationItem::CLASS_NEEDS_REVIEW,
+                            'differences' => $resolution['differences'] ?? null,
+                            'pintu_snapshot' => $resolution['student'] ? $this->studentSnapshot($resolution['student']) : null,
+                            'emis_snapshot' => $this->studentStagingSnapshot($staging),
+                            'review_notes' => $resolution['reason'],
+                        ]);
 
-                    if ($resolution['student']) {
-                        $matchedStudentIds[$resolution['student']->id] = true;
+                        if ($resolution['student']) {
+                            $matchedStudentIds[$resolution['student']->id] = true;
+                        }
+
+                        continue;
                     }
 
-                    continue;
+                    /** @var Student|null $student */
+                    $student = $resolution['student'];
+
+                    if (! $student) {
+                        $emisOnlyCount++;
+                        EmisReconciliationItem::create([
+                            'batch_id' => $batch->id,
+                            'entity_type' => 'student',
+                            'entity_id' => null,
+                            'staging_id' => $staging->id,
+                            'external_reference_id' => $this->extractStudentStagingValue($staging, 'emis_student_id') ?: $staging->nisn,
+                            'classification' => EmisReconciliationItem::CLASS_EMIS_ONLY,
+                            'differences' => null,
+                            'pintu_snapshot' => null,
+                            'emis_snapshot' => $this->studentStagingSnapshot($staging),
+                            'review_notes' => 'Data ditemukan di staging EMIS namun belum terdaftar di master PINTU.',
+                        ]);
+
+                        continue;
+                    }
+
+                    $matchedStudentIds[$student->id] = true;
+                    $differences = $this->compareStudentWithStaging($student, $staging);
+
+                    if ($differences === []) {
+                        $sameCount++;
+                        EmisReconciliationItem::create([
+                            'batch_id' => $batch->id,
+                            'entity_type' => 'student',
+                            'entity_id' => $student->id,
+                            'staging_id' => $staging->id,
+                            'external_reference_id' => $student->emis_student_id ?: $student->nisn,
+                            'classification' => EmisReconciliationItem::CLASS_SAME,
+                            'differences' => [],
+                            'pintu_snapshot' => $this->studentSnapshot($student),
+                            'emis_snapshot' => $this->studentStagingSnapshot($staging),
+                        ]);
+                    } else {
+                        $diffCount++;
+                        EmisReconciliationItem::create([
+                            'batch_id' => $batch->id,
+                            'entity_type' => 'student',
+                            'entity_id' => $student->id,
+                            'staging_id' => $staging->id,
+                            'external_reference_id' => $student->emis_student_id ?: $student->nisn,
+                            'classification' => EmisReconciliationItem::CLASS_DIFFERENT,
+                            'differences' => $differences,
+                            'pintu_snapshot' => $this->studentSnapshot($student),
+                            'emis_snapshot' => $this->studentStagingSnapshot($staging),
+                            'review_notes' => 'Ditemukan perbedaan atribut antara master PINTU dan EMIS. Master PINTU dipertahankan sebagai SSOT.',
+                        ]);
+                    }
                 }
-
-                /** @var Student|null $student */
-                $student = $resolution['student'];
-
-                if (! $student) {
-                    $emisOnlyCount++;
-                    EmisReconciliationItem::create([
-                        'batch_id' => $batch->id,
-                        'entity_type' => 'student',
-                        'entity_id' => null,
-                        'staging_id' => $staging->id,
-                        'external_reference_id' => $staging->nisn,
-                        'classification' => EmisReconciliationItem::CLASS_EMIS_ONLY,
-                        'differences' => null,
-                        'pintu_snapshot' => null,
-                        'emis_snapshot' => $this->studentStagingSnapshot($staging),
-                        'review_notes' => 'Data ditemukan di staging EMIS namun belum terdaftar di master PINTU.',
-                    ]);
-
-                    continue;
-                }
-
-                $matchedStudentIds[$student->id] = true;
-                $differences = $this->compareStudentWithStaging($student, $staging);
-
-                if ($differences === []) {
-                    $sameCount++;
-                    EmisReconciliationItem::create([
-                        'batch_id' => $batch->id,
-                        'entity_type' => 'student',
-                        'entity_id' => $student->id,
-                        'staging_id' => $staging->id,
-                        'external_reference_id' => $student->emis_student_id ?: $student->nisn,
-                        'classification' => EmisReconciliationItem::CLASS_SAME,
-                        'differences' => [],
-                        'pintu_snapshot' => $this->studentSnapshot($student),
-                        'emis_snapshot' => $this->studentStagingSnapshot($staging),
-                    ]);
-                } else {
-                    $diffCount++;
-                    EmisReconciliationItem::create([
-                        'batch_id' => $batch->id,
-                        'entity_type' => 'student',
-                        'entity_id' => $student->id,
-                        'staging_id' => $staging->id,
-                        'external_reference_id' => $student->emis_student_id ?: $student->nisn,
-                        'classification' => EmisReconciliationItem::CLASS_DIFFERENT,
-                        'differences' => $differences,
-                        'pintu_snapshot' => $this->studentSnapshot($student),
-                        'emis_snapshot' => $this->studentStagingSnapshot($staging),
-                        'review_notes' => 'Ditemukan perbedaan atribut antara master PINTU dan EMIS. Master PINTU dipertahankan sebagai SSOT.',
-                    ]);
-                }
-            }
+            });
 
             $pintuOnlyCount = 0;
             foreach ($students as $student) {
@@ -175,7 +234,7 @@ class EmisReconciliationService
             }
 
             $batch->update([
-                'total_rows' => $stagings->count(),
+                'total_rows' => $totalRows,
                 'matched_identical_count' => $sameCount,
                 'difference_count' => $diffCount,
                 'pintu_only_count' => $pintuOnlyCount,
@@ -202,93 +261,106 @@ class EmisReconciliationService
                 notes: $notes ?? 'Rekonsiliasi produksi PINTU (SSOT) vs EMIS GTK',
             );
 
-            $stagings = EmisGtkStaging::query()->orderBy('created_at')->get();
             $staffMembers = Staff::query()->get();
+            $staffIndex = $this->buildStaffLookupIndex($staffMembers);
 
             $matchedStaffIds = [];
             $sameCount = 0;
             $diffCount = 0;
             $emisOnlyCount = 0;
             $needsReviewCount = 0;
+            $totalRows = 0;
 
-            foreach ($stagings as $staging) {
-                $resolution = $this->resolveStaffMatch($staging, $staffMembers);
+            EmisGtkStaging::query()->orderBy('id')->chunk(500, function (Collection $stagings) use (
+                $batch,
+                $staffIndex,
+                &$matchedStaffIds,
+                &$sameCount,
+                &$diffCount,
+                &$emisOnlyCount,
+                &$needsReviewCount,
+                &$totalRows,
+            ): void {
+                foreach ($stagings as $staging) {
+                    $totalRows++;
+                    $resolution = $this->resolveStaffMatch($staging, $staffIndex);
 
-                if ($resolution['status'] === 'needs_review') {
-                    $needsReviewCount++;
-                    EmisReconciliationItem::create([
-                        'batch_id' => $batch->id,
-                        'entity_type' => 'staff',
-                        'entity_id' => $resolution['staff']?->id,
-                        'staging_id' => $staging->id,
-                        'external_reference_id' => $staging->emis_gtk_id ?: ($staging->nik ?: ($staging->nuptk ?: ($staging->nip ?: $staging->npk))),
-                        'classification' => EmisReconciliationItem::CLASS_NEEDS_REVIEW,
-                        'differences' => $resolution['differences'] ?? null,
-                        'pintu_snapshot' => $resolution['staff'] ? $this->staffSnapshot($resolution['staff']) : null,
-                        'emis_snapshot' => $this->staffStagingSnapshot($staging),
-                        'review_notes' => $resolution['reason'],
-                    ]);
+                    if ($resolution['status'] === 'needs_review') {
+                        $needsReviewCount++;
+                        EmisReconciliationItem::create([
+                            'batch_id' => $batch->id,
+                            'entity_type' => 'staff',
+                            'entity_id' => $resolution['staff']?->id,
+                            'staging_id' => $staging->id,
+                            'external_reference_id' => $staging->emis_gtk_id ?: ($staging->nik ?: ($staging->nuptk ?: ($staging->nip ?: $staging->npk))),
+                            'classification' => EmisReconciliationItem::CLASS_NEEDS_REVIEW,
+                            'differences' => $resolution['differences'] ?? null,
+                            'pintu_snapshot' => $resolution['staff'] ? $this->staffSnapshot($resolution['staff']) : null,
+                            'emis_snapshot' => $this->staffStagingSnapshot($staging),
+                            'review_notes' => $resolution['reason'],
+                        ]);
 
-                    if ($resolution['staff']) {
-                        $matchedStaffIds[$resolution['staff']->id] = true;
+                        if ($resolution['staff']) {
+                            $matchedStaffIds[$resolution['staff']->id] = true;
+                        }
+
+                        continue;
                     }
 
-                    continue;
+                    /** @var Staff|null $staff */
+                    $staff = $resolution['staff'];
+
+                    if (! $staff) {
+                        $emisOnlyCount++;
+                        EmisReconciliationItem::create([
+                            'batch_id' => $batch->id,
+                            'entity_type' => 'staff',
+                            'entity_id' => null,
+                            'staging_id' => $staging->id,
+                            'external_reference_id' => $staging->emis_gtk_id ?: ($staging->nik ?: ($staging->nuptk ?: ($staging->nip ?: $staging->npk))),
+                            'classification' => EmisReconciliationItem::CLASS_EMIS_ONLY,
+                            'differences' => null,
+                            'pintu_snapshot' => null,
+                            'emis_snapshot' => $this->staffStagingSnapshot($staging),
+                            'review_notes' => 'Data ditemukan di staging EMIS GTK namun belum terdaftar di master PINTU.',
+                        ]);
+
+                        continue;
+                    }
+
+                    $matchedStaffIds[$staff->id] = true;
+                    $differences = $this->compareStaffWithStaging($staff, $staging);
+
+                    if ($differences === []) {
+                        $sameCount++;
+                        EmisReconciliationItem::create([
+                            'batch_id' => $batch->id,
+                            'entity_type' => 'staff',
+                            'entity_id' => $staff->id,
+                            'staging_id' => $staging->id,
+                            'external_reference_id' => $staff->emis_gtk_id ?: ($staff->nik ?: ($staff->nuptk ?: ($staff->nip ?: $staff->npk))),
+                            'classification' => EmisReconciliationItem::CLASS_SAME,
+                            'differences' => [],
+                            'pintu_snapshot' => $this->staffSnapshot($staff),
+                            'emis_snapshot' => $this->staffStagingSnapshot($staging),
+                        ]);
+                    } else {
+                        $diffCount++;
+                        EmisReconciliationItem::create([
+                            'batch_id' => $batch->id,
+                            'entity_type' => 'staff',
+                            'entity_id' => $staff->id,
+                            'staging_id' => $staging->id,
+                            'external_reference_id' => $staff->emis_gtk_id ?: ($staff->nik ?: ($staff->nuptk ?: ($staff->nip ?: $staff->npk))),
+                            'classification' => EmisReconciliationItem::CLASS_DIFFERENT,
+                            'differences' => $differences,
+                            'pintu_snapshot' => $this->staffSnapshot($staff),
+                            'emis_snapshot' => $this->staffStagingSnapshot($staging),
+                            'review_notes' => 'Ditemukan perbedaan atribut antara master PINTU dan EMIS GTK. Master PINTU dipertahankan sebagai SSOT.',
+                        ]);
+                    }
                 }
-
-                /** @var Staff|null $staff */
-                $staff = $resolution['staff'];
-
-                if (! $staff) {
-                    $emisOnlyCount++;
-                    EmisReconciliationItem::create([
-                        'batch_id' => $batch->id,
-                        'entity_type' => 'staff',
-                        'entity_id' => null,
-                        'staging_id' => $staging->id,
-                        'external_reference_id' => $staging->emis_gtk_id ?: ($staging->nik ?: ($staging->nuptk ?: ($staging->nip ?: $staging->npk))),
-                        'classification' => EmisReconciliationItem::CLASS_EMIS_ONLY,
-                        'differences' => null,
-                        'pintu_snapshot' => null,
-                        'emis_snapshot' => $this->staffStagingSnapshot($staging),
-                        'review_notes' => 'Data ditemukan di staging EMIS GTK namun belum terdaftar di master PINTU.',
-                    ]);
-
-                    continue;
-                }
-
-                $matchedStaffIds[$staff->id] = true;
-                $differences = $this->compareStaffWithStaging($staff, $staging);
-
-                if ($differences === []) {
-                    $sameCount++;
-                    EmisReconciliationItem::create([
-                        'batch_id' => $batch->id,
-                        'entity_type' => 'staff',
-                        'entity_id' => $staff->id,
-                        'staging_id' => $staging->id,
-                        'external_reference_id' => $staff->emis_gtk_id ?: ($staff->nik ?: ($staff->nuptk ?: ($staff->nip ?: $staff->npk))),
-                        'classification' => EmisReconciliationItem::CLASS_SAME,
-                        'differences' => [],
-                        'pintu_snapshot' => $this->staffSnapshot($staff),
-                        'emis_snapshot' => $this->staffStagingSnapshot($staging),
-                    ]);
-                } else {
-                    $diffCount++;
-                    EmisReconciliationItem::create([
-                        'batch_id' => $batch->id,
-                        'entity_type' => 'staff',
-                        'entity_id' => $staff->id,
-                        'staging_id' => $staging->id,
-                        'external_reference_id' => $staff->emis_gtk_id ?: ($staff->nik ?: ($staff->nuptk ?: ($staff->nip ?: $staff->npk))),
-                        'classification' => EmisReconciliationItem::CLASS_DIFFERENT,
-                        'differences' => $differences,
-                        'pintu_snapshot' => $this->staffSnapshot($staff),
-                        'emis_snapshot' => $this->staffStagingSnapshot($staging),
-                        'review_notes' => 'Ditemukan perbedaan atribut antara master PINTU dan EMIS GTK. Master PINTU dipertahankan sebagai SSOT.',
-                    ]);
-                }
-            }
+            });
 
             $pintuOnlyCount = 0;
             foreach ($staffMembers as $staff) {
@@ -312,7 +384,7 @@ class EmisReconciliationService
             }
 
             $batch->update([
-                'total_rows' => $stagings->count(),
+                'total_rows' => $totalRows,
                 'matched_identical_count' => $sameCount,
                 'difference_count' => $diffCount,
                 'pintu_only_count' => $pintuOnlyCount,
@@ -326,27 +398,34 @@ class EmisReconciliationService
 
     /**
      * Bandingkan atribut Student PINTU dengan baris EmisStaging.
+     * Membedakan field yang tidak dikirim pada payload EMIS vs field yang sengaja kosong/null vs nilai berbeda.
      *
-     * @return array<string, array{pintu_value: mixed, emis_value: mixed}>
+     * @return array<string, array{pintu_value: mixed, emis_value: mixed, diff_type?: string}>
      */
     public function compareStudentWithStaging(Student $student, EmisStaging $staging): array
     {
-        $fields = ['nisn', 'nik', 'name', 'gender', 'birth_place', 'birth_date', 'mother_name', 'father_name', 'address'];
         $differences = [];
 
-        foreach ($fields as $field) {
-            $emisRaw = $this->extractStudentStagingValue($staging, $field);
-            if ($emisRaw === null || $emisRaw === '') {
+        foreach (self::STUDENT_RECONCILIATION_FIELDS as $field) {
+            if (! $this->studentStagingHasFieldProvided($staging, $field)) {
                 continue;
             }
 
+            $emisRaw = $this->extractStudentStagingValue($staging, $field);
             $pintuVal = $this->normalizeComparableValue($student->{$field});
             $emisVal = $this->normalizeComparableValue($emisRaw);
 
             if ($pintuVal !== $emisVal) {
+                $diffType = match (true) {
+                    $pintuVal !== null && $emisVal === null => 'emis_missing_value',
+                    $pintuVal === null && $emisVal !== null => 'pintu_missing_value',
+                    default => 'value_mismatch',
+                };
+
                 $differences[$field] = [
                     'pintu_value' => $pintuVal,
                     'emis_value' => $emisVal,
+                    'diff_type' => $diffType,
                 ];
             }
         }
@@ -356,25 +435,16 @@ class EmisReconciliationService
 
     /**
      * Bandingkan atribut Staff PINTU dengan baris EmisGtkStaging.
+     * Membedakan field yang tidak dikirim pada payload EMIS vs field yang sengaja kosong/null vs nilai berbeda.
      *
-     * @return array<string, array{pintu_value: mixed, emis_value: mixed}>
+     * @return array<string, array{pintu_value: mixed, emis_value: mixed, diff_type?: string}>
      */
     public function compareStaffWithStaging(Staff $staff, EmisGtkStaging $staging): array
     {
-        $fields = [
-            'nik', 'nip', 'nuptk', 'npk',
-            'full_name_with_titles', 'first_title', 'last_title',
-            'gender', 'birth_place', 'birth_date',
-            'phone', 'email',
-            'employment_status', 'civil_rank', 'civil_rank_tmt',
-            'functional_position',
-            'highest_education', 'university_name', 'study_program', 'graduation_year',
-        ];
-
         $rawPayload = is_array($staging->raw_data) ? $staging->raw_data : [];
         $differences = [];
 
-        foreach ($fields as $field) {
+        foreach (self::STAFF_RECONCILIATION_FIELDS as $field) {
             $emisRaw = $staging->{$field};
 
             if ($emisRaw === null && ! array_key_exists($field, $rawPayload)) {
@@ -385,9 +455,16 @@ class EmisReconciliationService
             $emisVal = $this->normalizeComparableValue($emisRaw);
 
             if ($pintuVal !== $emisVal) {
+                $diffType = match (true) {
+                    $pintuVal !== null && $emisVal === null => 'emis_missing_value',
+                    $pintuVal === null && $emisVal !== null => 'pintu_missing_value',
+                    default => 'value_mismatch',
+                };
+
                 $differences[$field] = [
                     'pintu_value' => $pintuVal,
                     'emis_value' => $emisVal,
+                    'diff_type' => $diffType,
                 ];
             }
         }
@@ -489,44 +566,114 @@ class EmisReconciliationService
     }
 
     /**
+     * Bangun indeks hash O(1) untuk pencocokan Siswa berdasarkan prioritas:
+     * 1. emis_student_id, 2. nisn, 3. nik.
+     *
      * @param  Collection<int, Student>  $students
+     * @return array{emis_student_id: array<string, Student>, nisn: array<string, Student>, nik: array<string, Student>}
+     */
+    private function buildStudentLookupIndex(Collection $students): array
+    {
+        $index = [
+            'emis_student_id' => [],
+            'nisn' => [],
+            'nik' => [],
+        ];
+
+        foreach ($students as $student) {
+            foreach (['emis_student_id', 'nisn', 'nik'] as $key) {
+                $val = trim((string) $student->{$key});
+                if ($val !== '') {
+                    $index[$key][$val] = $student;
+                }
+            }
+        }
+
+        return $index;
+    }
+
+    /**
+     * Bangun indeks hash O(1) untuk pencocokan GTK berdasarkan prioritas:
+     * 1. emis_gtk_id, 2. nik, 3. nuptk, 4. nip, 5. npk.
+     *
+     * @param  Collection<int, Staff>  $staffMembers
+     * @return array{emis_gtk_id: array<string, Staff>, nik: array<string, Staff>, nuptk: array<string, Staff>, nip: array<string, Staff>, npk: array<string, Staff>}
+     */
+    private function buildStaffLookupIndex(Collection $staffMembers): array
+    {
+        $index = [
+            'emis_gtk_id' => [],
+            'nik' => [],
+            'nuptk' => [],
+            'nip' => [],
+            'npk' => [],
+        ];
+
+        foreach ($staffMembers as $staff) {
+            foreach (['emis_gtk_id', 'nik', 'nuptk', 'nip', 'npk'] as $key) {
+                $val = trim((string) $staff->{$key});
+                if ($val !== '') {
+                    $index[$key][$val] = $staff;
+                }
+            }
+        }
+
+        return $index;
+    }
+
+    /**
+     * Pencocokan Siswa dengan urutan prioritas eksplisit:
+     * 1. emis_student_id
+     * 2. nisn
+     * 3. nik
+     *
+     * Jika kunci identitas merujuk ke lebih dari satu kandidat Siswa berbeda di PINTU,
+     * baris diklasifikasikan sebagai needs_review.
+     *
+     * @param  array{emis_student_id: array<string, Student>, nisn: array<string, Student>, nik: array<string, Student>}  $studentIndex
      * @return array{status: string, student: ?Student, reason?: string, differences?: array<string, mixed>}
      */
-    private function resolveStudentMatch(EmisStaging $staging, $students): array
+    private function resolveStudentMatch(EmisStaging $staging, array $studentIndex): array
     {
+        $emisStudentId = trim((string) $this->extractStudentStagingValue($staging, 'emis_student_id'));
         $nisn = trim((string) $staging->nisn);
         $nik = trim((string) $staging->nik);
 
-        if ($nisn === '' && $nik === '') {
+        if ($emisStudentId === '' && $nisn === '' && $nik === '') {
             return [
                 'status' => 'needs_review',
                 'student' => null,
-                'reason' => 'Baris staging EMIS Siswa tidak memiliki NISN maupun NIK.',
+                'reason' => 'Baris staging EMIS Siswa tidak memiliki emis_student_id, NISN, maupun NIK.',
             ];
         }
 
-        $byNisn = $nisn !== '' ? $students->firstWhere('nisn', $nisn) : null;
-        $byNik = $nik !== '' ? $students->firstWhere('nik', $nik) : null;
+        $matches = collect([
+            'emis_student_id' => $emisStudentId !== '' ? ($studentIndex['emis_student_id'][$emisStudentId] ?? null) : null,
+            'nisn' => $nisn !== '' ? ($studentIndex['nisn'][$nisn] ?? null) : null,
+            'nik' => $nik !== '' ? ($studentIndex['nik'][$nik] ?? null) : null,
+        ])->filter();
 
-        if ($byNisn && $byNik && $byNisn->id !== $byNik->id) {
+        $uniqueStudentIds = $matches->map(fn (Student $s): string => $s->id)->unique()->values();
+
+        if ($uniqueStudentIds->count() > 1) {
             return [
                 'status' => 'needs_review',
-                'student' => $byNisn,
-                'reason' => 'Konflik identitas: NISN dan NIK pada staging EMIS merujuk ke dua siswa berbeda di master PINTU.',
+                'student' => $matches->first(),
+                'reason' => 'Konflik identitas: kunci identitas (emis_student_id/NISN/NIK) pada staging EMIS merujuk ke lebih dari satu siswa berbeda di master PINTU.',
             ];
         }
 
         return [
             'status' => 'resolved',
-            'student' => $byNisn ?? $byNik,
+            'student' => $matches->first(),
         ];
     }
 
     /**
-     * @param  Collection<int, Staff>  $staffMembers
+     * @param  array{emis_gtk_id: array<string, Staff>, nik: array<string, Staff>, nuptk: array<string, Staff>, nip: array<string, Staff>, npk: array<string, Staff>}  $staffIndex
      * @return array{status: string, staff: ?Staff, reason?: string, differences?: array<string, mixed>}
      */
-    private function resolveStaffMatch(EmisGtkStaging $staging, $staffMembers): array
+    private function resolveStaffMatch(EmisGtkStaging $staging, array $staffIndex): array
     {
         $emisGtkId = trim((string) $staging->emis_gtk_id);
         $nik = trim((string) $staging->nik);
@@ -543,11 +690,11 @@ class EmisReconciliationService
         }
 
         $matches = collect([
-            'emis_gtk_id' => $emisGtkId !== '' ? $staffMembers->firstWhere('emis_gtk_id', $emisGtkId) : null,
-            'nik' => $nik !== '' ? $staffMembers->firstWhere('nik', $nik) : null,
-            'nuptk' => $nuptk !== '' ? $staffMembers->firstWhere('nuptk', $nuptk) : null,
-            'nip' => $nip !== '' ? $staffMembers->firstWhere('nip', $nip) : null,
-            'npk' => $npk !== '' ? $staffMembers->firstWhere('npk', $npk) : null,
+            'emis_gtk_id' => $emisGtkId !== '' ? ($staffIndex['emis_gtk_id'][$emisGtkId] ?? null) : null,
+            'nik' => $nik !== '' ? ($staffIndex['nik'][$nik] ?? null) : null,
+            'nuptk' => $nuptk !== '' ? ($staffIndex['nuptk'][$nuptk] ?? null) : null,
+            'nip' => $nip !== '' ? ($staffIndex['nip'][$nip] ?? null) : null,
+            'npk' => $npk !== '' ? ($staffIndex['npk'][$npk] ?? null) : null,
         ])->filter();
 
         $uniqueStaffIds = $matches->map(fn (Staff $s): string => $s->id)->unique()->values();
@@ -564,6 +711,34 @@ class EmisReconciliationService
             'status' => 'resolved',
             'staff' => $matches->first(),
         ];
+    }
+
+    /**
+     * Periksa apakah sebuah field Siswa benar-benar dikirim pada baris staging EMIS
+     * (baik melalui kolom top-level maupun key eksplisit di dalam raw_data).
+     */
+    private function studentStagingHasFieldProvided(EmisStaging $staging, string $field): bool
+    {
+        $direct = $staging->getAttribute($field);
+        if ($direct !== null && $direct !== '') {
+            return true;
+        }
+
+        $raw = is_array($staging->raw_data) ? $staging->raw_data : [];
+        if (array_key_exists($field, $raw)) {
+            return true;
+        }
+
+        return match ($field) {
+            'emis_student_id' => array_key_exists('id', $raw) || array_key_exists('student_id', $raw),
+            'kk_number' => array_key_exists('no_kk', $raw) || (is_array($raw['family'] ?? null) && array_key_exists('no_kk', $raw['family'])),
+            'birth_place' => is_array($raw['personal'] ?? null) && array_key_exists('tempat_lahir', $raw['personal']),
+            'birth_date' => is_array($raw['personal'] ?? null) && array_key_exists('tanggal_lahir', $raw['personal']),
+            'mother_name' => is_array($raw['parents'] ?? null) && array_key_exists('ibu_nama', $raw['parents']),
+            'father_name' => is_array($raw['parents'] ?? null) && array_key_exists('ayah_nama', $raw['parents']),
+            'address' => is_array($raw['address'] ?? null) && array_key_exists('alamat', $raw['address']),
+            default => false,
+        };
     }
 
     /**
@@ -615,6 +790,8 @@ class EmisReconciliationService
         $raw = is_array($staging->raw_data) ? $staging->raw_data : [];
 
         return match ($field) {
+            'emis_student_id' => $raw['emis_student_id'] ?? $raw['id'] ?? $raw['student_id'] ?? null,
+            'kk_number' => $raw['kk_number'] ?? $raw['no_kk'] ?? data_get($raw, 'family.no_kk'),
             'birth_place' => $raw['birth_place'] ?? data_get($raw, 'personal.tempat_lahir'),
             'birth_date' => $raw['birth_date'] ?? data_get($raw, 'personal.tanggal_lahir'),
             'mother_name' => $raw['mother_name'] ?? data_get($raw, 'parents.ibu_nama'),

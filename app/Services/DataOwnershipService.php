@@ -4,6 +4,68 @@ namespace App\Services;
 
 class DataOwnershipService
 {
+    public const MODE_DEVELOPMENT = 'development';
+
+    public const MODE_MIGRATION = 'migration';
+
+    public const MODE_PRODUCTION = 'production';
+
+    /**
+     * Ambil mode siklus hidup data ownership saat ini ('development', 'migration', atau 'production').
+     */
+    public function lifecycleMode(): string
+    {
+        $mode = strtolower(trim((string) config('data_ownership.lifecycle_mode', self::MODE_PRODUCTION)));
+
+        return in_array($mode, [self::MODE_DEVELOPMENT, self::MODE_MIGRATION, self::MODE_PRODUCTION], true)
+            ? $mode
+            : self::MODE_PRODUCTION;
+    }
+
+    /**
+     * Apakah sistem berada dalam mode produksi (PINTU sebagai SSOT penuh)?
+     */
+    public function isProductionMode(): bool
+    {
+        return $this->lifecycleMode() === self::MODE_PRODUCTION;
+    }
+
+    /**
+     * Apakah opsi darurat break-glass import dari EMIS diaktifkan di konfigurasi?
+     */
+    public function isBreakGlassEnabled(): bool
+    {
+        return (bool) config('data_ownership.break_glass.enabled', false);
+    }
+
+    /**
+     * Nama permission eksplisit untuk melakukan break-glass import dari EMIS.
+     */
+    public function breakGlassPermission(): string
+    {
+        return (string) config('data_ownership.break_glass.permission', 'break_glass_emis_import');
+    }
+
+    /**
+     * Panjang minimal alasan break-glass import.
+     */
+    public function breakGlassMinReasonLength(): int
+    {
+        return max(10, (int) config('data_ownership.break_glass.min_reason_length', 15));
+    }
+
+    /**
+     * Apakah mutasi master data PINTU dari EMIS diizinkan pada konteks eksekusi ini?
+     */
+    public function canImportFromEmis(bool $isBreakGlass = false): bool
+    {
+        if (! $this->isProductionMode()) {
+            return true;
+        }
+
+        return $isBreakGlass && $this->isBreakGlassEnabled();
+    }
+
     /**
      * Ambil seluruh kamus data ownership untuk satu entitas (staff / student / academic).
      *
@@ -35,7 +97,7 @@ class DataOwnershipService
     }
 
     /**
-     * Ambil daftar field yang boleh diedit langsung (change_policy === 'direct').
+     * Ambil daftar field yang boleh diedit langsung (change_policy === 'direct' dan tidak memerlukan approval berjenjang).
      *
      * @return array<int, string>
      */
@@ -46,6 +108,7 @@ class DataOwnershipService
         return array_keys(array_filter(
             $dictionary,
             fn (array $meta): bool => ($meta['change_policy'] ?? '') === 'direct'
+                && ! (bool) ($meta['approval_required'] ?? false)
         ));
     }
 
@@ -62,6 +125,7 @@ class DataOwnershipService
         return array_keys(array_filter(
             $dictionary,
             fn (array $meta): bool => in_array($meta['change_policy'] ?? '', ['read_only', 'approval_required'], true)
+                || (bool) ($meta['approval_required'] ?? false)
         ));
     }
 
@@ -138,7 +202,8 @@ class DataOwnershipService
             return false;
         }
 
-        return ($fieldConfig['change_policy'] ?? '') === 'direct';
+        return ($fieldConfig['change_policy'] ?? '') === 'direct'
+            && ! (bool) ($fieldConfig['approval_required'] ?? false);
     }
 
     /**

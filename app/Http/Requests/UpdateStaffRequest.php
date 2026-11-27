@@ -24,13 +24,13 @@ class UpdateStaffRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'full_name_with_titles' => ['required', 'string', 'max:255'],
+            'full_name_with_titles' => ['sometimes', 'string', 'max:255'],
             'first_title' => ['nullable', 'string', 'max:50'],
             'last_title' => ['nullable', 'string', 'max:50'],
             'phone' => ['nullable', 'string', 'max:30'],
             'email' => ['nullable', 'email', 'max:255'],
             'employment_status' => [
-                'required',
+                'sometimes',
                 'string',
                 'max:50',
                 Rule::in(['PNS', 'PPPK', 'GTT', 'PTT', 'GTY', 'Honorer']),
@@ -40,7 +40,7 @@ class UpdateStaffRequest extends FormRequest
             'university_name' => ['nullable', 'string', 'max:255'],
             'study_program' => ['nullable', 'string', 'max:150'],
             'graduation_year' => ['nullable', 'integer', 'min:1950', 'max:2099'],
-            'is_active' => ['boolean'],
+            'is_active' => ['sometimes', 'boolean'],
         ];
     }
 }

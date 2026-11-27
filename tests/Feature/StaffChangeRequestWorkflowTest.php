@@ -559,6 +559,8 @@ class StaffChangeRequestWorkflowTest extends TestCase
 
     public function test_commit_emis_gtk_staging_job_reconciles_matching_and_conflicting_pending_external_sync_requests(): void
     {
+        config(['data_ownership.lifecycle_mode' => 'migration']);
+
         $staffMatch = Staff::factory()->create([
             'nik' => '3201000000000001',
             'civil_rank' => 'III/a',

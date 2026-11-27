@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Models\AcademicYear;
+use App\Models\ActivityLog;
 use App\Models\EmisImportBatch;
 use App\Models\EmisReconciliationItem;
 use App\Models\EmisStaging;
@@ -10,6 +11,7 @@ use App\Models\Rombel;
 use App\Models\SchoolClass;
 use App\Models\Student;
 use App\Models\StudentAcademicCohort;
+use App\Services\DataOwnershipService;
 use App\Services\EmisReconciliationService;
 use App\Services\EmisService;
 use Illuminate\Bus\Queueable;
@@ -33,10 +35,28 @@ class CommitEmisStagingJob implements ShouldQueue
         public bool $allowOverwrite = false,
         public bool $overwriteConfirmed = false,
         public ?string $batchId = null,
+        public bool $isBreakGlass = false,
     ) {}
 
     public function handle(?EmisService $emis = null): void
     {
+        $ownershipService = app(DataOwnershipService::class);
+        if (! $ownershipService->canImportFromEmis($this->isBreakGlass)) {
+            Log::warning('[JOB] CommitEmisStagingJob ditolak pada mode produksi (PINTU adalah SSOT)');
+            ActivityLog::record(
+                'emis_student_commit_blocked_in_production',
+                null,
+                before: null,
+                after: [
+                    'lifecycle_mode' => $ownershipService->lifecycleMode(),
+                    'allow_overwrite' => $this->allowOverwrite,
+                    'is_break_glass' => $this->isBreakGlass,
+                ],
+            );
+
+            return;
+        }
+
         Log::info('[JOB] CommitEmisStagingJob dimulai');
 
         $emis ??= app(EmisService::class);
@@ -108,10 +128,24 @@ class CommitEmisStagingJob implements ShouldQueue
                     'gender' => $staging->gender ?: 'L', // Default jika null
                     'birth_date' => $staging->birth_date ?? ($staging->raw_data['birth_date'] ?? null),
                     'birth_place' => $staging->birth_place ?? ($staging->raw_data['birth_place'] ?? null),
+                    'mother_name' => $staging->raw_data['mother_name'] ?? null,
+                    'father_name' => $staging->raw_data['father_name'] ?? null,
+                    'address' => $staging->raw_data['address'] ?? null,
                     'status' => 'active',
                 ];
 
                 $student = $this->findMatchingStudent($emisStudentId, $staging->nisn, $staging->nik, $hasConflict);
+
+                $emisSnapshot = [
+                    'emis_student_id' => $emisStudentId,
+                    'nisn' => $staging->nisn,
+                    'nik' => $staging->nik,
+                    'name' => $staging->name,
+                    'gender' => $staging->gender,
+                    'birth_place' => $parsed['birth_place'],
+                    'birth_date' => $parsed['birth_date'],
+                    'rombel_name' => $staging->rombel_name,
+                ];
 
                 if ($hasConflict) {
                     $stats['needs_review']++;
@@ -122,6 +156,8 @@ class CommitEmisStagingJob implements ShouldQueue
                         'staging_id' => $staging->id,
                         'external_reference_id' => $emisStudentId ?: $staging->nisn,
                         'classification' => EmisReconciliationItem::CLASS_NEEDS_REVIEW,
+                        'pintu_snapshot' => $student?->only(['id', 'emis_student_id', 'nisn', 'nik', 'name', 'gender', 'birth_place', 'birth_date']),
+                        'emis_snapshot' => $emisSnapshot,
                         'review_notes' => 'Konflik identitas antara ID EMIS, NISN, dan NIK pada master PINTU.',
                     ]);
 
@@ -141,6 +177,8 @@ class CommitEmisStagingJob implements ShouldQueue
                             'external_reference_id' => $student->emis_student_id ?: $student->nisn,
                             'classification' => EmisReconciliationItem::CLASS_SAME,
                             'differences' => [],
+                            'pintu_snapshot' => $student->only(['id', 'emis_student_id', 'nisn', 'nik', 'name', 'gender', 'birth_place', 'birth_date']),
+                            'emis_snapshot' => $emisSnapshot,
                         ]);
                     } else {
                         $stats['differences']++;
@@ -152,6 +190,8 @@ class CommitEmisStagingJob implements ShouldQueue
                             'external_reference_id' => $student->emis_student_id ?: $student->nisn,
                             'classification' => EmisReconciliationItem::CLASS_DIFFERENT,
                             'differences' => $differences,
+                            'pintu_snapshot' => $student->only(['id', 'emis_student_id', 'nisn', 'nik', 'name', 'gender', 'birth_place', 'birth_date']),
+                            'emis_snapshot' => $emisSnapshot,
                             'review_notes' => $canOverwrite
                                 ? 'Import ulang dengan konfirmasi overwrite.'
                                 : 'Master PINTU dipertahankan sebagai SSOT; perbedaan dicatat sebagai temuan.',
@@ -179,12 +219,25 @@ class CommitEmisStagingJob implements ShouldQueue
                     if (! empty($smartUpdate)) {
                         $student->update($smartUpdate);
                         $stats['updated']++;
-                    } elseif ($differences !== []) {
+                    }
+                    if (! $canOverwrite && $differences !== []) {
                         $stats['skipped_existing']++;
                     }
                 } else {
                     $student = Student::create($parsed);
                     $stats['created']++;
+
+                    EmisReconciliationItem::create([
+                        'batch_id' => $batch->id,
+                        'entity_type' => 'student',
+                        'entity_id' => $student->id,
+                        'staging_id' => $staging->id,
+                        'external_reference_id' => $student->emis_student_id ?: $student->nisn,
+                        'classification' => EmisReconciliationItem::CLASS_ONLY_IN_EMIS,
+                        'pintu_snapshot' => $student->only(['id', 'emis_student_id', 'nisn', 'nik', 'name', 'gender', 'birth_place', 'birth_date']),
+                        'emis_snapshot' => $emisSnapshot,
+                        'review_notes' => 'Record siswa baru diimpor ke master PINTU.',
+                    ]);
                 }
 
                 $processedNisn[] = $staging->nisn;
@@ -248,8 +301,7 @@ class CommitEmisStagingJob implements ShouldQueue
             }
         }
 
-        // Cleanup staging
-        EmisStaging::where('status', 'committed')->delete();
+        // Riwayat staging tetap dipertahankan dengan status 'committed' untuk kebutuhan audit (P2.7).
 
         $batch->update([
             'total_rows' => $total,

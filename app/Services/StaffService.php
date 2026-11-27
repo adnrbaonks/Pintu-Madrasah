@@ -24,6 +24,9 @@ class StaffService
 
         return DB::transaction(function () use ($staff, $attributes, $actorUserId): bool {
             $filtered = $this->dataOwnershipService->filterAllowedAttributes('staff', $attributes);
+            if ($filtered === []) {
+                return false;
+            }
 
             $oldValues = $this->captureSnapshot($staff);
             $staff->update($filtered);

@@ -31,8 +31,17 @@ class ActivityLog extends Model
         return $this->belongsTo(User::class);
     }
 
-    public static function record(string $action, Model $model, ?array $before = null, ?array $after = null): self
+    public static function record(string $action, ?Model $model = null, ?array $before = null, ?array $after = null): self
     {
-        return static::create(['user_id' => auth()->id(), 'action' => $action, 'model_type' => get_class($model), 'model_id' => $model->getKey(), 'before_payload' => $before, 'after_payload' => $after, 'ip_address' => request()->ip(), 'user_agent' => request()->userAgent()]);
+        return static::create([
+            'user_id' => auth()->id(),
+            'action' => $action,
+            'model_type' => $model ? get_class($model) : 'System',
+            'model_id' => $model?->getKey(),
+            'before_payload' => $before,
+            'after_payload' => $after,
+            'ip_address' => request()->ip(),
+            'user_agent' => request()->userAgent(),
+        ]);
     }
 }

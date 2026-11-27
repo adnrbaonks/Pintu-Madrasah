@@ -78,6 +78,8 @@ class EmisGtkStagingTest extends TestCase
 
     public function test_commit_marks_staging_without_identity_as_failed(): void
     {
+        config(['data_ownership.lifecycle_mode' => 'migration']);
+
         $staging = EmisGtkStaging::factory()->withoutIdentity()->create();
 
         (new CommitEmisGtkStagingJob)->handle();
@@ -91,6 +93,8 @@ class EmisGtkStagingTest extends TestCase
 
     public function test_commit_creates_staff_from_staging_without_fake_defaults(): void
     {
+        config(['data_ownership.lifecycle_mode' => 'migration']);
+
         $staging = EmisGtkStaging::factory()->create([
             'nik' => '3211250703820002',
             'full_name_with_titles' => 'AAN KUSNANDI',
@@ -111,6 +115,8 @@ class EmisGtkStagingTest extends TestCase
 
     public function test_commit_matches_existing_staff_by_nuptk_only(): void
     {
+        config(['data_ownership.lifecycle_mode' => 'migration']);
+
         $staff = Staff::factory()->create([
             'nik' => null,
             'nuptk' => '1234567890123456',
@@ -124,7 +130,7 @@ class EmisGtkStagingTest extends TestCase
             'phone' => '08123450000',
         ]);
 
-        // Mode produksi default (non-destructive SSOT): tidak menduplikasi staff,
+        // Mode migrasi default (non-destructive): tidak menduplikasi staff,
         // mengisi field kosong (phone), tetapi tidak menimpa nama master PINTU yang sudah terisi.
         (new CommitEmisGtkStagingJob)->handle();
 
@@ -145,6 +151,8 @@ class EmisGtkStagingTest extends TestCase
 
     public function test_commit_does_not_create_staff_when_required_fields_are_missing(): void
     {
+        config(['data_ownership.lifecycle_mode' => 'migration']);
+
         $staging = EmisGtkStaging::factory()->incomplete()->create([
             'nik' => '3211250703820003',
         ]);
@@ -160,6 +168,8 @@ class EmisGtkStagingTest extends TestCase
 
     public function test_commit_does_not_blank_existing_staff_fields_with_empty_staging_values(): void
     {
+        config(['data_ownership.lifecycle_mode' => 'migration']);
+
         $staff = Staff::factory()->create([
             'nik' => '3211250703820004',
             'phone' => '08123456789',
@@ -186,6 +196,8 @@ class EmisGtkStagingTest extends TestCase
 
     public function test_commit_applies_explicit_null_from_raw_payload_only_for_allowed_clearable_fields(): void
     {
+        config(['data_ownership.lifecycle_mode' => 'migration']);
+
         $staff = Staff::factory()->create([
             'nik' => '3211250703820005',
             'phone' => '08123456789',
