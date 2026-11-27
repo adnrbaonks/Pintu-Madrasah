@@ -1,10 +1,10 @@
 # Backlog Pintu Madrasah — per 24 Nov 2026
 
-## ✅ Selesai (Sprint 5 + WP0.5–WP8 Hardening & Audit)
-- API Gateway v1 (`/api/v1/*`, key SHA-256 `pm_live_`, scopes non-PII vs PII, allowlist nested Resource, `Idempotency-Key`, Swagger) + Transactional Outbox Webhook v2 (`lease_token` fencing, retry/backoff, Redis queue worker)
-- Layanan Mandiri GTK & Workflow Persetujuan 2 Tingkat (Verifikasi Kaur TU → Persetujuan Kepala Madrasah, rekonsiliasi atomik `pending_external_sync` EMIS termasuk pengosongan nilai `null` eksplisit)
-- RBAC Spatie Terpadu (7 role resmi, 50 permission granular mencakup Dokumen Privat, Arsip Digital, Rapat, Program Kerja, PKKM, dan Pengumuman, dengan pencabutan hak akses *real-time*)
-- Arsip Digital Berversi (`/arsip-digital`), Rapat & Notulen (`/rapat`), Program Kerja & Anggaran (`/program-kerja`), Instrumen PKKM (`/pkkm`), Pengumuman Internal (`/pengumuman`), Kalender Madrasah (`/kalender`)
+## ✅ Selesai (Sprint 5 + WP0.5–WP17 Hardening & Audit)
+- API Gateway v1 (`/api/v1/*`, key SHA-256 `pm_live_` tanpa fallback global key, scopes `students:identifiers` / `students:pii` / `staff:pii`, allowlist nested Resource, `Idempotency-Key`, Swagger) + Transactional Outbox Webhook v2 (`lease_token` fencing, enkripsi secret webhook, proteksi SSRF outbound `WebhookUrlGuard`, sanitasi PII rekursif, retry dead-letter `max_attempts` via `--retry-failed`, Redis queue worker)
+- Layanan Mandiri GTK & Workflow Persetujuan 2 Tingkat (Verifikasi Kaur TU → Persetujuan Kepala Madrasah dengan `lockForUpdate` anti-race-condition & notifikasi `DB::afterCommit`, rekonsiliasi atomik `pending_external_sync` EMIS termasuk pengosongan nilai `null` eksplisit)
+- RBAC Spatie Terpadu (7 role resmi, 50 permission granular mencakup Dokumen Privat, Arsip Digital, Rapat, Program Kerja, PKKM, dan Pengumuman, pembatasan `access_logs` arsip dengan `view_audit_logs`, serta pencabutan hak akses *real-time*)
+- Arsip Digital Berversi (`/arsip-digital`, pembersihan file yatim saat transaksi DB gagal), Rapat & Notulen (`/rapat-dinas`, kunci notulen yang telah disahkan + histori revisi `meeting_minute_revisions`), Program Kerja & Anggaran (`/program-kerja`), Instrumen PKKM (`/pkkm`, scoping akses & validasi kelengkapan sebelum finalisasi), Pengumuman Internal (`/pengumuman`), Kalender Madrasah (`/kalender`)
 - BK, PPDB publik, ekspor RDM (CSV), backup otomatis + rotasi `APP_KEY` idempoten, folder Drive
 - QR verifikasi publik (`/verify/{token}`)
 

@@ -1,6 +1,6 @@
 # PINTU MADRASAH — Pusat Informasi & Tata Usaha Madrasah Terpadu
 
-**PINTU MADRASAH** adalah sistem informasi administrasi tata usaha dan *Master Data Hub* (Siswa, GTK, Organisasi, Akademik, PPDB, Mutasi, BK, Leger, dan Persuratan) berbasis **Laravel 12**, **Inertia.js**, **React 19 (TypeScript)**, dan **Tailwind CSS 4**.
+**PINTU MADRASAH** adalah sistem informasi administrasi tata usaha dan *Master Data Hub* (Siswa, GTK, Organisasi, Akademik, PPDB, Mutasi, BK, Leger, dan Persuratan) berbasis **Laravel 13 (`laravel/framework: ^13.17`)**, **Inertia.js**, **React 19 (TypeScript)**, dan **Tailwind CSS 4**.
 
 Aplikasi ini menjadi sumber kebenaran tunggal (*Single Source of Truth*) bagi ekosistem aplikasi satelit madrasah (**SIPSMAD**, **PTSP**, **E-Surat**, **RDM**, dan **E-Learning**).
 
@@ -18,21 +18,21 @@ Aplikasi ini menjadi sumber kebenaran tunggal (*Single Source of Truth*) bagi ek
    - State machine persetujuan 2 tingkat (**Verifikasi TU (`verify_staff_changes`) → Persetujuan Kepala Madrasah (`approve_staff_changes`)** atau pejabat organisasi berwenang via `OrganizationApprovalService`) dengan pencegahan *self-approval*, penguncian baris (`lockForUpdate`), pemisahan field lokal vs `pending_external_sync` (EMIS), rekonsiliasi otomatis dengan deteksi konflik/timeout & dukungan pengosongan nilai (`null`) eksplisit pada field EMIS opsional, riwayat perubahan per-field, serta notifikasi in-app.
 4. **RBAC Terpadu & Otorisasi Dokumen Object-Level (`/pengaturan/roles`, `/arsip-digital`, `/archives/{type}/{filename}`):**
    - Otorisasi berbasis `spatie/laravel-permission` sebagai sumber kebenaran tunggal dengan 7 role resmi madrasah (`admin`, `kepala_madrasah`, `kaur_tu`, `staf`, `operator`, `guru`, `pegawai`) dan **50 permission granular** yang dapat dicabut (*revoke*) secara *real-time*.
-   - Pemisahan kewenangan per jenis dokumen privat (`view_student_documents`, `view_ppdb_documents`, `view_mutation_documents`, `view_staff`, serta kepemilikan objek/`verify_staff_changes`/`approve_staff_changes` untuk `StaffChangeAttachment`) dan penyaringan metadata arsip digital (`ArchiveService::canView()`) di seluruh modul (Pengumuman, Program Kerja, PKKM, Rapat).
+   - Pemisahan kewenangan per jenis dokumen privat (`view_student_documents`, `view_ppdb_documents`, `view_mutation_documents`, `view_staff`, serta kepemilikan objek/`verify_staff_changes`/`approve_staff_changes` untuk `StaffChangeAttachment`), pembatasan `access_logs` arsip digital dengan `view_audit_logs`, pembatasan perubahan klasifikasi/visibilitas arsip bagi pemilik non-manajer (`manage_archives`), pemisahan permission tulis pada `documents/{type}/{id}/retry`, serta penyaringan metadata arsip digital (`ArchiveService::canView()` & `ArchiveService::recentViewable()`) di seluruh modul (Pengumuman, Program Kerja, PKKM, Rapat).
 5. **Open API Gateway v1, Keamanan Key SHA-256 & Transactional Outbox Webhook (`/api-clients`, `/webhooks`):**
-   - Endpoint `/api/v1/*` dengan kunci `pm_live_<prefix8>_<secret40>` ter-hash SHA-256, kontrol scope granular (termasuk `students:pii` & `staff:pii`), allowlist eksplisit pada Resource utama maupun relasi bertingkat (`SchoolClassResource`, `StudentCohortResource`, `StudentDocumentResource`, `PositionAssignmentResource`), header `X-Request-Id`, `Idempotency-Key` (kanonikalisasi JSON rekursif + atomic lock), seleksi kolom `?fields=`, dan sinkronisasi inkremental `?updated_since=`.
-   - Transactional Outbox (`outbox_events`) dengan *lease fencing* (`lease_token`, `reserved_at`, `lease_expires_at`), pengiriman webhook ber-signature HMAC-SHA256 v2 (`X-Webhook-Signature-V2`), retry eksponensial 5x (`available_at`), deduplikasi `event_id`, dan replay dari UI.
+   - Endpoint `/api/v1/*` dengan kunci per-klien `pm_live_<prefix8>_<secret40>` ter-hash SHA-256 (fallback global API key telah dipensiunkan), kontrol scope granular (termasuk `students:identifiers`, `students:pii`, dan `staff:pii`), allowlist eksplisit pada Resource utama maupun relasi bertingkat (`SchoolClassResource`, `StudentCohortResource`, `StudentDocumentResource`, `PositionAssignmentResource`), header `X-Request-Id`, `Idempotency-Key` (kanonikalisasi JSON rekursif + atomic lock), seleksi kolom `?fields=`, dan sinkronisasi inkremental `?updated_since=`.
+   - Transactional Outbox (`outbox_events`) dengan *lease fencing* (`lease_token`, `reserved_at`, `lease_expires_at`), enkripsi secret langganan webhook (`WebhookSubscription`), proteksi SSRF outbound (`WebhookUrlGuard` dengan blokir IP privat/loopback/metadata, anti-DNS rebinding `CURLOPT_RESOLVE`, dan larangan redirect 3xx), sanitasi PII rekursif berbasis scope klien, pengiriman webhook ber-signature HMAC-SHA256 v2 (`X-Webhook-Signature-V2`), retry eksponensial dengan batas `max_attempts` yang dapat di-retry saat dead-letter (`webhooks:process-outbox --retry-failed`), deduplikasi `event_id`, dan replay dari UI.
 6. **Sinkronisasi EMIS Siswa & EMIS GTK Terproteksi (`/emis/siswa`, `/emis/gtk`):**
    - Penarikan dan staging data EMIS menggunakan token kredensial integrasi terkelola (`pm_int_<prefix8>_<secret40>`), validasi masa berlaku JWT, pembedaan field staging yang tidak dikirim vs sengaja dikosongkan (`null`), dan audit `integration_logs`.
 7. **Tata Kelola Madrasah, Operasional Akademik & Kesiswaan:**
-   - Arsip Digital Berversi (`/arsip-digital`), Rapat & Notulen (`/rapat`), Program Kerja & Realisasi (`/program-kerja`), Instrumen Penilaian PKKM (`/pkkm`), Pengumuman Internal (`/pengumuman`), dan Kalender Akademik (`/kalender`).
+   - Arsip Digital Berversi (`/arsip-digital`), Rapat & Notulen (`/rapat-dinas`, termasuk kunci notulen yang sudah disahkan dan jejak audit revisi `POST /rapat-dinas/{meeting}/minutes/revise`), Program Kerja & Realisasi (`/program-kerja`), Instrumen Penilaian PKKM (`/pkkm`, dengan validasi kelengkapan skor verifikasi & bukti terverifikasi sebelum finalisasi), Pengumuman Internal (`/pengumuman`), dan Kalender Akademik (`/kalender`).
    - PPDB Online & Penempatan Kelas (`/ppdb`), Mutasi Masuk/Keluar (`/mutasi`), Kenaikan Kelas (`/kenaikan-kelas`), Bimbingan Konseling (`/bk`), Leger Nilai dengan Formula Dinamis per Tahun Ajaran (`/leger`), serta Cetak Dokumen & Verifikasi QR (`/verify/{token}`).
 
 ---
 
 ## Persyaratan Sistem
 
-- **PHP:** 8.4+ (ekstensi: `pdo_mysql`, `pdo_sqlite`, `redis`, `gd`, `intl`, `zip`, `bcmath`)
+- **PHP:** 8.3+ (disarankan 8.4+; ekstensi: `pdo_mysql`, `pdo_sqlite`, `redis`, `gd`, `intl`, `zip`, `bcmath`)
 - **Database:** MySQL 8.0+ (Produksi/Staging) atau SQLite (Pengembangan Lokal)
 - **Cache & Queue:** Redis 7+ atau Database Queue
 - **Node.js:** 22+ & NPM
@@ -96,7 +96,8 @@ npm run build
 | Perintah | Fungsi |
 |---|---|
 | `php artisan api-keys:hash-existing` | Mem-backfill `key_hash` SHA-256 dari `api_key` plaintext lama lalu mengosongkan plaintext |
-| `php artisan webhooks:process-outbox` | Memproses antrean `outbox_events` yang berstatus `pending` (tambahkan `--retry-failed` untuk me-replay dead-letter) |
+| `php artisan settings:encrypt-secrets` | Mengenkripsi nilai `settings` sensitif dan secret `webhook_subscriptions` plaintext secara idempoten |
+| `php artisan webhooks:process-outbox` | Memproses antrean `outbox_events` yang berstatus `pending` (tambahkan `--retry-failed` untuk me-replay dead-letter dengan menaikkan `max_attempts`) |
 | `php artisan grades:recalculate` | Menghitung ulang nilai akhir & predikat pada leger berdasarkan formula tahun ajaran (`GradeService`) |
 | `php artisan l5-swagger:generate` | Memperbarui berkas spesifikasi OpenAPI untuk `/api/documentation` |
 

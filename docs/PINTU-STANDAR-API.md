@@ -59,16 +59,18 @@ pm_live_<prefix8>_<secret40>
 
 | Scope | Grup | Deskripsi |
 |---|---|---|
-| `students:read` | Siswa | Membaca daftar dan profil siswa (hanya atribut non-PII secara default) |
-| `students:pii` | Siswa (PII) | Akses eksplisit atribut sensitif siswa (NIK, No. KK/`kk_number`, alamat, nama orang tua/wali, dokumen) via parameter `?fields=...` |
+| `students:read` | Siswa | Membaca daftar dan profil siswa (hanya atribut non-PII secara default; gunakan `/api/v1/students/by-id/{uuid}` untuk detail tanpa NISN) |
+| `students:identifiers` | Siswa (Identifier) | Akses atribut `nisn` pada respons siswa serta lookup `GET /api/v1/students/{nisn}` |
+| `students:pii` | Siswa (PII) | Akses eksplisit atribut sensitif siswa (termasuk `nisn`, NIK, No. KK/`kk_number`, alamat, nama orang tua/wali, dokumen) via parameter `?fields=...` |
 | `staff:read` | GTK | Membaca daftar dan profil guru & tenaga kependidikan (hanya atribut non-PII secara default) |
 | `staff:pii` | GTK (PII) | Akses eksplisit atribut sensitif GTK (NIK, NUPTK, NIP, NPK, telepon, email, tempat/tanggal lahir, riwayat pendidikan & kepangkatan) via parameter `?fields=...` |
 | `classes:read` | Akademik | Membaca daftar rombongan belajar, kelas, dan wali kelas |
 | `academic-years:read` | Akademik | Membaca informasi tahun ajaran aktif |
 
-> **Catatan Keamanan PII & Relasi Bertingkat (*Nested Resource Allowlist*):**
+> **Catatan Keamanan PII, Scope `students:identifiers`, & Relasi Bertingkat (*Nested Resource Allowlist*):**
+> - Fallback global API key (`Setting::get('api_key')` / `API_GATEWAY_KEY`) telah dipensiunkan; seluruh konsumen wajib memakai kredensial `ApiClient` (`pm_live_<prefix8>_<secret40>`).
 > - Terapkan prinsip *deny by default*. Tanpa parameter `?fields=...`, respons API hanya mengembalikan atribut non-PII yang aman:
->   - **Siswa (`StudentResource` non-PII):** `id`, `emis_student_id`, `nisn`, `nis_local`, `name`, `gender`, `status`, `entry_date`, `exit_date`, `created_at`, `updated_at`, serta relasi `current_cohort` dan `cohorts` bila dimuat. (`nisn` dan `nis_local` diklasifikasikan sebagai nomor induk akademik operasional untuk integrasi RDM/SIPSMAD/E-Learning, sedangkan `nik`, `kk_number`, data orang tua/wali, tempat/tanggal lahir, alamat, dan `documents` wajib menggunakan scope `students:pii`).
+>   - **Siswa (`StudentResource` non-PII):** `id`, `emis_student_id`, `nis_local`, `name`, `gender`, `status`, `entry_date`, `exit_date`, `created_at`, `updated_at`, serta relasi `current_cohort` dan `cohorts` bila dimuat. Field `nisn` dan endpoint `GET /api/v1/students/{nisn}` diklasifikasikan sebagai identifier nasional yang memerlukan scope `students:identifiers` (atau `students:pii`), sedangkan `nik`, `kk_number`, data orang tua/wali, tempat/tanggal lahir, alamat, dan `documents` wajib menggunakan scope `students:pii`.
 >   - **GTK (`StaffResource` non-PII):** `id`, `full_name_with_titles`, `first_title`, `last_title`, `gender`, `employment_status`, `functional_position`, `is_active`, `created_at`, `updated_at`, serta relasi `position_assignments` bila dimuat. Seluruh identitas kepegawaian/kependudukan (`nik`, `nip`, `nuptk`, `npk`), kontak (`phone`, `email`), tempat/tanggal lahir, riwayat pendidikan, dan kepangkatan wajib menggunakan scope `staff:pii` + `?fields=...`.
 > - Seluruh relasi bertingkat (*nested relations*) diserialisasi menggunakan Resource khusus ber-allowlist ketat:
 >   - `ClassResource` (`GET /api/v1/classes`): membatasi atribut rombel (`id`, `academic_year_id`, `class_id`, `name`, `homeroom_teacher_id`, `capacity`) dan membungkus `homeroom_teacher` melalui `StaffResource` sehingga wali kelas tunduk pada aturan `staff:pii`.
@@ -208,9 +210,12 @@ Seluruh kegagalan autentikasi, otorisasi scope, validasi, maupun `404` mengembal
 - **Lease Fencing & Klaim Konkuren (`lease_token`):**
   - Baik `DispatchWebhookJob` (yang di-dispatch saat `afterCommit`) maupun scheduler `php artisan webhooks:process-outbox` mengklaim baris `outbox_events` menggunakan penguncian baris (`lockForUpdate`) dan menerbitkan `lease_token` unik dengan masa sewa (`lease_expires_at`, default 120 detik).
   - Selama pengiriman berlangsung, worker hanya dapat memperpanjang lease atau menyelesaikan status event (`delivered`, `pending` dengan `available_at`, atau `failed`) apabila `lease_token` pada database masih cocok dengan token milik worker tersebut. Job antrean lama (*stale job*) yang baru dieksekusi setelah lease-nya kedaluwarsa dan diambil alih worker lain akan langsung berhenti tanpa mengirim HTTP request ganda atau menimpa klaim baru.
-- **Retry Eksponensial:** Kegagalan pengiriman diulang otomatis hingga 5 kali (`max_attempts`) dengan jadwal backoff `[10, 30, 120, 300, 900]` detik pada kolom `outbox_events.available_at` menggunakan `event_id` yang sama.
+- **Retry Eksponensial & Pemulihan Dead-Letter (`--retry-failed`):** Kegagalan pengiriman diulang otomatis hingga `max_attempts` (default 5 kali) dengan jadwal backoff `[10, 30, 120, 300, 900]` detik pada kolom `outbox_events.available_at` menggunakan `event_id` yang sama. Apabila event telah masuk status `failed` (dead-letter), perintah `php artisan webhooks:process-outbox --retry-failed` atau replay manual dari UI akan menaikkan `max_attempts` dan mengklaim ulang event tersebut tanpa mereset riwayat `attempts` atau membuat duplikasi delivery.
 - **Deduplikasi:** PINTU menjamin satu `(webhook_subscription_id, event_id)` yang sudah berhasil (`delivered = true`) tidak akan dikirim ulang. Aplikasi satelit wajib menyimpan `event_id` (`X-Webhook-Id`) untuk idempotensi di sisi penerima.
-- **Perlindungan PII Default:** Secara default (`include_pii = false`), atribut PII (`nik`, `family_card_number`, penghasilan orang tua) disensor otomatis dari payload `data`.
+- **Enkripsi Secret, Proteksi SSRF & Sanitasi PII Rekursif:**
+  - Secret HMAC langganan webhook (`WebhookSubscription.secret`) disimpan terenkripsi di database, disembunyikan pada `$hidden` (tidak pernah terekspos di respons Inertia/JSON daftar langganan), dan hanya ditampilkan satu kali saat pembuatan atau rotasi.
+  - Target URL webhook divalidasi oleh `WebhookUrlGuard` saat registrasi dan sebelum setiap pengiriman HTTP: wajib HTTPS secara default (`WEBHOOK_REQUIRE_HTTPS=true`), menolak localhost/loopback, IP privat IPv4/IPv6, link-local, CGNAT, cloud metadata (`169.254.169.254`, `metadata.google.internal`), hostname internal, memitigasi DNS rebinding dengan penyematan IP `CURLOPT_RESOLVE`, serta menolak redirect HTTP 3xx.
+  - Secara default (`include_pii = false`), seluruh atribut PII dan identifier kepegawaian/siswa (`nik`, `nisn`, `nip`, `nuptk`, `npk`, `kk_number`, `family_card_number`, kontak, tempat/tanggal lahir, penghasilan orang tua) disensor secara rekursif dari payload `data`. Apabila langganan webhook ditautkan ke `ApiClient`, opsi `include_pii = true` juga mensyaratkan kepemilikan scope `students:pii` (untuk event `student.*`) atau `staff:pii` (untuk event `staff.*`).
 
 ### 7.3 Struktur Payload & Header HTTP Webhook
 ```json

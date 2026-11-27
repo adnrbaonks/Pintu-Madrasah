@@ -20,6 +20,18 @@ Dokumen ini mencatat riwayat perubahan kontrak API v1 dan Webhook pada **PINTU M
 
 ## Riwayat Rilis
 
+### v1.1.2 — 2026-11-25 (Hardening Audit WP1–WP17)
+#### Diperketat & Diperbaiki
+- **Scope `students:identifiers` & Pensiun Fallback Global API Key (`WP15`, `WP16`):**
+  - Penambahan scope `students:identifiers` untuk mengontrol eksposur `nisn` pada `StudentResource` serta akses endpoint `GET /api/v1/students/{nisn}` (migrasi otomatis menambahkan `students:identifiers` pada klien lama pemegang `students:read` untuk kelangsungan operasional).
+  - Fallback global API key (`Setting::get('api_key')` / `API_GATEWAY_KEY`) pada middleware `CheckApiKey` telah dipensiunkan; seluruh request `/api/v1/*` wajib menggunakan kunci per-klien `ApiClient`.
+- **Sanitasi PII Webhook Rekursif, Enkripsi Secret & Proteksi SSRF Outbound (`WP1`, `WP7`, `WP8`):**
+  - `WebhookPublisher` menyensor PII dan identifier (`nik`, `nisn`, `nip`, `nuptk`, `npk`, `kk_number`, `family_card_number`, kontak, tempat/tanggal lahir, penghasilan) secara rekursif kecuali `include_pii = true` dan `ApiClient` terkait memiliki scope `students:pii` / `staff:pii`.
+  - `WebhookSubscription.secret` dienkripsi at-rest dan disembunyikan dari serialisasi model (`$hidden`).
+  - `WebhookUrlGuard` memblokir target SSRF (localhost, IP privat/loopback/link-local/CGNAT, cloud metadata, DNS rebinding via `CURLOPT_RESOLVE`, dan redirect HTTP 3xx).
+- **Pemulihan Dead-Letter Outbox (`WP9`, `WP14`):**
+  - Penambahan kolom `max_attempts` pada `outbox_events` sehingga `php artisan webhooks:process-outbox --retry-failed` dan replay admin dapat memproses ulang event `failed` tanpa kehilangan riwayat `attempts`.
+
 ### v1.1.1 — 2026-11-24 (Hardening Audit WP0.5 Lanjutan)
 #### Diperketat & Diperbaiki (Non-Breaking bagi Konsumen Sesuai Kontrak)
 - **Allowlist Ketat pada Nested API Resource (`/api/v1/students`, `/api/v1/staff`, `/api/v1/classes`):**
