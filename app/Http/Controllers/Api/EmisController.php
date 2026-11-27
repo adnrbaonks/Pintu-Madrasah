@@ -24,8 +24,10 @@ use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
 class EmisController extends Controller
@@ -190,11 +192,21 @@ class EmisController extends Controller
                 'pull_progress' => Cache::get('emis:pull:progress', null),
                 'commit_progress' => Cache::get('emis:commit:progress', null),
             ],
+        ]);
+    }
+
+    /**
+     * GET /api/emis-gtk/status — hanya status domain GTK (tanpa kredensial / status siswa).
+     */
+    public function gtkTokenStatus(): JsonResponse
+    {
+        return response()->json([
             'emis_gtk' => [
                 'active' => $this->emis->hasActiveGtkToken(),
                 'message' => $this->emis->hasActiveGtkToken()
                     ? 'Token GTK aktif'
                     : 'Token GTK tidak tersedia — klik bookmarklet GTK',
+                'pull_progress' => Cache::get('emis_gtk:pull:progress', null),
             ],
         ]);
     }
@@ -217,7 +229,12 @@ class EmisController extends Controller
         $clearStaging = filter_var($request->input('clear_staging', false), FILTER_VALIDATE_BOOLEAN);
 
         if ($clearStaging) {
-            EmisStaging::truncate();
+            if ($denied = $this->requireStagingWriteForClear($request)) {
+                return $denied;
+            }
+            // Hanya baris belum-commit (pending) yang dibersihkan; riwayat committed dipertahankan.
+            $removed = EmisStaging::query()->where('status', 'pending')->delete();
+            $this->auditStagingClear($request, 'student', $removed);
             Cache::forget('emis:pull:progress');
         }
 
@@ -377,7 +394,11 @@ class EmisController extends Controller
         $clearStaging = filter_var($request->input('clear_staging', false), FILTER_VALIDATE_BOOLEAN);
 
         if ($clearStaging) {
-            EmisGtkStaging::truncate();
+            if ($denied = $this->requireStagingWriteForClear($request)) {
+                return $denied;
+            }
+            $removed = EmisGtkStaging::query()->where('status', 'pending')->delete();
+            $this->auditStagingClear($request, 'staff', $removed);
             Cache::forget('emis_gtk:pull:progress');
         }
 
@@ -836,6 +857,80 @@ class EmisController extends Controller
         return null;
     }
 
+    /**
+     * Simpan item import GTK ke staging dengan penanda sesi import.
+     */
+    private function storeGtkImportItems(array $items, string $sessionId): int
+    {
+        $saved = 0;
+        foreach ($items as $item) {
+            $name = mb_strtoupper(trim($item['name'] ?? ''));
+            if (empty($name)) {
+                continue;
+            }
+
+            $uuid = $item['uuid'] ?? null;
+            $identity = $uuid
+                ? ['emis_gtk_id' => $uuid]
+                : $this->gtkIdentity($item, $name);
+
+            $data = [
+                'emis_gtk_id' => $uuid,
+                'full_name_with_titles' => $name,
+                'nik' => $item['nik'] ?? null,
+                'nip' => $item['nip'] ?? null,
+                'npk' => $item['npk'] ?? null,
+                'nuptk' => $item['nuptk'] ?? null,
+                'nrg' => $item['nrg'] ?? null,
+                'peg_id' => $item['peg_id'] ?? null,
+                'function_role' => $item['fungsi'] ?? $item['function_role'] ?? null,
+                'employment_status' => $item['employment'] ?? $item['employment_status'] ?? null,
+                'source' => 'bookmarklet',
+                'last_seen_at' => now(),
+                'raw_data' => $item,
+                'status' => 'pending',
+            ];
+
+            if (array_key_exists('active', $item)) {
+                $data['k_aktif'] = filter_var($item['active'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+            }
+
+            if (array_key_exists('is_sertifikasi', $item)) {
+                $data['is_sertifikasi'] = filter_var($item['is_sertifikasi'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+            }
+
+            $data['import_session_id'] = $sessionId;
+            EmisGtkStaging::updateOrCreate($identity, $data);
+            $saved++;
+        }
+
+        return $saved;
+    }
+
+    private function requireStagingWriteForClear(Request $request): ?JsonResponse
+    {
+        $token = $request->attributes->get('integration_token');
+        if ($this->isTokenAuth($request) && (! $token || ! $token->hasAbility('staging:write'))) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Token integrasi tidak memiliki ability untuk aksi ini.',
+                'error' => ['code' => 'FORBIDDEN_TOKEN_ABILITY'],
+            ], 403);
+        }
+
+        return null;
+    }
+
+    private function auditStagingClear(Request $request, string $entity, int $removed, ?string $sessionId = null): void
+    {
+        IntegrationLog::record(
+            $entity === 'student' ? 'emis_siswa' : 'emis_gtk',
+            'staging.cleared',
+            'success',
+            ['removed_pending_rows' => $removed, 'import_session_id' => $sessionId, 'auth_method' => $request->attributes->get('integration_auth_method')],
+        );
+    }
+
     private function isTokenAuth(Request $request): bool
     {
         return $request->attributes->get('integration_auth_method') === 'token'
@@ -941,50 +1036,42 @@ class EmisController extends Controller
         $totalCount = (int) $request->input('total_count', count($items));
         $clear = filter_var($request->input('clear', false), FILTER_VALIDATE_BOOLEAN);
 
-        // Hapus staging lama jika di halaman pertama atau ini adalah sync baru
-        if ($page === 1) {
-            EmisGtkStaging::truncate();
+        // Sesi import: halaman 1 membuka sesi baru; halaman >1 melanjutkan sesi yang sama.
+        // Data lama TIDAK dihapus di halaman pertama; baris pending dari sesi lain
+        // baru diganti pada halaman terakhir (staging replacement).
+        $lock = Cache::lock('emis_gtk:import:lock', 60);
+        if (! $lock->block(10)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Import GTK lain sedang berjalan. Coba lagi sebentar.',
+                'error' => ['code' => 'IMPORT_IN_PROGRESS'],
+            ], 409);
         }
 
-        $saved = 0;
-        foreach ($items as $item) {
-            $name = mb_strtoupper(trim($item['name'] ?? ''));
-            if (empty($name)) {
-                continue;
-            }
+        try {
+            $sessionKey = 'emis_gtk:import:session';
+            $sessionId = $page === 1
+                ? (string) Str::uuid()
+                : (string) ($request->input('import_session_id') ?: Cache::get($sessionKey) ?: Str::uuid());
+            Cache::put($sessionKey, $sessionId, now()->addHours(2));
 
-            $uuid = $item['uuid'] ?? null;
-            $identity = $uuid
-                ? ['emis_gtk_id' => $uuid]
-                : $this->gtkIdentity($item, $name);
+            $saved = DB::transaction(function () use ($items, $sessionId, $page, $totalPages, $request) {
+                $saved = $this->storeGtkImportItems($items, $sessionId);
 
-            $data = [
-                'emis_gtk_id' => $uuid,
-                'full_name_with_titles' => $name,
-                'nik' => $item['nik'] ?? null,
-                'nip' => $item['nip'] ?? null,
-                'npk' => $item['npk'] ?? null,
-                'nuptk' => $item['nuptk'] ?? null,
-                'nrg' => $item['nrg'] ?? null,
-                'peg_id' => $item['peg_id'] ?? null,
-                'function_role' => $item['fungsi'] ?? $item['function_role'] ?? null,
-                'employment_status' => $item['employment'] ?? $item['employment_status'] ?? null,
-                'source' => 'bookmarklet',
-                'last_seen_at' => now(),
-                'raw_data' => $item,
-                'status' => 'pending',
-            ];
+                if ($page >= $totalPages) {
+                    $removed = EmisGtkStaging::query()
+                        ->where('status', 'pending')
+                        ->where(function ($q) use ($sessionId) {
+                            $q->whereNull('import_session_id')->orWhere('import_session_id', '!=', $sessionId);
+                        })
+                        ->delete();
+                    $this->auditStagingClear($request, 'staff', $removed, $sessionId);
+                }
 
-            if (array_key_exists('active', $item)) {
-                $data['k_aktif'] = filter_var($item['active'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
-            }
-
-            if (array_key_exists('is_sertifikasi', $item)) {
-                $data['is_sertifikasi'] = filter_var($item['is_sertifikasi'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
-            }
-
-            EmisGtkStaging::updateOrCreate($identity, $data);
-            $saved++;
+                return $saved;
+            });
+        } finally {
+            $lock->release();
         }
 
         // Simpan progress ke cache untuk polling UI

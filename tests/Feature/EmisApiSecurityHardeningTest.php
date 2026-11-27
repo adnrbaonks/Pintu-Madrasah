@@ -18,9 +18,9 @@ class EmisApiSecurityHardeningTest extends TestCase
 {
     use LazilyRefreshDatabase;
 
-    private function tokenHeaders(User $user, string $purpose): array
+    private function tokenHeaders(User $user, string $purpose, ?array $abilities = null): array
     {
-        $token = app(IntegrationTokenService::class)->issue($user, $purpose, 'Token '.$purpose);
+        $token = app(IntegrationTokenService::class)->issue($user, $purpose, 'Token '.$purpose, null, $abilities);
 
         return ['X-Integration-Token' => $token['plain_token']];
     }
@@ -28,7 +28,7 @@ class EmisApiSecurityHardeningTest extends TestCase
     public function test_post_reconcile_student_with_integration_token_does_not_leak_pii_or_items(): void
     {
         $operator = User::factory()->create(['role' => 'operator']);
-        $headers = $this->tokenHeaders($operator, 'emis_siswa');
+        $headers = $this->tokenHeaders($operator, 'emis_siswa', ['reconcile:run', 'reconcile:read', 'staging:read']);
 
         Student::factory()->create([
             'nisn' => '5000000001', 'nik' => '3201777766665555', 'kk_number' => '3201444433332222',
@@ -56,7 +56,7 @@ class EmisApiSecurityHardeningTest extends TestCase
     public function test_post_reconcile_gtk_with_integration_token_does_not_leak_pii_or_items(): void
     {
         $operator = User::factory()->create(['role' => 'operator']);
-        $headers = $this->tokenHeaders($operator, 'emis_gtk');
+        $headers = $this->tokenHeaders($operator, 'emis_gtk', ['reconcile:run', 'reconcile:read', 'staging:read']);
 
         Staff::factory()->create([
             'nik' => '3201999988887777', 'nip' => '198001012005011001', 'nuptk' => '1234567890123456',
@@ -123,7 +123,7 @@ class EmisApiSecurityHardeningTest extends TestCase
     public function test_gtk_staging_is_paginated_sanitized_and_domain_isolated(): void
     {
         $operator = User::factory()->create(['role' => 'operator']);
-        $headers = $this->tokenHeaders($operator, 'emis_gtk');
+        $headers = $this->tokenHeaders($operator, 'emis_gtk', ['reconcile:run', 'reconcile:read', 'staging:read']);
 
         EmisGtkStaging::factory()->count(12)->create(['status' => 'pending']);
         Staff::factory()->create(['nik' => EmisGtkStaging::first()->nik]);

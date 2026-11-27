@@ -21,7 +21,14 @@ class IntegrationTokenService
         string $purpose,
         string $label,
         ?Carbon $expiresAt = null,
+        ?array $abilities = null,
     ): array {
+        $abilities = array_values(array_unique($abilities ?? IntegrationToken::LEGACY_ABILITIES));
+        $invalid = array_diff($abilities, IntegrationToken::ABILITIES);
+        if ($invalid !== []) {
+            throw new \InvalidArgumentException('Ability token tidak dikenal.');
+        }
+
         $prefix = Str::lower(Str::random(8));
         $secret = Str::random(40);
         $plainToken = "pm_int_{$prefix}_{$secret}";
@@ -30,6 +37,7 @@ class IntegrationTokenService
         $token = IntegrationToken::create([
             'user_id' => $user->id,
             'purpose' => $purpose,
+            'abilities' => $abilities,
             'token_prefix' => $prefix,
             'token_hash' => $hash,
             'token_last4' => substr($plainToken, -4),
@@ -45,6 +53,7 @@ class IntegrationTokenService
             context: [
                 'label' => $label,
                 'token_prefix' => $prefix,
+                'abilities' => $abilities,
                 'expires_at' => $token->expires_at?->toIso8601String(),
             ],
             userId: $user->id,

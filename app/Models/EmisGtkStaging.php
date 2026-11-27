@@ -10,6 +10,7 @@ class EmisGtkStaging extends Model
     use HasFactory;
 
     protected $fillable = [
+        'import_session_id',
         'emis_gtk_id', 'nip', 'nik', 'npk', 'nuptk', 'nrg', 'peg_id',
         'full_name_with_titles', 'first_title', 'last_title',
         'gender', 'birth_place', 'birth_date', 'phone', 'email',

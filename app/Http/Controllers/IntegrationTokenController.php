@@ -25,6 +25,8 @@ class IntegrationTokenController extends Controller
                 ]),
             ],
             'label' => ['required', 'string', 'max:100'],
+            'abilities' => ['nullable', 'array'],
+            'abilities.*' => ['string', Rule::in(IntegrationToken::ABILITIES)],
             'expires_in_days' => ['nullable', 'integer', 'min:1', 'max:365'],
         ]);
 
@@ -34,6 +36,7 @@ class IntegrationTokenController extends Controller
             purpose: $validated['purpose'],
             label: $validated['label'],
             expiresAt: now()->addDays($days),
+            abilities: $validated['abilities'] ?? null,
         );
 
         return back()

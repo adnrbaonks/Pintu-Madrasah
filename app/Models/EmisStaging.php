@@ -14,6 +14,7 @@ class EmisStaging extends Model
     public $incrementing = false;
 
     protected $fillable = [
+        'import_session_id',
         'source',
         'nisn',
         'nik',
