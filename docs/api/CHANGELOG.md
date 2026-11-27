@@ -20,6 +20,22 @@ Dokumen ini mencatat riwayat perubahan kontrak API v1 dan Webhook pada **PINTU M
 
 ## Riwayat Rilis
 
+### v1.2.0 — 2026-11-27 (Revisi Data Ownership SSOT & Final Security/Integrity Hardening)
+#### Ditambahkan & Diperketat
+- **Revisi Data Ownership — PINTU MADRASAH sebagai Production SSOT (`config/data_ownership.php`, `DataOwnershipService`):**
+  - Seluruh atribut master Siswa (`student`) dan GTK (`staff`) kini dimiliki oleh PINTU MADRASAH (`owner_system = local`, `production_sync_direction = outbound`), sedangkan ID teknis eksternal (`emis_student_id`, `emis_gtk_id`) dipertahankan sebagai referensi integrasi (`owner_system = emis`, `change_policy = read_only`).
+  - Perubahan identitas penting Siswa oleh operator (`edit_students`) mewajibkan dokumen pendukung (`StudentDocument`), alasan perubahan pada data terkunci/terverifikasi (`identity_change_reason`), jejak audit `ActivityLog`, serta membuat tugas pembaruan outbound ke EMIS (`EmisUpdateTask`).
+  - Perubahan data GTK yang disetujui melalui alur 2 tingkat (Verifikasi Kaur TU → Persetujuan Kepala Madrasah) langsung diterapkan ke Master GTK PINTU dan membuat tugas pembaruan outbound ke EMIS (`EmisUpdateTask`).
+- **Pemisahan Endpoint Import Awal, Rekonsiliasi Non-Destruktif & Antrean Pembaruan EMIS (`/api/emis/*`, `/api/emis-gtk/*`):**
+  - Import awal (`POST /api/emis/commit`, `POST /api/emis-gtk/commit`) mencatat metadata `emis_import_batches` dan menolak overwrite otomatis terhadap master PINTU kecuali dikonfirmasi eksplisit (`allow_overwrite=true` & `overwrite_confirmed=true`).
+  - Endpoint baru `POST /api/emis/reconcile`, `POST /api/emis-gtk/reconcile`, dan `GET /api/emis*/reconciliation-batches` untuk rekonsiliasi non-destruktif (`same`, `different`, `pintu_only`, `emis_only`, `needs_review`).
+  - Endpoint baru `GET /api/emis*/update-tasks` dan `PATCH /api/emis*/update-tasks/{task}` untuk pelacakan pembaruan outbound ke EMIS oleh operator.
+- **Penutupan Bypass PII Webhook Tanpa API Client (`P1`):**
+  - Pembuatan langganan webhook dengan `include_pii = true` wajib menautkan `api_client_id` aktif (tidak dicabut dan belum kedaluwarsa) yang memiliki scope `students:pii` (untuk event `student.*`) atau `staff:pii` (untuk event `staff.*`).
+  - Pada saat runtime (`WebhookPublisher::canIncludePii()`), langganan tanpa `api_client_id` selalu disanitasi secara *fail-closed* (`false`).
+- **Verifikasi Transport Runtime SSRF (`P2.5`):**
+  - `WebhookUrlGuard::buildPinnedTransportOptions()` memverifikasi ketersediaan ekstensi cURL dan `CURLOPT_RESOLVE` secara *fail-closed*, menonaktifkan proxy environment (`proxy => ''`, `CURLOPT_PROXY => ''`, `CURLOPT_NOPROXY => '*'`), menonaktifkan redirect, dan mengunci protokol serta IP publik tervalidasi.
+
 ### v1.1.2 — 2026-11-25 (Hardening Audit WP1–WP17)
 #### Diperketat & Diperbaiki
 - **Scope `students:identifiers` & Pensiun Fallback Global API Key (`WP15`, `WP16`):**

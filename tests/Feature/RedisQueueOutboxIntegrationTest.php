@@ -9,6 +9,7 @@ use App\Models\Student;
 use App\Models\WebhookDelivery;
 use App\Models\WebhookSubscription;
 use App\Services\OutboxService;
+use Illuminate\Database\Connection;
 use Illuminate\Foundation\Testing\LazilyRefreshDatabase;
 use Illuminate\Queue\RedisQueue;
 use Illuminate\Support\Facades\Artisan;
@@ -341,8 +342,14 @@ class RedisQueueOutboxIntegrationTest extends TestCase
     {
         $driver = DB::connection()->getDriverName();
         $tempSqlitePath = null;
+        $originalSqlitePdo = null;
+        $originalTransactionLevel = 0;
 
         if ($driver === 'sqlite' && DB::connection()->getDatabaseName() === ':memory:') {
+            $originalConn = DB::connection('sqlite');
+            $originalSqlitePdo = $originalConn->getPdo();
+            $originalTransactionLevel = $originalConn->transactionLevel();
+
             // Untuk SQLite in-memory, buat file SQLite sementara yang terisolasi agar dua proses OS paralel berbagi state DB yang sama
             $tempSqlitePath = sys_get_temp_dir().'/pintu_parallel_outbox_'.Str::lower(Str::random(12)).'.sqlite';
             touch($tempSqlitePath);
@@ -491,8 +498,22 @@ class RedisQueueOutboxIntegrationTest extends TestCase
                     WebhookSubscription::whereKey($subscriptionId)->delete();
                 }
                 DB::connection()->beginTransaction();
-            } elseif ($tempSqlitePath !== null && is_file($tempSqlitePath)) {
+            } elseif ($tempSqlitePath !== null) {
+                DB::disconnect('sqlite');
+                config(['database.connections.sqlite.database' => ':memory:']);
+                DB::purge('sqlite');
+
+                if ($originalSqlitePdo !== null) {
+                    $restoredConn = DB::connection('sqlite');
+                    $restoredConn->setPdo($originalSqlitePdo);
+
+                    $txProp = new \ReflectionProperty(Connection::class, 'transactions');
+                    $txProp->setValue($restoredConn, $originalTransactionLevel);
+                }
+
                 @unlink($tempSqlitePath);
+                @unlink($tempSqlitePath.'-wal');
+                @unlink($tempSqlitePath.'-shm');
             }
         }
     }

@@ -89,8 +89,8 @@ Queue yang dipakai aplikasi:
 | Queue | Isi |
 |---|---|
 | `default` | upload Drive, job umum |
-| `emis` | pemrosesan dokumen/EMIS |
-| `webhooks` | pengiriman webhook ke aplikasi satelit |
+| `emis` | pemrosesan dokumen, import awal EMIS (`CommitEmisStagingJob`, `CommitEmisGtkStagingJob`), dan penarikan staging EMIS |
+| `webhooks` | pengiriman webhook ke aplikasi satelit (wajib memiliki ekstensi PHP `curl` aktif karena `WebhookUrlGuard` menerapkan verifikasi transport `CURLOPT_RESOLVE` secara *fail-closed*) |
 
 Contoh Supervisor (`/etc/supervisor/conf.d/pintu-worker.conf`):
 

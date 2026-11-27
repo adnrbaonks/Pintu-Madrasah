@@ -1,10 +1,10 @@
-# Backlog Pintu Madrasah — per 24 Nov 2026
+# Backlog Pintu Madrasah — per 27 Nov 2026
 
-## ✅ Selesai (Sprint 5 + WP0.5–WP17 Hardening & Audit)
-- API Gateway v1 (`/api/v1/*`, key SHA-256 `pm_live_` tanpa fallback global key, scopes `students:identifiers` / `students:pii` / `staff:pii`, allowlist nested Resource, `Idempotency-Key`, Swagger) + Transactional Outbox Webhook v2 (`lease_token` fencing, enkripsi secret webhook, proteksi SSRF outbound `WebhookUrlGuard`, sanitasi PII rekursif, retry dead-letter `max_attempts` via `--retry-failed`, Redis queue worker)
-- Layanan Mandiri GTK & Workflow Persetujuan 2 Tingkat (Verifikasi Kaur TU → Persetujuan Kepala Madrasah dengan `lockForUpdate` anti-race-condition & notifikasi `DB::afterCommit`, rekonsiliasi atomik `pending_external_sync` EMIS termasuk pengosongan nilai `null` eksplisit)
-- RBAC Spatie Terpadu (7 role resmi, 50 permission granular mencakup Dokumen Privat, Arsip Digital, Rapat, Program Kerja, PKKM, dan Pengumuman, pembatasan `access_logs` arsip dengan `view_audit_logs`, serta pencabutan hak akses *real-time*)
-- Arsip Digital Berversi (`/arsip-digital`, pembersihan file yatim saat transaksi DB gagal), Rapat & Notulen (`/rapat-dinas`, kunci notulen yang telah disahkan + histori revisi `meeting_minute_revisions`), Program Kerja & Anggaran (`/program-kerja`), Instrumen PKKM (`/pkkm`, scoping akses & validasi kelengkapan sebelum finalisasi), Pengumuman Internal (`/pengumuman`), Kalender Madrasah (`/kalender`)
+## ✅ Selesai (Sprint 5 + WP0.5–WP17 + Revisi Data Ownership SSOT & Final Security/Integrity Hardening)
+- **Data Ownership SSOT & Tata Kelola EMIS (`config/data_ownership.php`, `EmisReconciliationService`):** PINTU MADRASAH sebagai Single Source of Truth (SSOT) untuk master data Siswa, GTK, dan Akademik saat produksi; pemisahan tegas Import Awal (`emis_import_batches` anti-overwrite produksi), Rekonsiliasi Non-Destruktif (`emis_reconciliation_items` dengan klasifikasi `same`, `different`, `pintu_only`, `emis_only`, `needs_review`), dan Antrean Pembaruan Outbound EMIS (`emis_update_tasks`)
+- **API Gateway v1 & Transactional Outbox Webhook v2:** Key SHA-256 `pm_live_` tanpa fallback global key, scopes `students:identifiers` / `students:pii` / `staff:pii`, allowlist nested Resource, `Idempotency-Key`, Swagger, `lease_token` fencing, enkripsi secret webhook, kewajiban `ApiClient` aktif ber-scope PII untuk `include_pii=true`, proteksi SSRF outbound `WebhookUrlGuard` dengan verifikasi transport cURL *fail-closed* & IP pinning `CURLOPT_RESOLVE`, sanitasi PII rekursif, retry dead-letter `max_attempts` via `--retry-failed`, dan pengujian paralel multi-proses Redis queue worker
+- **Layanan Mandiri GTK & Workflow Persetujuan 2 Tingkat:** Pengajuan mandiri GTK (dengan kewajiban dokumen pendukung pada perubahan identitas berisiko tinggi) → Verifikasi Kaur TU → Persetujuan Kepala Madrasah (dengan `lockForUpdate` anti-race-condition, pemisahan Admin Teknis dari pejabat penyetuju, penerapan langsung ke Master PINTU, pencatatan `EmisUpdateTask` outbound, & notifikasi `DB::afterCommit`)
+- **RBAC Spatie Terpadu & Integritas Modul Tata Kelola:** 7 role resmi, 50 permission granular, penyaringan arsip digital berbasis SQL pra-limit (`ArchiveService::applyViewableScope()`), penguncian transaksi atomik pada finalisasi PKKM (`PkkmController::finalize()`) dan pengesahan/revisi notulen rapat (`MeetingController::approveMinutes()` & `reviseMinutes()`)
 - BK, PPDB publik, ekspor RDM (CSV), backup otomatis + rotasi `APP_KEY` idempoten, folder Drive
 - QR verifikasi publik (`/verify/{token}`)
 
@@ -15,7 +15,7 @@
 - [ ] Simpan persisten denah tempat duduk + cetak resmi
 - [ ] Cetak lembar disposisi surat
 - [ ] Throttle kuota Gemini + tombol manual override
-- [x] Edit terkontrol data GTK — DONE (Layanan Mandiri GTK + Persetujuan 2 Tingkat + Kamus Kepemilikan Data `pintu` vs `emis`)
+- [x] Edit terkontrol data GTK & Siswa — DONE (PINTU sebagai SSOT produksi + Layanan Mandiri GTK + Persetujuan 2 Tingkat + Rekonsiliasi & Antrean Pembaruan Outbound EMIS)
 - [ ] SKL + transkrip massal kelas 9
 - [ ] Cetak leger wali kelas (PDF)
 

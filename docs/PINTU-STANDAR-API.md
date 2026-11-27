@@ -291,14 +291,26 @@ export function verifyPintuWebhook(rawBodyBuffer, headers, secret, toleranceSeco
 
 ---
 
-## 8. Keamanan Endpoint Integrasi EMIS (`/api/emis/*` & `/api/emis-gtk/*`)
+## 8. Keamanan & Tata Kelola Endpoint Integrasi EMIS (`/api/emis/*` & `/api/emis-gtk/*`)
 
-1. **Token Integrasi Terkelola (`integration_tokens`):**
+1. **Kebijakan Single Source of Truth (SSOT) Produksi:**
+   - **PINTU MADRASAH adalah Single Source of Truth (SSOT)** untuk master data Siswa, GTK, dan Struktur Akademik ketika sistem telah berproduksi (`config/data_ownership.php` menetapkan `owner_system = local`).
+   - EMIS Kemenag berperan sebagai sumber seeding awal saat development/migrasi, sistem pembanding untuk rekonsiliasi non-destruktif, serta sistem eksternal tujuan pembaruan outbound oleh operator.
+   - Lihat dokumen lengkap: [`docs/DATA-OWNERSHIP-AND-EMIS-GOVERNANCE.md`](DATA-OWNERSHIP-AND-EMIS-GOVERNANCE.md).
+2. **Pemisahan Tiga Endpoint Operasional EMIS:**
+   - **A. Import Awal (`POST /api/emis/commit`, `POST /api/emis-gtk/commit`):**
+     - Mencatat batch pada `emis_import_batches` (`process_type = initial_import`).
+     - Secara default (`allow_overwrite = false`), **tidak pernah menimpa** nilai master PINTU yang sudah terisi (hanya membuat record baru atau mengisi kolom kosong). Jika `allow_overwrite = true` dikirim tanpa `overwrite_confirmed = true`, server menolak dengan `422 OVERWRITE_CONFIRMATION_REQUIRED`.
+   - **B. Rekonsiliasi Non-Destruktif (`POST /api/emis/reconcile`, `POST /api/emis-gtk/reconcile`, `GET /api/emis*/reconciliation-batches`):**
+     - Membandingkan master PINTU terhadap staging EMIS tanpa mengubah data master PINTU, serta menyimpan temuan di `emis_reconciliation_items` dengan klasifikasi `same`, `different`, `pintu_only`, `emis_only`, atau `needs_review`.
+   - **C. Antrean Pembaruan Outbound EMIS (`GET /api/emis*/update-tasks`, `PATCH /api/emis*/update-tasks/{task}`):**
+     - Menampilkan daftar perubahan master PINTU (`emis_update_tasks`) yang harus diperbarui oleh operator ke EMIS beserta status (`pending`, `in_progress`, `completed`, `failed`), catatan operator (`operator_notes`), dan referensi bukti (`confirmation_reference`).
+3. **Token Integrasi Terkelola (`integration_tokens`):**
    - Setiap bookmarklet EMIS menyematkan token integrasi berformat `pm_int_<prefix8>_<secret40>` yang diterbitkan khusus untuk pengguna operator (`purpose`: `emis_siswa` atau `emis_gtk`) dengan masa berlaku terbatas dan dapat dicabut (*revoke*) kapan saja dari UI.
-2. **Middleware `AuthenticateIntegrationToken`:**
+4. **Middleware `AuthenticateIntegrationToken`:**
    - Memeriksa Bearer token (`Authorization: Bearer pm_int_...` atau header `X-Integration-Token`), memverifikasi hash SHA-256, memastikan `purpose` sesuai dan belum kedaluwarsa/dicabut.
    - **Transisi Same-Origin Session:** Pemanggilan internal dari UI browser operator yang sudah login (sesi web terautentikasi dengan role `admin`, `kaur_tu`, `staf`, `operator`) tetap diizinkan sebagai fallback.
-3. **Higiene Log & Validasi JWT:**
+5. **Higiene Log & Validasi JWT:**
    - Token JWT EMIS maupun cookie `sessionid` **dilarang keras** ditulis ke file log.
    - Validasi JWT memeriksa struktur 3 segmen (`header.payload.signature`) serta klaim waktu kedaluwarsa `exp` pada payload JSON.
    - Seluruh aktivitas penerbitan token, penerimaan token, penarikan (*pull*), dan penyimpanan (*commit*) dicatat ke tabel audit `integration_logs` tanpa menyimpan nilai token rahasia.
