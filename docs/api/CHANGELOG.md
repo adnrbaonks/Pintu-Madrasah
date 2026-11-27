@@ -104,3 +104,4 @@ Dokumen ini mencatat riwayat perubahan kontrak API v1 dan Webhook pada **PINTU M
 - `GET /api/emis{,-gtk}/reconciliation-batches` kini terpaginasi (`page`, `per_page` maks 50) dan **tidak lagi memuat `items`**; gunakan `GET .../reconciliation-batches/{batch}/items` (`per_page` maks 200, filter `classification`).
 - `GET .../update-tasks` terpaginasi (`per_page` maks 100); respons memuat `meta`.
 - PII pada snapshot, `differences`, `changed_fields`, `match_value`, dan staging list disanitasi rekursif berdasarkan data ownership dictionary. Token integrasi: seluruh PII (termasuk nama/tgl lahir) disamarkan; operator sesi: identifier dimasking, nama/tgl lahir tetap terlihat.
+- `GET .../reconciliation-batches` kini menyertakan `items_count` per batch (tanpa memuat item) agar konsumen bisa memutuskan kapan memanggil endpoint items.

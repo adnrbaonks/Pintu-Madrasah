@@ -518,6 +518,7 @@ class EmisController extends Controller
         }
 
         $query = EmisImportBatch::query()
+            ->withCount('items')
             ->where('entity_type', $boundEntityType)
             ->orderByDesc('created_at');
 
