@@ -104,9 +104,26 @@ class WebhookPublisher
     }
 
     /**
+     * Tentukan scope PII yang wajib dimiliki API Client untuk event tertentu.
+     */
+    public function requiredPiiScope(string $event): ?string
+    {
+        if (str_starts_with($event, 'student.')) {
+            return 'students:pii';
+        }
+
+        if (str_starts_with($event, 'staff.')) {
+            return 'staff:pii';
+        }
+
+        return null;
+    }
+
+    /**
      * Evaluasi apakah subscription berhak menerima PII untuk event tertentu.
-     * Bila subscription tertaut ke API Client (`api_client_id`), client tersebut wajib aktif
-     * dan memiliki scope PII yang relevan (`students:pii` / `staff:pii`).
+     * Subscription wajib memiliki `include_pii = true` DAN tertaut ke `ApiClient` aktif
+     * (tidak dicabut, belum kedaluwarsa) yang memiliki scope PII sesuai domain event.
+     * Jika `api_client_id === null`, PII selalu ditolak (fail-closed).
      */
     public function canIncludePii(string $event, ?WebhookSubscription $subscription): bool
     {
@@ -115,7 +132,12 @@ class WebhookPublisher
         }
 
         if ($subscription->api_client_id === null) {
-            return true;
+            return false;
+        }
+
+        $requiredScope = $this->requiredPiiScope($event);
+        if ($requiredScope === null) {
+            return false;
         }
 
         $client = $subscription->relationLoaded('apiClient')
@@ -126,15 +148,7 @@ class WebhookPublisher
             return false;
         }
 
-        if (str_starts_with($event, 'student.')) {
-            return $client->hasScope('students:pii');
-        }
-
-        if (str_starts_with($event, 'staff.')) {
-            return $client->hasScope('staff:pii');
-        }
-
-        return $client->hasScope('students:pii') || $client->hasScope('staff:pii');
+        return $client->hasScope($requiredScope);
     }
 
     /**

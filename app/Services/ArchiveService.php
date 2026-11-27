@@ -8,6 +8,7 @@ use App\Models\ArchiveAccessLog;
 use App\Models\ArchiveCategory;
 use App\Models\ArchiveVersion;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
@@ -117,7 +118,50 @@ class ArchiveService
     }
 
     /**
+     * Terapkan filter akses arsip langsung pada tingkat query database (sebelum LIMIT/pagination)
+     * agar arsip yang berhak dilihat pengguna tidak tergeser (starvation) oleh arsip privat/terbatas
+     * milik pengguna lain dan tidak memuat seluruh tabel ke memori PHP.
+     *
+     * @param  Builder<Archive>  $query
+     * @return Builder<Archive>
+     */
+    public function applyViewableScope(Builder $query, User $user): Builder
+    {
+        if ($user->hasRole('admin')) {
+            return $query;
+        }
+
+        $staffId = $user->staff_id ?? $user->staff?->id;
+        $roleNames = array_values(array_filter(
+            $user->getRoleNames()->map(fn ($r): string => (string) $r)->all(),
+            fn (string $r): bool => $r !== ''
+        ));
+
+        return $query->where(function ($q) use ($user, $staffId, $roleNames): void {
+            $q->where('created_by', $user->id)
+                ->orWhere('owner_user_id', $user->id)
+                ->orWhere('visibility', Archive::VISIBILITY_INTERNAL);
+
+            if ($staffId) {
+                $q->orWhere('owner_staff_id', $staffId);
+            }
+
+            if ($roleNames !== []) {
+                $q->orWhere(function ($roleRestricted) use ($roleNames): void {
+                    $roleRestricted->where('visibility', Archive::VISIBILITY_ROLE_RESTRICTED)
+                        ->where(function ($jsonRoles) use ($roleNames): void {
+                            foreach ($roleNames as $roleName) {
+                                $jsonRoles->orWhereJsonContains('allowed_roles', $roleName);
+                            }
+                        });
+                });
+            }
+        });
+    }
+
+    /**
      * Ambil daftar metadata arsip terbaru yang boleh dilihat oleh pengguna.
+     * Filter akses diterapkan di level query database sebelum `limit($limit)`.
      *
      * @return Collection<int, Archive>
      */
@@ -138,26 +182,12 @@ class ArchiveService
             'owner_staff_id',
         ];
 
-        $query = Archive::query()->orderByDesc('created_at');
+        $query = $this->applyViewableScope(
+            Archive::query()->orderByDesc('created_at'),
+            $user
+        );
 
-        if ($user->hasRole('admin')) {
-            return $query->limit($limit)->get($columns);
-        }
-
-        $staffId = $user->staff_id ?? $user->staff?->id;
-
-        $query->where(function ($q) use ($user, $staffId): void {
-            $q->where('created_by', $user->id)
-                ->orWhere('owner_user_id', $user->id)
-                ->orWhere('visibility', Archive::VISIBILITY_INTERNAL)
-                ->orWhere('visibility', Archive::VISIBILITY_ROLE_RESTRICTED);
-
-            if ($staffId) {
-                $q->orWhere('owner_staff_id', $staffId);
-            }
-        });
-
-        return $this->filterViewable($user, $query->get($columns))->take($limit)->values();
+        return $this->filterViewable($user, $query->limit($limit)->get($columns));
     }
 
     /**

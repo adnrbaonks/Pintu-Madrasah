@@ -253,27 +253,47 @@ class MeetingController extends Controller
             }
         }
 
-        $existingMinute = $meeting->minutes()->first();
-        if ($existingMinute !== null && $existingMinute->approved_at !== null) {
-            $revisionNotes = trim((string) ($validated['revision_notes'] ?? ''));
-            if ($revisionNotes === '') {
-                return redirect()->back()->withErrors([
-                    'minutes' => 'Notulen rapat telah disahkan dan terkunci. Gunakan mekanisme revisi dengan mengisi alasan/catatan revisi (revision_notes).',
-                ]);
+        $revisionNotes = trim((string) ($validated['revision_notes'] ?? ''));
+
+        $result = DB::transaction(function () use ($meeting, $user, $validated, $revisionNotes): string {
+            $lockedMeeting = Meeting::query()->whereKey($meeting->id)->lockForUpdate()->firstOrFail();
+            $existingMinute = MeetingMinute::query()
+                ->where('meeting_id', $lockedMeeting->id)
+                ->lockForUpdate()
+                ->first();
+
+            if ($existingMinute !== null && $existingMinute->approved_at !== null) {
+                if ($revisionNotes === '') {
+                    return 'locked_error';
+                }
+
+                $this->recordLockedMinuteRevision($lockedMeeting, $existingMinute, $user, $validated, $revisionNotes);
+
+                return 'revised';
             }
 
-            return $this->applyMinuteRevision($meeting, $existingMinute, $user, $validated, $revisionNotes);
+            MeetingMinute::updateOrCreate(
+                ['meeting_id' => $lockedMeeting->id],
+                [
+                    'discussion_summary' => $validated['discussion_summary'],
+                    'decisions' => $validated['decisions'],
+                    'archive_id' => $validated['archive_id'] ?? null,
+                    'recorded_by' => $user->id,
+                ]
+            );
+
+            return 'saved';
+        });
+
+        if ($result === 'locked_error') {
+            return redirect()->back()->withErrors([
+                'minutes' => 'Notulen rapat telah disahkan dan terkunci. Gunakan mekanisme revisi dengan mengisi alasan/catatan revisi (revision_notes).',
+            ]);
         }
 
-        MeetingMinute::updateOrCreate(
-            ['meeting_id' => $meeting->id],
-            [
-                'discussion_summary' => $validated['discussion_summary'],
-                'decisions' => $validated['decisions'],
-                'archive_id' => $validated['archive_id'] ?? null,
-                'recorded_by' => $user->id,
-            ]
-        );
+        if ($result === 'revised') {
+            return redirect()->back()->with('success', 'Revisi notulen rapat disimpan. Pengesahan sebelumnya diarsipkan dan memerlukan pengesahan ulang.');
+        }
 
         return redirect()->back()->with('success', 'Notulen rapat berhasil disimpan.');
     }
@@ -320,40 +340,55 @@ class MeetingController extends Controller
         string $revisionNotes
     ): RedirectResponse {
         DB::transaction(function () use ($meeting, $minute, $user, $validated, $revisionNotes): void {
-            $lockedMinute = MeetingMinute::query()->lockForUpdate()->findOrFail($minute->id);
-            $nextVersion = ((int) $lockedMinute->revisions()->max('version_number')) + 1;
+            $lockedMeeting = Meeting::query()->whereKey($meeting->id)->lockForUpdate()->firstOrFail();
+            $lockedMinute = MeetingMinute::query()->whereKey($minute->id)->lockForUpdate()->firstOrFail();
 
-            MeetingMinuteRevision::create([
-                'meeting_minute_id' => $lockedMinute->id,
-                'version_number' => $nextVersion,
-                'previous_discussion_summary' => $lockedMinute->discussion_summary,
-                'previous_decisions' => $lockedMinute->decisions,
-                'previous_archive_id' => $lockedMinute->archive_id,
-                'previous_approved_by' => $lockedMinute->approved_by,
-                'previous_approved_at' => $lockedMinute->approved_at,
-                'revision_notes' => $revisionNotes,
-                'revised_by' => $user->id,
-            ]);
-
-            $lockedMinute->update([
-                'discussion_summary' => $validated['discussion_summary'],
-                'decisions' => $validated['decisions'],
-                'archive_id' => $validated['archive_id'] ?? null,
-                'recorded_by' => $user->id,
-                'approved_by' => null,
-                'approved_at' => null,
-            ]);
-
-            if ($meeting->status === Meeting::STATUS_COMPLETED) {
-                $meeting->update(['status' => Meeting::STATUS_ONGOING]);
-            }
+            $this->recordLockedMinuteRevision($lockedMeeting, $lockedMinute, $user, $validated, $revisionNotes);
         });
 
         return redirect()->back()->with('success', 'Revisi notulen rapat disimpan. Pengesahan sebelumnya diarsipkan dan memerlukan pengesahan ulang.');
     }
 
     /**
-     * Pengesahan notulen rapat oleh Kepala Madrasah / Pimpinan Rapat.
+     * @param  array<string, mixed>  $validated
+     */
+    private function recordLockedMinuteRevision(
+        Meeting $lockedMeeting,
+        MeetingMinute $lockedMinute,
+        User $user,
+        array $validated,
+        string $revisionNotes
+    ): void {
+        $nextVersion = ((int) $lockedMinute->revisions()->max('version_number')) + 1;
+
+        MeetingMinuteRevision::create([
+            'meeting_minute_id' => $lockedMinute->id,
+            'version_number' => $nextVersion,
+            'previous_discussion_summary' => $lockedMinute->discussion_summary,
+            'previous_decisions' => $lockedMinute->decisions,
+            'previous_archive_id' => $lockedMinute->archive_id,
+            'previous_approved_by' => $lockedMinute->approved_by,
+            'previous_approved_at' => $lockedMinute->approved_at,
+            'revision_notes' => $revisionNotes,
+            'revised_by' => $user->id,
+        ]);
+
+        $lockedMinute->update([
+            'discussion_summary' => $validated['discussion_summary'],
+            'decisions' => $validated['decisions'],
+            'archive_id' => $validated['archive_id'] ?? null,
+            'recorded_by' => $user->id,
+            'approved_by' => null,
+            'approved_at' => null,
+        ]);
+
+        if ($lockedMeeting->status === Meeting::STATUS_COMPLETED) {
+            $lockedMeeting->update(['status' => Meeting::STATUS_ONGOING]);
+        }
+    }
+
+    /**
+     * Pengesahan notulen rapat oleh Kepala Madrasah / Pimpinan Rapat secara atomik dengan row lock.
      */
     public function approveMinutes(Request $request, Meeting $meeting): RedirectResponse
     {
@@ -365,13 +400,30 @@ class MeetingController extends Controller
             abort(403, 'Hanya Pimpinan Rapat, Kepala Madrasah, atau Admin yang dapat mengesahkan notulen.');
         }
 
-        $minute = $meeting->minutes()->firstOrFail();
-        $minute->update([
-            'approved_by' => $user->id,
-            'approved_at' => now(),
-        ]);
+        $approvalError = DB::transaction(function () use ($meeting, $user): ?string {
+            $lockedMeeting = Meeting::query()->whereKey($meeting->id)->lockForUpdate()->firstOrFail();
+            $lockedMinute = MeetingMinute::query()
+                ->where('meeting_id', $lockedMeeting->id)
+                ->lockForUpdate()
+                ->firstOrFail();
 
-        $meeting->update(['status' => Meeting::STATUS_COMPLETED]);
+            if ($lockedMinute->approved_at !== null) {
+                return 'Notulen rapat sudah disahkan sebelumnya.';
+            }
+
+            $lockedMinute->update([
+                'approved_by' => $user->id,
+                'approved_at' => now(),
+            ]);
+
+            $lockedMeeting->update(['status' => Meeting::STATUS_COMPLETED]);
+
+            return null;
+        });
+
+        if ($approvalError !== null) {
+            return redirect()->back()->withErrors(['minutes' => $approvalError]);
+        }
 
         return redirect()->back()->with('success', 'Notulen rapat disahkan dan status rapat selesai.');
     }

@@ -175,27 +175,41 @@ class PkkmController extends Controller
             'pic_user_id' => 'nullable|uuid|exists:users,id',
         ]);
 
-        $sortOrder = ((int) $instrument->components()->max('sort_order')) + 1;
+        $lockedError = DB::transaction(function () use ($instrument, $validated, $user): ?string {
+            $lockedInstrument = PkkmInstrument::query()->whereKey($instrument->id)->lockForUpdate()->firstOrFail();
 
-        PkkmComponent::updateOrCreate(
-            [
-                'pkkm_instrument_id' => $instrument->id,
-                'code' => strtoupper($validated['code']),
-            ],
-            [
-                'category_code' => strtoupper($validated['category_code']),
-                'category_name' => $validated['category_name'],
-                'title' => $validated['title'],
-                'indicator_description' => $validated['indicator_description'] ?? null,
-                'required_evidence_hint' => $validated['required_evidence_hint'] ?? null,
-                'weight' => (float) $validated['weight'],
-                'max_score' => (int) $validated['max_score'],
-                'sort_order' => $sortOrder,
-                'pic_user_id' => $validated['pic_user_id'] ?? $user->id,
-            ]
-        );
+            if ($lockedInstrument->status === PkkmInstrument::STATUS_FINALIZED) {
+                return 'Instrumen PKKM sudah difinalisasi.';
+            }
 
-        $instrument->recalculateScore();
+            $sortOrder = ((int) $lockedInstrument->components()->max('sort_order')) + 1;
+
+            PkkmComponent::updateOrCreate(
+                [
+                    'pkkm_instrument_id' => $lockedInstrument->id,
+                    'code' => strtoupper($validated['code']),
+                ],
+                [
+                    'category_code' => strtoupper($validated['category_code']),
+                    'category_name' => $validated['category_name'],
+                    'title' => $validated['title'],
+                    'indicator_description' => $validated['indicator_description'] ?? null,
+                    'required_evidence_hint' => $validated['required_evidence_hint'] ?? null,
+                    'weight' => (float) $validated['weight'],
+                    'max_score' => (int) $validated['max_score'],
+                    'sort_order' => $sortOrder,
+                    'pic_user_id' => $validated['pic_user_id'] ?? $user->id,
+                ]
+            );
+
+            $lockedInstrument->recalculateScore();
+
+            return null;
+        });
+
+        if ($lockedError !== null) {
+            return redirect()->back()->withErrors(['instrument' => $lockedError]);
+        }
 
         return redirect()->back()->with('success', 'Komponen indikator PKKM berhasil disimpan.');
     }
@@ -237,32 +251,51 @@ class PkkmController extends Controller
             abort_unless($isEvaluatorRole, 403, 'Hanya Asesor/Manajemen independen yang dapat mengisi nilai verifikasi.');
         }
 
-        $existingAssessment = $component->assessment;
-        $selfScore = $validated['self_score'] ?? $existingAssessment?->self_score ?? 0;
+        $lockedError = DB::transaction(function () use ($instrument, $component, $validated, $hasVerifiedScore, $user): ?string {
+            $lockedInstrument = PkkmInstrument::query()->whereKey($instrument->id)->lockForUpdate()->firstOrFail();
 
-        PkkmAssessment::updateOrCreate(
-            [
-                'pkkm_instrument_id' => $instrument->id,
-                'pkkm_component_id' => $component->id,
-            ],
-            [
-                'self_score' => (float) $selfScore,
-                'verified_score' => $hasVerifiedScore
-                    ? (float) $validated['verified_score']
-                    : ($existingAssessment?->verified_score),
-                'self_notes' => $validated['self_notes'] ?? $existingAssessment?->self_notes,
-                'assessor_notes' => $hasVerifiedScore ? ($validated['assessor_notes'] ?? null) : $existingAssessment?->assessor_notes,
-                'status' => $hasVerifiedScore ? 'verified' : ($existingAssessment?->status ?? 'submitted'),
-                'assessed_by' => $user->id,
-                'assessed_at' => now(),
-            ]
-        );
+            if ($lockedInstrument->status === PkkmInstrument::STATUS_FINALIZED) {
+                return 'Instrumen PKKM sudah difinalisasi dan terkunci.';
+            }
 
-        if ($instrument->status === PkkmInstrument::STATUS_DRAFT) {
-            $instrument->update(['status' => PkkmInstrument::STATUS_IN_PROGRESS]);
+            $existingAssessment = PkkmAssessment::query()
+                ->where('pkkm_instrument_id', $lockedInstrument->id)
+                ->where('pkkm_component_id', $component->id)
+                ->lockForUpdate()
+                ->first();
+
+            $selfScore = $validated['self_score'] ?? $existingAssessment?->self_score ?? 0;
+
+            PkkmAssessment::updateOrCreate(
+                [
+                    'pkkm_instrument_id' => $lockedInstrument->id,
+                    'pkkm_component_id' => $component->id,
+                ],
+                [
+                    'self_score' => (float) $selfScore,
+                    'verified_score' => $hasVerifiedScore
+                        ? (float) $validated['verified_score']
+                        : ($existingAssessment?->verified_score),
+                    'self_notes' => $validated['self_notes'] ?? $existingAssessment?->self_notes,
+                    'assessor_notes' => $hasVerifiedScore ? ($validated['assessor_notes'] ?? null) : $existingAssessment?->assessor_notes,
+                    'status' => $hasVerifiedScore ? 'verified' : ($existingAssessment?->status ?? 'submitted'),
+                    'assessed_by' => $user->id,
+                    'assessed_at' => now(),
+                ]
+            );
+
+            if ($lockedInstrument->status === PkkmInstrument::STATUS_DRAFT) {
+                $lockedInstrument->update(['status' => PkkmInstrument::STATUS_IN_PROGRESS]);
+            }
+
+            $lockedInstrument->recalculateScore();
+
+            return null;
+        });
+
+        if ($lockedError !== null) {
+            return redirect()->back()->withErrors(['instrument' => $lockedError]);
         }
-
-        $instrument->recalculateScore();
 
         return redirect()->back()->with('success', "Penilaian komponen {$component->code} diperbarui.");
     }
@@ -316,7 +349,13 @@ class PkkmController extends Controller
         }
 
         try {
-            DB::transaction(function () use ($component, $validated, $filePath, $originalName, $mimeType, $fileSize, $user): void {
+            $lockedError = DB::transaction(function () use ($instrument, $component, $validated, $filePath, $originalName, $mimeType, $fileSize, $user): ?string {
+                $lockedInstrument = PkkmInstrument::query()->whereKey($instrument->id)->lockForUpdate()->firstOrFail();
+
+                if ($lockedInstrument->status === PkkmInstrument::STATUS_FINALIZED) {
+                    return 'Instrumen PKKM sudah difinalisasi dan terkunci.';
+                }
+
                 PkkmEvidence::create([
                     'pkkm_component_id' => $component->id,
                     'archive_id' => $validated['archive_id'] ?? null,
@@ -330,7 +369,17 @@ class PkkmController extends Controller
                     'verification_status' => 'pending',
                     'uploaded_by' => $user->id,
                 ]);
+
+                return null;
             });
+
+            if ($lockedError !== null) {
+                if ($filePath !== null) {
+                    Storage::disk('local')->delete($filePath);
+                }
+
+                return redirect()->back()->withErrors(['instrument' => $lockedError]);
+            }
         } catch (\Throwable $e) {
             if ($filePath !== null) {
                 Storage::disk('local')->delete($filePath);
@@ -363,15 +412,31 @@ class PkkmController extends Controller
             'verification_status' => 'required|in:verified,rejected',
         ]);
 
-        $evidence->update(['verification_status' => $validated['verification_status']]);
+        DB::transaction(function () use ($instrument, $evidence, $validated): void {
+            $lockedInstrument = PkkmInstrument::query()->whereKey($instrument->id)->lockForUpdate()->firstOrFail();
+
+            abort_if(
+                $lockedInstrument->status === PkkmInstrument::STATUS_FINALIZED,
+                403,
+                'Instrumen PKKM sudah difinalisasi dan terkunci.'
+            );
+
+            $lockedEvidence = PkkmEvidence::query()->whereKey($evidence->id)->lockForUpdate()->firstOrFail();
+            $lockedEvidence->update(['verification_status' => $validated['verification_status']]);
+        });
 
         return redirect()->back()->with('success', 'Status verifikasi bukti diperbarui.');
     }
 
     /**
-     * Finalisasi instrumen PKKM oleh Kepala Madrasah / Admin.
-     * Menolak finalisasi apabila instrumen belum memiliki komponen, komponen belum memiliki
-     * asesmen dengan skor terverifikasi (verified_score), atau belum memiliki bukti terverifikasi.
+     * Finalisasi instrumen PKKM oleh Kepala Madrasah / Admin secara atomik dengan row lock.
+     *
+     * Aturan bisnis kelengkapan finalisasi:
+     * 1. Instrumen belum berstatus `finalized`.
+     * 2. Instrumen memiliki minimal satu komponen penilaian.
+     * 3. Setiap komponen memiliki asesmen dengan `verified_score` (skor verifikasi asesor).
+     * 4. Setiap komponen tidak memiliki bukti berstatus `pending` dan memiliki minimal
+     *    satu bukti fisik berstatus `verified`.
      */
     public function finalize(Request $request, PkkmInstrument $instrument): RedirectResponse
     {
@@ -381,65 +446,78 @@ class PkkmController extends Controller
             abort(403, 'Hanya Kepala Madrasah atau Admin yang dapat memfinalisasi instrumen PKKM.');
         }
 
-        if ($instrument->status === PkkmInstrument::STATUS_FINALIZED) {
-            return redirect()->back()->withErrors(['instrument' => 'Instrumen PKKM sudah difinalisasi dan terkunci.']);
-        }
+        $finalizationError = DB::transaction(function () use ($instrument, $user): ?string {
+            $lockedInstrument = PkkmInstrument::query()
+                ->whereKey($instrument->id)
+                ->lockForUpdate()
+                ->firstOrFail();
 
-        $components = $instrument->components()->with(['assessment', 'evidence'])->get();
-        if ($components->isEmpty()) {
-            return redirect()->back()->withErrors([
-                'instrument' => 'Instrumen PKKM tidak dapat difinalisasi karena belum memiliki komponen penilaian.',
+            if ($lockedInstrument->status === PkkmInstrument::STATUS_FINALIZED) {
+                return 'Instrumen PKKM sudah difinalisasi dan terkunci.';
+            }
+
+            $components = $lockedInstrument->components()
+                ->lockForUpdate()
+                ->with(['assessment', 'evidence'])
+                ->get();
+
+            if ($components->isEmpty()) {
+                return 'Instrumen PKKM tidak dapat difinalisasi karena belum memiliki komponen penilaian.';
+            }
+
+            $missingAssessmentCodes = [];
+            $missingVerifiedScoreCodes = [];
+            $missingVerifiedEvidenceCodes = [];
+            $pendingEvidenceCodes = [];
+
+            foreach ($components as $component) {
+                $assessment = $component->assessment;
+                if ($assessment === null) {
+                    $missingAssessmentCodes[] = $component->code;
+                } elseif ($assessment->verified_score === null) {
+                    $missingVerifiedScoreCodes[] = $component->code;
+                }
+
+                if ($component->evidence->where('verification_status', 'pending')->isNotEmpty()) {
+                    $pendingEvidenceCodes[] = $component->code;
+                }
+
+                if ($component->evidence->where('verification_status', 'verified')->isEmpty()) {
+                    $missingVerifiedEvidenceCodes[] = $component->code;
+                }
+            }
+
+            $completenessErrors = [];
+            if ($missingAssessmentCodes !== []) {
+                $completenessErrors[] = 'Komponen belum dinilai: '.implode(', ', $missingAssessmentCodes).'.';
+            }
+            if ($missingVerifiedScoreCodes !== []) {
+                $completenessErrors[] = 'Komponen belum memiliki skor verifikasi asesor (verified_score): '.implode(', ', $missingVerifiedScoreCodes).'.';
+            }
+            if ($pendingEvidenceCodes !== []) {
+                $completenessErrors[] = 'Komponen masih memiliki bukti berstatus pending: '.implode(', ', $pendingEvidenceCodes).'.';
+            }
+            if ($missingVerifiedEvidenceCodes !== []) {
+                $completenessErrors[] = 'Komponen belum memiliki bukti fisik terverifikasi: '.implode(', ', $missingVerifiedEvidenceCodes).'.';
+            }
+
+            if ($completenessErrors !== []) {
+                return 'Instrumen PKKM belum memenuhi syarat kelengkapan finalisasi: '.implode(' ', $completenessErrors);
+            }
+
+            $lockedInstrument->recalculateScore();
+            $lockedInstrument->update([
+                'status' => PkkmInstrument::STATUS_FINALIZED,
+                'finalized_at' => now(),
+                'finalized_by' => $user->id,
             ]);
-        }
 
-        $missingAssessmentCodes = [];
-        $missingVerifiedScoreCodes = [];
-        $missingVerifiedEvidenceCodes = [];
-        $pendingEvidenceCodes = [];
+            return null;
+        });
 
-        foreach ($components as $component) {
-            $assessment = $component->assessment;
-            if ($assessment === null) {
-                $missingAssessmentCodes[] = $component->code;
-            } elseif ($assessment->verified_score === null) {
-                $missingVerifiedScoreCodes[] = $component->code;
-            }
-
-            if ($component->evidence->where('verification_status', 'pending')->isNotEmpty()) {
-                $pendingEvidenceCodes[] = $component->code;
-            }
-
-            if ($component->evidence->where('verification_status', 'verified')->isEmpty()) {
-                $missingVerifiedEvidenceCodes[] = $component->code;
-            }
+        if ($finalizationError !== null) {
+            return redirect()->back()->withErrors(['instrument' => $finalizationError]);
         }
-
-        $completenessErrors = [];
-        if ($missingAssessmentCodes !== []) {
-            $completenessErrors[] = 'Komponen belum dinilai: '.implode(', ', $missingAssessmentCodes).'.';
-        }
-        if ($missingVerifiedScoreCodes !== []) {
-            $completenessErrors[] = 'Komponen belum memiliki skor verifikasi asesor (verified_score): '.implode(', ', $missingVerifiedScoreCodes).'.';
-        }
-        if ($pendingEvidenceCodes !== []) {
-            $completenessErrors[] = 'Komponen masih memiliki bukti berstatus pending: '.implode(', ', $pendingEvidenceCodes).'.';
-        }
-        if ($missingVerifiedEvidenceCodes !== []) {
-            $completenessErrors[] = 'Komponen belum memiliki bukti fisik terverifikasi: '.implode(', ', $missingVerifiedEvidenceCodes).'.';
-        }
-
-        if ($completenessErrors !== []) {
-            return redirect()->back()->withErrors([
-                'instrument' => 'Instrumen PKKM belum memenuhi syarat kelengkapan finalisasi: '.implode(' ', $completenessErrors),
-            ]);
-        }
-
-        $instrument->recalculateScore();
-        $instrument->update([
-            'status' => PkkmInstrument::STATUS_FINALIZED,
-            'finalized_at' => now(),
-            'finalized_by' => $user->id,
-        ]);
 
         return redirect()->back()->with('success', "Instrumen PKKM {$instrument->code} resmi difinalisasi.");
     }

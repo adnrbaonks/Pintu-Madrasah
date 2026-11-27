@@ -52,7 +52,15 @@ class WebhookOutboxAndReliabilityTest extends TestCase
             'include_pii' => false,
         ]);
 
+        $studentPiiClient = ApiClient::create([
+            'name' => 'Client Student PII Authorized',
+            'api_key' => 'pm_live_student_pii_authorized_12345',
+            'scopes' => ['students:read', 'students:pii'],
+            'is_active' => true,
+        ]);
+
         $subWithPii = WebhookSubscription::create([
+            'api_client_id' => $studentPiiClient->id,
             'event' => 'student.created',
             'target_url' => 'https://satelit.example.com/with-pii',
             'secret' => 'whsec_test_secret_1234567890',
@@ -741,5 +749,206 @@ class WebhookOutboxAndReliabilityTest extends TestCase
         $this->assertFalse($delivery->delivered);
         $this->assertSame(302, $delivery->status_code);
         $this->assertStringContainsString('redirect rejected', (string) $delivery->error);
+    }
+
+    public function test_webhook_pii_requires_active_authorized_api_client_at_creation_and_runtime(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        $publisher = app(WebhookPublisher::class);
+
+        $studentPiiClient = ApiClient::create([
+            'name' => 'Student PII Client',
+            'api_key' => 'pm_live_stu_pii_key_001',
+            'scopes' => ['students:read', 'students:pii'],
+            'is_active' => true,
+        ]);
+
+        $staffPiiClient = ApiClient::create([
+            'name' => 'Staff PII Client',
+            'api_key' => 'pm_live_stf_pii_key_001',
+            'scopes' => ['staff:read', 'staff:pii'],
+            'is_active' => true,
+        ]);
+
+        $revokedClient = ApiClient::create([
+            'name' => 'Revoked PII Client',
+            'api_key' => 'pm_live_revoked_pii_key_001',
+            'scopes' => ['students:pii', 'staff:pii'],
+            'is_active' => true,
+            'revoked_at' => now()->subMinute(),
+        ]);
+
+        $expiredClient = ApiClient::create([
+            'name' => 'Expired PII Client',
+            'api_key' => 'pm_live_expired_pii_key_001',
+            'scopes' => ['students:pii', 'staff:pii'],
+            'is_active' => true,
+            'expires_at' => now()->subMinute(),
+        ]);
+
+        // 1. Pembuatan subscription include_pii=true tanpa API Client wajib ditolak
+        $this->actingAs($admin)
+            ->post('/webhooks', [
+                'event' => 'student.created',
+                'target_url' => 'https://satelit.example.com/null-client-pii',
+                'include_pii' => true,
+                'api_client_id' => null,
+            ])
+            ->assertSessionHasErrors('api_client_id');
+
+        // 2. Pembuatan subscription include_pii=true dengan API Client revoked atau expired wajib ditolak
+        $this->actingAs($admin)
+            ->post('/webhooks', [
+                'event' => 'student.created',
+                'target_url' => 'https://satelit.example.com/revoked-client-pii',
+                'include_pii' => true,
+                'api_client_id' => $revokedClient->id,
+            ])
+            ->assertSessionHasErrors('api_client_id');
+
+        $this->actingAs($admin)
+            ->post('/webhooks', [
+                'event' => 'student.created',
+                'target_url' => 'https://satelit.example.com/expired-client-pii',
+                'include_pii' => true,
+                'api_client_id' => $expiredClient->id,
+            ])
+            ->assertSessionHasErrors('api_client_id');
+
+        // 3. Scope siswa dan GTK tidak dapat saling menggantikan saat pembuatan subscription
+        $this->actingAs($admin)
+            ->post('/webhooks', [
+                'event' => 'student.created',
+                'target_url' => 'https://satelit.example.com/cross-scope-student',
+                'include_pii' => true,
+                'api_client_id' => $staffPiiClient->id,
+            ])
+            ->assertSessionHasErrors('include_pii');
+
+        $this->actingAs($admin)
+            ->post('/webhooks', [
+                'event' => 'staff.updated',
+                'target_url' => 'https://satelit.example.com/cross-scope-staff',
+                'include_pii' => true,
+                'api_client_id' => $studentPiiClient->id,
+            ])
+            ->assertSessionHasErrors('include_pii');
+
+        // 4. Runtime check: bahkan jika di DB terdapat subscription include_pii=true tanpa API Client,
+        // atau API Client dicabut/kedaluwarsa/salah scope, payload PII wajib disanitasi.
+        $studentPayload = [
+            'id' => (string) Str::uuid(),
+            'name' => 'Siswa Guard Runtime',
+            'nisn' => '0099112233',
+            'nik' => '3601012010010009',
+            'gender' => 'L',
+        ];
+
+        $subWithoutClient = WebhookSubscription::create([
+            'api_client_id' => null,
+            'event' => 'student.created',
+            'target_url' => 'https://satelit.example.com/runtime-null-client',
+            'secret' => 'whsec_runtime_null_client',
+            'is_active' => true,
+            'include_pii' => true,
+        ]);
+
+        $builtNullClient = $publisher->buildPayload('student.created', 'evt-null', $studentPayload, $subWithoutClient);
+        $this->assertArrayNotHasKey('nik', $builtNullClient['data']);
+        $this->assertArrayNotHasKey('nisn', $builtNullClient['data']);
+        $this->assertArrayNotHasKey('gender', $builtNullClient['data']);
+
+        $subCrossScope = WebhookSubscription::create([
+            'api_client_id' => $staffPiiClient->id,
+            'event' => 'student.created',
+            'target_url' => 'https://satelit.example.com/runtime-cross-scope',
+            'secret' => 'whsec_runtime_cross_scope',
+            'is_active' => true,
+            'include_pii' => true,
+        ]);
+
+        $builtCrossScope = $publisher->buildPayload('student.created', 'evt-cross', $studentPayload, $subCrossScope);
+        $this->assertArrayNotHasKey('nik', $builtCrossScope['data']);
+        $this->assertArrayNotHasKey('nisn', $builtCrossScope['data']);
+
+        $subRevoked = WebhookSubscription::create([
+            'api_client_id' => $revokedClient->id,
+            'event' => 'student.created',
+            'target_url' => 'https://satelit.example.com/runtime-revoked',
+            'secret' => 'whsec_runtime_revoked',
+            'is_active' => true,
+            'include_pii' => true,
+        ]);
+
+        $builtRevoked = $publisher->buildPayload('student.created', 'evt-revoked', $studentPayload, $subRevoked);
+        $this->assertArrayNotHasKey('nik', $builtRevoked['data']);
+
+        $subExpired = WebhookSubscription::create([
+            'api_client_id' => $expiredClient->id,
+            'event' => 'student.created',
+            'target_url' => 'https://satelit.example.com/runtime-expired',
+            'secret' => 'whsec_runtime_expired',
+            'is_active' => true,
+            'include_pii' => true,
+        ]);
+
+        $builtExpired = $publisher->buildPayload('student.created', 'evt-expired', $studentPayload, $subExpired);
+        $this->assertArrayNotHasKey('nik', $builtExpired['data']);
+    }
+
+    public function test_webhook_ssrf_runtime_transport_pinning_and_fail_closed_when_curl_pinning_unavailable(): void
+    {
+        $guard = new WebhookUrlGuard(fn (string $host): array => ['93.184.216.34']);
+        $this->assertTrue($guard->runtimeSupportsIpPinning());
+
+        $resolved = $guard->validateAndResolve('https://satelit.example.com:8443/hook');
+        $options = $guard->buildPinnedTransportOptions($resolved);
+
+        $this->assertFalse($options['allow_redirects']);
+        $this->assertSame('', $options['proxy']);
+        $this->assertSame(['satelit.example.com:8443:93.184.216.34'], $options['curl'][CURLOPT_RESOLVE]);
+
+        if (defined('CURLOPT_PROXY')) {
+            $this->assertSame('', $options['curl'][CURLOPT_PROXY]);
+        }
+        if (defined('CURLOPT_NOPROXY')) {
+            $this->assertSame('*', $options['curl'][CURLOPT_NOPROXY]);
+        }
+        if (defined('CURLOPT_FOLLOWLOCATION')) {
+            $this->assertFalse($options['curl'][CURLOPT_FOLLOWLOCATION]);
+        }
+
+        // Simulasikan runtime tanpa kapabilitas cURL IP pinning -> wajib fail-closed dan tidak mengirim HTTP
+        Http::fake([
+            '*' => Http::response(['ok' => true], 200),
+        ]);
+
+        $sub = WebhookSubscription::create([
+            'event' => 'student.created',
+            'target_url' => 'https://satelit.example.com/fail-closed-hook',
+            'secret' => 'whsec_fail_closed_test',
+            'is_active' => true,
+        ]);
+
+        $unsupportedTransportGuard = new WebhookUrlGuard(
+            dnsResolver: fn (string $host): array => ['93.184.216.34'],
+            transportCapabilityChecker: fn (): bool => false,
+        );
+
+        $job = new DispatchWebhookJob(
+            event: 'student.created',
+            data: ['id' => 'stu-fail-closed', 'name' => 'Siswa Fail Closed'],
+            onlySubscriptionId: $sub->id,
+            eventId: (string) Str::uuid(),
+        );
+
+        $job->handle(app(WebhookPublisher::class), $unsupportedTransportGuard);
+
+        Http::assertNothingSent();
+
+        $delivery = WebhookDelivery::where('webhook_subscription_id', $sub->id)->firstOrFail();
+        $this->assertFalse($delivery->delivered);
+        $this->assertNull($delivery->next_retry_at);
+        $this->assertStringContainsString('fail-closed', (string) $delivery->error);
     }
 }

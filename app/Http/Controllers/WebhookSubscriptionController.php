@@ -7,6 +7,7 @@ use App\Models\ApiClient;
 use App\Models\OutboxEvent;
 use App\Models\WebhookDelivery;
 use App\Models\WebhookSubscription;
+use App\Services\WebhookPublisher;
 use App\Services\WebhookUrlGuard;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -80,11 +81,24 @@ class WebhookSubscriptionController extends Controller
         }
 
         $includePii = (bool) ($data['include_pii'] ?? false);
-        if ($includePii && ! empty($data['api_client_id'])) {
-            $client = ApiClient::find($data['api_client_id']);
-            $requiredScope = str_starts_with($data['event'], 'student.') ? 'students:pii' : 'staff:pii';
+        if ($includePii) {
+            if (empty($data['api_client_id'])) {
+                return redirect()->back()->withErrors([
+                    'api_client_id' => 'Langganan webhook dengan payload PII wajib memilih API Client yang aktif.',
+                    'include_pii' => 'Payload PII tidak dapat diaktifkan tanpa API Client yang berwenang.',
+                ])->withInput();
+            }
 
-            if (! $client || ! $client->hasScope($requiredScope)) {
+            $client = ApiClient::find($data['api_client_id']);
+            if (! $client || $client->isRevoked() || $client->isExpired()) {
+                return redirect()->back()->withErrors([
+                    'api_client_id' => 'API Client yang dipilih tidak aktif, telah dicabut, atau sudah kedaluwarsa.',
+                    'include_pii' => 'API Client yang tidak aktif atau kedaluwarsa tidak dapat menerima payload PII.',
+                ])->withInput();
+            }
+
+            $requiredScope = app(WebhookPublisher::class)->requiredPiiScope((string) $data['event']);
+            if ($requiredScope === null || ! $client->hasScope($requiredScope)) {
                 return redirect()->back()->withErrors([
                     'include_pii' => "API Client yang dipilih belum memiliki scope {$requiredScope} untuk menerima payload PII.",
                 ])->withInput();

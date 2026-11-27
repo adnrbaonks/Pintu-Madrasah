@@ -236,19 +236,12 @@ class DispatchWebhookJob implements ShouldQueue
 
         try {
             $resolvedTarget = $urlGuard->validateAndResolve((string) $sub->target_url);
-            $pinnedIp = $resolvedTarget['resolved_ips'][0];
-
-            $curlOptions = defined('CURLOPT_RESOLVE')
-                ? [CURLOPT_RESOLVE => ["{$resolvedTarget['host']}:{$resolvedTarget['port']}:{$pinnedIp}"]]
-                : [];
+            $transportOptions = $urlGuard->buildPinnedTransportOptions($resolvedTarget);
 
             $response = Http::timeout($timeoutSeconds)
                 ->connectTimeout($connectTimeoutSeconds)
                 ->withoutRedirecting()
-                ->withOptions([
-                    'allow_redirects' => false,
-                    'curl' => $curlOptions,
-                ])
+                ->withOptions($transportOptions)
                 ->withHeaders([
                     'Content-Type' => 'application/json',
                     'X-Webhook-Id' => (string) $this->eventId,

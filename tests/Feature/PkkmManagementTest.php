@@ -453,6 +453,31 @@ class PkkmManagementTest extends TestCase
             ->assertSessionHasNoErrors()
             ->assertRedirect();
 
-        $this->assertSame(PkkmInstrument::STATUS_FINALIZED, $instrument->fresh()->status);
+        $instrument->refresh();
+        $this->assertSame(PkkmInstrument::STATUS_FINALIZED, $instrument->status);
+        $firstFinalizedAt = $instrument->finalized_at;
+
+        // 7. Finalisasi kedua maupun mutasi komponen/asesmen/review bukti setelah finalisasi wajib ditolak secara atomik
+        $this->actingAs($kamad)
+            ->post("/pkkm/{$instrument->id}/finalize")
+            ->assertSessionHasErrors('instrument');
+
+        $this->actingAs($kamad)
+            ->post("/pkkm/components/{$component->id}/assess", [
+                'self_score' => 50,
+                'verified_score' => 50,
+            ])
+            ->assertSessionHasErrors('instrument');
+
+        $this->actingAs($kamad)
+            ->post("/pkkm/evidence/{$evidence->id}/review", [
+                'verification_status' => 'rejected',
+            ])
+            ->assertForbidden();
+
+        $instrument->refresh();
+        $this->assertTrue($firstFinalizedAt->equalTo($instrument->finalized_at));
+        $this->assertSame(92.0, (float) $instrument->overall_score);
+        $this->assertSame('verified', $evidence->fresh()->verification_status);
     }
 }

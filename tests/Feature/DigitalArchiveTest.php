@@ -10,6 +10,7 @@ use App\Services\ArchiveService;
 use Illuminate\Foundation\Testing\LazilyRefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Inertia\Testing\AssertableInertia;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
@@ -291,5 +292,83 @@ class DigitalArchiveTest extends TestCase
         $filesAfter = Storage::disk('local')->allFiles('archives/digital');
         $this->assertSame($filesBefore, $filesAfter);
         $this->assertSame(1, $archive->fresh()->versions()->count());
+    }
+
+    public function test_archive_index_filters_viewable_records_at_sql_level_before_limit_preventing_starvation(): void
+    {
+        $ownerOther = User::factory()->create(['role' => 'guru']);
+        $guruViewer = User::factory()->create(['role' => 'guru']);
+
+        $category = ArchiveCategory::create([
+            'code' => 'OT.77',
+            'name' => 'Kategori Uji Starvation',
+            'retention_years' => 5,
+            'default_visibility' => 'internal',
+            'is_active' => true,
+        ]);
+
+        // Buat 3 arsip lebih lama yang boleh dilihat guruViewer (1 miliknya, 1 internal, 1 role_restricted guru)
+        $ownArchive = Archive::create([
+            'archive_category_id' => $category->id,
+            'archive_number' => 'ARS/VIEW/OWN',
+            'title' => 'Arsip Pribadi Guru Viewer',
+            'visibility' => Archive::VISIBILITY_PRIVATE,
+            'created_by' => $guruViewer->id,
+            'owner_user_id' => $guruViewer->id,
+            'created_at' => now()->subHours(5),
+        ]);
+
+        $internalArchive = Archive::create([
+            'archive_category_id' => $category->id,
+            'archive_number' => 'ARS/VIEW/INTERNAL',
+            'title' => 'Arsip Internal Madrasah',
+            'visibility' => Archive::VISIBILITY_INTERNAL,
+            'created_by' => $ownerOther->id,
+            'created_at' => now()->subHours(4),
+        ]);
+
+        $roleArchive = Archive::create([
+            'archive_category_id' => $category->id,
+            'archive_number' => 'ARS/VIEW/ROLE',
+            'title' => 'Arsip Khusus Role Guru',
+            'visibility' => Archive::VISIBILITY_ROLE_RESTRICTED,
+            'allowed_roles' => ['guru'],
+            'created_by' => $ownerOther->id,
+            'created_at' => now()->subHours(3),
+        ]);
+
+        // Buat 210 arsip terbaru yang TIDAK boleh dilihat guruViewer (melampaui limit 200 di ArchiveController::index)
+        $unviewableRows = [];
+        $now = now();
+        for ($i = 1; $i <= 210; $i++) {
+            $unviewableRows[] = [
+                'id' => (string) Str::uuid(),
+                'archive_category_id' => $category->id,
+                'archive_number' => sprintf('ARS/PRIV/NOISE/%03d', $i),
+                'title' => "Arsip Privat Orang Lain {$i}",
+                'visibility' => Archive::VISIBILITY_PRIVATE,
+                'created_by' => $ownerOther->id,
+                'owner_user_id' => $ownerOther->id,
+                'status' => Archive::STATUS_ACTIVE,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ];
+        }
+        Archive::insert($unviewableRows);
+
+        $this->actingAs($guruViewer)
+            ->get('/arsip-digital')
+            ->assertOk()
+            ->assertInertia(fn (AssertableInertia $page) => $page
+                ->component('Archives/Index', false)
+                ->has('archives', 3)
+                ->where('archives', function ($items) use ($ownArchive, $internalArchive, $roleArchive): bool {
+                    $ids = collect($items)->pluck('id')->all();
+
+                    return in_array($ownArchive->id, $ids, true)
+                        && in_array($internalArchive->id, $ids, true)
+                        && in_array($roleArchive->id, $ids, true);
+                })
+            );
     }
 }

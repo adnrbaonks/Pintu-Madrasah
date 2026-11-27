@@ -68,7 +68,7 @@ class ArchiveController extends Controller
                 'category:id,code,name',
                 'organizationUnit:id,code,name',
                 'academicYear:id,year,semester',
-                'latestVersion:id,archive_id,version_number,original_name,file_size,mime_type,created_at',
+                'latestVersion',
                 'creator:id,name',
             ])
             ->orderByDesc('created_at');
@@ -94,10 +94,12 @@ class ArchiveController extends Controller
             $query->where('status', (string) $request->query('status'));
         }
 
-        $allMatches = $query->limit(200)->get();
-        $visibleArchives = $allMatches
-            ->filter(fn (Archive $archive): bool => $this->archiveService->canView($user, $archive))
-            ->values();
+        $this->archiveService->applyViewableScope($query, $user);
+
+        $visibleArchives = $this->archiveService->filterViewable(
+            $user,
+            $query->limit(200)->get()
+        );
 
         return Inertia::render('Archives/Index', [
             'archives' => $visibleArchives,

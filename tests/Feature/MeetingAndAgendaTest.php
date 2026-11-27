@@ -407,5 +407,18 @@ class MeetingAndAgendaTest extends TestCase
 
         $this->assertNotNull($minute->fresh()->approved_at);
         $this->assertSame(Meeting::STATUS_COMPLETED, $meeting->fresh()->status);
+
+        // 6. Pengesahan ganda (race/duplicate approve) pada notulen yang sudah disahkan wajib ditolak
+        // tanpa mengubah timestamp maupun pejabat pengesah
+        $originalApprovedAt = $minute->fresh()->approved_at;
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        $this->actingAs($admin)
+            ->post("/rapat-dinas/{$meeting->id}/minutes/approve")
+            ->assertSessionHasErrors('minutes');
+
+        $minute->refresh();
+        $this->assertSame($kamad->id, $minute->approved_by);
+        $this->assertTrue($originalApprovedAt->equalTo($minute->approved_at));
     }
 }

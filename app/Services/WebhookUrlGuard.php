@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use Closure;
+use GuzzleHttp\Handler\CurlHandler;
 use InvalidArgumentException;
 
 class WebhookUrlGuard
@@ -46,11 +47,100 @@ class WebhookUrlGuard
     private ?Closure $dnsResolver = null;
 
     /**
-     * @param  (Closure(string): list<string>)|null  $dnsResolver
+     * Pemeriksa kapabilitas transport cURL runtime (dapat di-override pada pengujian fail-closed).
+     *
+     * @var (Closure(): bool)|null
      */
-    public function __construct(?Closure $dnsResolver = null)
+    private ?Closure $transportCapabilityChecker = null;
+
+    /**
+     * @param  (Closure(string): list<string>)|null  $dnsResolver
+     * @param  (Closure(): bool)|null  $transportCapabilityChecker
+     */
+    public function __construct(?Closure $dnsResolver = null, ?Closure $transportCapabilityChecker = null)
     {
         $this->dnsResolver = $dnsResolver;
+        $this->transportCapabilityChecker = $transportCapabilityChecker;
+    }
+
+    /**
+     * Verifikasi apakah runtime HTTP transport mendukung cURL IP pinning (`CURLOPT_RESOLVE`).
+     */
+    public function runtimeSupportsIpPinning(): bool
+    {
+        if ($this->transportCapabilityChecker !== null) {
+            return (bool) ($this->transportCapabilityChecker)();
+        }
+
+        return extension_loaded('curl')
+            && function_exists('curl_init')
+            && defined('CURLOPT_RESOLVE')
+            && class_exists(CurlHandler::class);
+    }
+
+    /**
+     * Pastikan runtime transport mendukung IP pinning dan bangun opsi Guzzle/cURL yang fail-closed:
+     * - Wajib memiliki ekstensi cURL & `CURLOPT_RESOLVE` (jika tidak tersedia, lempar exception fail-closed).
+     * - Menonaktifkan proxy environment (`proxy => ''`, `CURLOPT_PROXY => ''`, `CURLOPT_NOPROXY => '*'`)
+     *   agar `HTTP_PROXY`/`HTTPS_PROXY` tidak melewati `CURLOPT_RESOLVE`.
+     * - Menonaktifkan redirect (`allow_redirects => false`, `CURLOPT_FOLLOWLOCATION => false`).
+     * - Mengunci IP hasil validasi DNS pada `CURLOPT_RESOLVE`.
+     *
+     * @param  array{url: string, scheme: string, host: string, port: int, resolved_ips: list<string>}  $resolvedTarget
+     * @return array<string, mixed>
+     *
+     * @throws InvalidArgumentException
+     */
+    public function buildPinnedTransportOptions(array $resolvedTarget): array
+    {
+        if (! $this->runtimeSupportsIpPinning()) {
+            throw new InvalidArgumentException(
+                'Transport HTTP runtime tidak mendukung cURL IP pinning (CURLOPT_RESOLVE). Pengiriman webhook dibatalkan secara fail-closed.'
+            );
+        }
+
+        $pinnedIp = $resolvedTarget['resolved_ips'][0] ?? '';
+        if ($pinnedIp === '' || ! $this->isPublicIp($pinnedIp)) {
+            throw new InvalidArgumentException(
+                'Target webhook tidak memiliki alamat IP publik tervalidasi untuk IP pinning.'
+            );
+        }
+
+        $host = $resolvedTarget['host'];
+        $port = (int) $resolvedTarget['port'];
+        $formattedIp = str_contains($pinnedIp, ':') ? "[{$pinnedIp}]" : $pinnedIp;
+
+        $curlOptions = [
+            CURLOPT_RESOLVE => ["{$host}:{$port}:{$formattedIp}"],
+        ];
+
+        if (defined('CURLOPT_PROXY')) {
+            $curlOptions[CURLOPT_PROXY] = '';
+        }
+
+        if (defined('CURLOPT_NOPROXY')) {
+            $curlOptions[CURLOPT_NOPROXY] = '*';
+        }
+
+        if (defined('CURLOPT_FOLLOWLOCATION')) {
+            $curlOptions[CURLOPT_FOLLOWLOCATION] = false;
+        }
+
+        if (defined('CURLOPT_MAXREDIRS')) {
+            $curlOptions[CURLOPT_MAXREDIRS] = 0;
+        }
+
+        if (defined('CURLOPT_PROTOCOLS') && defined('CURLPROTO_HTTPS') && defined('CURLPROTO_HTTP')) {
+            $curlOptions[CURLOPT_PROTOCOLS] = $resolvedTarget['scheme'] === 'https'
+                ? CURLPROTO_HTTPS
+                : (CURLPROTO_HTTPS | CURLPROTO_HTTP);
+        }
+
+        return [
+            'allow_redirects' => false,
+            'proxy' => '',
+            'curl' => $curlOptions,
+        ];
     }
 
     /**
