@@ -20,39 +20,39 @@ Route::get('/v1/health', HealthController::class);
 
 // ── EMIS Integration — Token Reception & Sync (Protected by Integration Token / Operator Session) ──
 Route::prefix('emis')->middleware(['throttle:60,1', 'integration.token:emis_siswa'])->group(function () {
-    Route::post('/token', [EmisController::class, 'receiveToken']);
-    Route::post('/pull', [EmisController::class, 'triggerPull']);
-    Route::post('/cancel-sync', [EmisController::class, 'cancelSync']);
-    Route::get('/status', [EmisController::class, 'tokenStatus']);
+    Route::post('/token', [EmisController::class, 'receiveToken'])->middleware('emis.ability:sync');
+    Route::post('/pull', [EmisController::class, 'triggerPull'])->middleware('emis.ability:sync');
+    Route::post('/cancel-sync', [EmisController::class, 'cancelSync'])->middleware('emis.ability:sync');
+    Route::get('/status', [EmisController::class, 'tokenStatus'])->middleware('emis.ability:view');
 
     // Staging / Review Endpoints
-    Route::get('/staging', [EmisController::class, 'stagingList']);
-    Route::post('/commit', [EmisController::class, 'commitStaging']);
-    Route::post('/reconcile', [EmisController::class, 'reconcileStudents']);
-    Route::get('/reconciliation-batches', [EmisController::class, 'reconciliationBatches']);
-    Route::get('/reconciliation-batches/{batch}/items', [EmisController::class, 'reconciliationBatchItems']);
-    Route::get('/update-tasks', [EmisController::class, 'updateTasks']);
-    Route::patch('/update-tasks/{task}', [EmisController::class, 'updateTaskStatus']);
+    Route::get('/staging', [EmisController::class, 'stagingList'])->middleware('emis.ability:view');
+    Route::post('/commit', [EmisController::class, 'commitStaging'])->middleware('emis.ability:sync');
+    Route::post('/reconcile', [EmisController::class, 'reconcileStudents'])->middleware('emis.ability:reconcile');
+    Route::get('/reconciliation-batches', [EmisController::class, 'reconciliationBatches'])->middleware('emis.ability:view');
+    Route::get('/reconciliation-batches/{batch}/items', [EmisController::class, 'reconciliationBatchItems'])->middleware('emis.ability:view');
+    Route::get('/update-tasks', [EmisController::class, 'updateTasks'])->middleware('emis.ability:view');
+    Route::patch('/update-tasks/{task}', [EmisController::class, 'updateTaskStatus'])->middleware('emis.ability:sync');
 });
 
 Route::prefix('emis-gtk')->middleware(['throttle:60,1', 'integration.token:emis_gtk'])->group(function () {
-    Route::post('/token', [EmisController::class, 'receiveGtkToken']);
-    Route::post('/import', [EmisController::class, 'importGtkData']);
-    Route::post('/pull', [EmisController::class, 'triggerGtkPull']);
-    Route::get('/staging', [EmisController::class, 'gtkStagingList']);
-    Route::post('/commit', [EmisController::class, 'commitGtkStaging']);
-    Route::post('/reconcile', [EmisController::class, 'reconcileGtk']);
-    Route::get('/reconciliation-batches', [EmisController::class, 'reconciliationBatches']);
-    Route::get('/reconciliation-batches/{batch}/items', [EmisController::class, 'reconciliationBatchItems']);
-    Route::get('/update-tasks', [EmisController::class, 'updateTasks']);
-    Route::patch('/update-tasks/{task}', [EmisController::class, 'updateTaskStatus']);
-    Route::get('/progress', [EmisController::class, 'gtkProgress']);
+    Route::post('/token', [EmisController::class, 'receiveGtkToken'])->middleware('emis.ability:sync');
+    Route::post('/import', [EmisController::class, 'importGtkData'])->middleware('emis.ability:sync');
+    Route::post('/pull', [EmisController::class, 'triggerGtkPull'])->middleware('emis.ability:sync');
+    Route::get('/staging', [EmisController::class, 'gtkStagingList'])->middleware('emis.ability:view');
+    Route::post('/commit', [EmisController::class, 'commitGtkStaging'])->middleware('emis.ability:sync');
+    Route::post('/reconcile', [EmisController::class, 'reconcileGtk'])->middleware('emis.ability:reconcile');
+    Route::get('/reconciliation-batches', [EmisController::class, 'reconciliationBatches'])->middleware('emis.ability:view');
+    Route::get('/reconciliation-batches/{batch}/items', [EmisController::class, 'reconciliationBatchItems'])->middleware('emis.ability:view');
+    Route::get('/update-tasks', [EmisController::class, 'updateTasks'])->middleware('emis.ability:view');
+    Route::patch('/update-tasks/{task}', [EmisController::class, 'updateTaskStatus'])->middleware('emis.ability:sync');
+    Route::get('/progress', [EmisController::class, 'gtkProgress'])->middleware('emis.ability:view');
 });
 
 // Endpoint debugging HTML mentah — hanya aktif saat APP_DEBUG=true
 if (config('app.debug')) {
     Route::prefix('emis-gtk')->middleware(['throttle:30,1', 'integration.token:emis_gtk'])->group(function () {
-        Route::post('/import-raw', [EmisController::class, 'importGtkRaw']);
+        Route::post('/import-raw', [EmisController::class, 'importGtkRaw'])->middleware('emis.ability:sync');
     });
 }
 

@@ -260,34 +260,35 @@ class EmisController extends Controller
      */
     public function stagingList(Request $request): JsonResponse
     {
-        $stagings = EmisStaging::where('status', 'pending')->get();
+        $paginator = EmisStaging::query()
+            ->where('status', 'pending')
+            ->orderBy('id')
+            ->paginate($this->resolvePerPage($request, 50, 200));
 
-        // Bandingkan dengan data siswa yang ada untuk menentukan status
-        $results = $stagings->map(function ($staging) {
-            $existing = Student::withTrashed()->where('nisn', $staging->nisn)->first();
+        // Bulk lookup: satu query untuk seluruh halaman (tanpa N+1)
+        $nisns = $paginator->getCollection()->pluck('nisn')->filter()->unique()->values()->all();
+        $existingByNisn = $nisns === []
+            ? collect()
+            : Student::withTrashed()->whereIn('nisn', $nisns)->get()->unique('nisn')->keyBy('nisn');
 
-            $matchStatus = 'new';
-            $isProtected = false;
-            if ($existing) {
-                // Sederhanakan komparasi: jika ada, anggap update
-                $matchStatus = 'update';
-                $isProtected = $existing->isIdentityFieldProtected();
-            }
+        $results = $paginator->getCollection()->map(function ($staging) use ($existingByNisn) {
+            $existing = $existingByNisn->get($staging->nisn);
 
             return [
                 'id' => $staging->id,
                 'nisn' => $staging->nisn,
                 'name' => $staging->name,
                 'rombel_name' => $staging->rombel_name,
-                'match_status' => $matchStatus, // new, update
-                'existing_name' => $existing ? $existing->name : null,
-                'is_protected' => $isProtected,
+                'match_status' => $existing ? 'update' : 'new',
+                'existing_name' => $existing?->name,
+                'is_protected' => $existing ? $existing->isIdentityFieldProtected() : false,
             ];
         });
 
         return response()->json([
             'success' => true,
             'data' => $this->sanitizeStagingRows($request, $results->all(), ['nisn', 'name', 'existing_name']),
+            'meta' => $this->paginationMeta($paginator),
         ]);
     }
 
@@ -390,27 +391,38 @@ class EmisController extends Controller
 
     public function gtkStagingList(Request $request): JsonResponse
     {
-        $stagings = EmisGtkStaging::where('status', 'pending')->get();
+        $paginator = EmisGtkStaging::query()
+            ->where('status', 'pending')
+            ->orderBy('id')
+            ->paginate($this->resolvePerPage($request, 50, 200));
 
-        $results = $stagings->map(function ($staging) {
-            $existing = Staff::withTrashed()
-                ->where('nik', $staging->nik)
-                ->orWhere(function ($q) use ($staging) {
-                    if ($staging->nuptk) {
-                        $q->orWhere('nuptk', $staging->nuptk);
-                    }
-                    if ($staging->nip) {
-                        $q->orWhere('nip', $staging->nip);
-                    }
-                    if ($staging->npk) {
-                        $q->orWhere('npk', $staging->npk);
+        $page = $paginator->getCollection();
+
+        // Bulk lookup identitas GTK untuk seluruh halaman (tanpa N+1)
+        $columns = ['nik', 'nuptk', 'nip', 'npk'];
+        $values = [];
+        foreach ($columns as $col) {
+            $values[$col] = $page->pluck($col)->filter()->unique()->values()->all();
+        }
+        $existingRows = collect();
+        if (array_filter($values) !== []) {
+            $existingRows = Staff::withTrashed()
+                ->where(function ($q) use ($values) {
+                    foreach ($values as $col => $list) {
+                        if ($list !== []) {
+                            $q->orWhereIn($col, $list);
+                        }
                     }
                 })
-                ->first();
+                ->get();
+        }
 
-            $matchStatus = 'new';
-            if ($existing) {
-                $matchStatus = 'update';
+        $results = $page->map(function ($staging) use ($existingRows, $columns) {
+            $existing = null;
+            foreach ($columns as $col) {
+                if ($staging->{$col} && ($existing = $existingRows->firstWhere($col, $staging->{$col}))) {
+                    break;
+                }
             }
 
             return [
@@ -418,14 +430,15 @@ class EmisController extends Controller
                 'full_name_with_titles' => $staging->full_name_with_titles,
                 'nik' => $staging->nik,
                 'employment_status' => $staging->employment_status,
-                'match_status' => $matchStatus,
-                'existing_name' => $existing ? $existing->full_name_with_titles : null,
+                'match_status' => $existing ? 'update' : 'new',
+                'existing_name' => $existing?->full_name_with_titles,
             ];
         });
 
         return response()->json([
             'success' => true,
             'data' => $this->sanitizeStagingRows($request, $results->all(), ['full_name_with_titles', 'existing_name']),
+            'meta' => $this->paginationMeta($paginator),
         ]);
     }
 
@@ -483,8 +496,8 @@ class EmisController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Rekonsiliasi data Siswa selesai tanpa mengubah master PINTU.',
-            'batch' => $batch,
-            'data' => $batch,
+            'batch' => $this->batchSummary($batch),
+            'data' => $this->batchSummary($batch),
         ]);
     }
 
@@ -502,9 +515,25 @@ class EmisController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Rekonsiliasi data GTK selesai tanpa mengubah master PINTU.',
-            'batch' => $batch,
-            'data' => $batch,
+            'batch' => $this->batchSummary($batch),
+            'data' => $this->batchSummary($batch),
         ]);
+    }
+
+    /**
+     * Ringkasan batch rekonsiliasi tanpa relasi `items` (berisi snapshot PII).
+     * Item diakses lewat endpoint /reconciliation-batches/{batch}/items yang tersanitasi.
+     *
+     * @return array<string, mixed>
+     */
+    private function batchSummary(EmisImportBatch $batch): array
+    {
+        $batch->unsetRelation('items');
+        $summary = $batch->toArray();
+        unset($summary['items']);
+        $summary['items_count'] = $batch->items()->count();
+
+        return $summary;
     }
 
     /**

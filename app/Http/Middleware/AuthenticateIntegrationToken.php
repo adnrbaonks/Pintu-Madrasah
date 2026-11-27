@@ -10,8 +10,6 @@ use Symfony\Component\HttpFoundation\Response;
 
 class AuthenticateIntegrationToken
 {
-    private const ALLOWED_ROLES = ['admin', 'kaur_tu', 'staf', 'operator'];
-
     public function __construct(
         private IntegrationTokenService $tokenService,
     ) {}
@@ -47,7 +45,7 @@ class AuthenticateIntegrationToken
         // 2. Fallback transisi same-origin session: user operator/admin yang sudah login di aplikasi web
         $user = $request->user() ?: Auth::guard('web')->user();
         if ($user) {
-            if ($user->can('view_emis') || $user->can('sync_emis') || $user->hasAnyRole(self::ALLOWED_ROLES)) {
+            if ($user->can('view_emis') || $user->can('reconcile_emis') || $user->can('sync_emis')) {
                 $request->attributes->set('integration_purpose', $purpose);
                 $request->attributes->set('integration_auth_method', 'session');
 
