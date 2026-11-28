@@ -294,3 +294,11 @@ Jalankan `php artisan db:seed --class=RolesAndPermissionsSeeder --force` agar pe
 2. Token integrasi lama menjadi read-only. Terbitkan ulang token bookmarklet EMIS dengan ability yang dibutuhkan (`staging:write`, `credentials:update`, dst.) lalu cabut yang lama.
 3. Frontend/klien yang membaca `emis_gtk` dari `/api/emis/status` harus pindah ke `/api/emis-gtk/status`.
 4. Import GTK memerlukan cache driver yang mendukung lock atomik (database/redis).
+
+## 15. WP0.5.13.1 — Sesi import GTK
+
+1. `php artisan migrate` (tabel `emis_import_sessions`, `emis_import_session_pages`).
+2. Klien import GTK harus mengirim `import_session_id` (dari respons halaman 1) pada halaman berikutnya. Klien lama yang mengirim halaman > 1 tanpa ID mendapat `422 IMPORT_SESSION_REQUIRED`.
+3. Pemulihan: ulangi import dari halaman 1. Staging aktif tidak berubah sampai seluruh halaman valid diterima. Bersihkan sesi lama bila perlu: `DELETE FROM emis_import_sessions WHERE status <> 'open' AND updated_at < NOW() - INTERVAL 30 DAY`.
+4. Lock finalisasi (`emis_gtk:import:finalize`) memerlukan cache driver dengan lock atomik (database/redis).
+5. Matriks ability token tidak berubah dari WP0.5.13 (lihat `docs/api/CHANGELOG.md`); import butuh `staging:write`, `clear_staging` butuh `staging:write`, commit dan PATCH task tetap hanya untuk sesi + permission.

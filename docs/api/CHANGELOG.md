@@ -146,3 +146,34 @@ Dokumen ini mencatat riwayat perubahan kontrak API v1 dan Webhook pada **PINTU M
 | 25.000 | 5,01 s / 194,5 MB / 195 | 12,45 s / 194,5 MB / 195 |
 
 Transaksi tetap satu (atomik, tidak ada batch setengah jadi); durasi transaksi ≈ durasi di atas. Untuk >50.000 baris disarankan checkpoint batch terpisah (belum diimplementasi).
+
+## WP0.5.13.1 — Sesi import GTK, integritas & penutupan test
+
+### Kontrak import GTK (`POST /api/emis-gtk/import`) — **berubah**
+
+| Aspek | Sebelum | Sesudah |
+|---|---|---|
+| Identitas sesi | satu kunci cache global (`emis_gtk:import:session`) | tabel `emis_import_sessions` (UUID per proses), terikat pada pemilik (token/user) |
+| Halaman 1 | membuat sesi dan langsung menulis ke staging | membuat sesi, mengembalikan `import_session_id`; halaman disangga di `emis_import_session_pages` |
+| Halaman > 1 | boleh tanpa ID (jatuh ke cache global) | **wajib** `import_session_id` (`422 IMPORT_SESSION_REQUIRED`) |
+| Penggantian staging | pada halaman terakhir yang tiba | hanya bila **semua** `total_pages` halaman terkumpul dan `total_count` (jika dikirim) cocok; atomik dalam satu transaksi |
+| Halaman ganda / tidak berurutan | tidak ditangani | idempoten per `(session_id, page)`; urutan bebas |
+| Sesi kedaluwarsa (2 jam) | tidak ada | `410 IMPORT_SESSION_EXPIRED`, buffer dibuang, staging lama utuh |
+| Sesi milik pihak lain | tidak dicegah | `404 IMPORT_SESSION_NOT_FOUND` |
+| `total_pages` berubah / page > total | tidak divalidasi | `422 IMPORT_SESSION_MISMATCH` / `INVALID_PAGE` |
+| Sesi selesai dikirim ulang | menimpa | `409 IMPORT_SESSION_CLOSED` |
+
+Respons: `import_session_id`, `status`, `page`, `received_pages`, `total_pages`, `complete`, `saved`, `message`. Klien (bookmarklet GTK) harus menyimpan `import_session_id` dari respons halaman pertama dan mengirimkannya pada halaman berikutnya. Baris `committed` tidak pernah dihapus; hanya `pending` sesi lain yang diganti saat finalisasi. `clear_staging` pada `/pull` hanya menghapus `pending` dan tidak menyentuh buffer sesi, sehingga import berjalan tidak terganggu.
+
+**Pemulihan:** import gagal/tidak lengkap/kedaluwarsa tidak mengubah staging. Mulai ulang dari halaman 1 (sesi baru). Sesi `open` yang terbengkalai kedaluwarsa otomatis saat dipakai lagi; bufernya tidak memengaruhi data aktif.
+
+### Benchmark rekonsiliasi siswa (dieksekusi nyata, `EMIS_BENCH_SIZES=500,5000,10000,25000`)
+
+| Baris | SQLite: detik / peak MB / Δ MB / query | MySQL 8: detik / peak MB / Δ MB / query |
+|---|---|---|
+| 500 | 0,16 / 98,5 / 4 / 8 | 0,47 / 100,5 / 4 / 8 |
+| 5.000 | 0,95 / 114,5 / 10 / 43 | 2,02 / 114,5 / 8 / 43 |
+| 10.000 | 1,94 / 136,5 / 10 / 81 | 6,00 / 138,5 / 10 / 81 |
+| 25.000 | 4,74 / 194,5 / 28 / 195 | 13,08 / 194,5 / 28 / 195 |
+
+Komposisi tiap ukuran N: identik 77,2%, berbeda 12,9%, pintu_only 10%, needs_review 0; total item = identik + berbeda + pintu_only (konsisten). Durasi transaksi = durasi total (satu transaksi atomik, sengaja tidak dipecah). Array `matchedStudentIds` tetap in-memory (±36 byte/ID; 25.000 ID jauh di bawah 2 MB dari Δ 28 MB). Di atas ±50 ribu baris diperlukan checkpoint batch eksplisit (belum diimplementasi).

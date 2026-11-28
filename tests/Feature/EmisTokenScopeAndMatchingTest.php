@@ -68,10 +68,12 @@ class EmisTokenScopeAndMatchingTest extends TestCase
         $h = $this->headers('emis_gtk', ['staging:write', 'staging:read']);
         EmisGtkStaging::create(['emis_gtk_id' => 'old-1', 'full_name_with_titles' => 'LAMA', 'status' => 'pending', 'source' => 'x', 'raw_data' => []]);
 
-        $this->postJson('/api/emis-gtk/import', ['data' => [['name' => 'Baru Satu', 'uuid' => 'n-1']], 'page' => 1, 'total_pages' => 2], $h)->assertOk();
+        $first = $this->postJson('/api/emis-gtk/import', ['data' => [['name' => 'Baru Satu', 'uuid' => 'n-1']], 'page' => 1, 'total_pages' => 2], $h)->assertOk();
+        $sid = $first->json('import_session_id');
         $this->assertDatabaseHas('emis_gtk_stagings', ['emis_gtk_id' => 'old-1']);
+        $this->assertDatabaseMissing('emis_gtk_stagings', ['emis_gtk_id' => 'n-1']);
 
-        $this->postJson('/api/emis-gtk/import', ['data' => [['name' => 'Baru Dua', 'uuid' => 'n-2']], 'page' => 2, 'total_pages' => 2], $h)->assertOk();
+        $this->postJson('/api/emis-gtk/import', ['data' => [['name' => 'Baru Dua', 'uuid' => 'n-2']], 'page' => 2, 'total_pages' => 2, 'import_session_id' => $sid], $h)->assertOk();
         $this->assertDatabaseMissing('emis_gtk_stagings', ['emis_gtk_id' => 'old-1']);
         $this->assertSame(2, EmisGtkStaging::count());
         $this->assertSame(1, EmisGtkStaging::distinct()->count('import_session_id'));

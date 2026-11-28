@@ -61,10 +61,12 @@ class EmisReconciliationBenchmarkTest extends TestCase
             $items = EmisReconciliationItem::where('batch_id', $batch->id)->count();
             $this->assertSame($batch->same_count ?? $batch->matched_identical_count, $batch->matched_identical_count);
             $this->assertSame($items, $batch->matched_identical_count + $batch->difference_count + $batch->pintu_only_count + $batch->emis_only_count + $batch->needs_review_count);
+            $this->assertSame(count($stagings) + intdiv($n, 10), $items);
             $results[$n] = [
                 'duration_s' => round($secs, 2),
                 'peak_memory_mb' => round(memory_get_peak_usage(true) / 1048576, 1),
                 'memory_delta_mb' => round((memory_get_usage(true) - $memBefore) / 1048576, 1),
+                'transaction_s' => round($secs, 2), // satu transaksi atomik membungkus seluruh proses
                 'queries' => $queries,
                 'items' => $items,
                 'identical' => $batch->matched_identical_count,
