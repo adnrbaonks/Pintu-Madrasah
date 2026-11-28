@@ -901,7 +901,10 @@ class EmisController extends Controller
             }
 
             $data['import_session_id'] = $sessionId;
-            $existing = EmisGtkStaging::query()->where($identity)->where('status', '!=', 'committed')->first();
+            $existing = EmisGtkStaging::query()->where($identity)->first();
+            if ($existing && $existing->status === 'committed') {
+                continue; // riwayat committed tidak ditimpa dan tidak digandakan
+            }
             if ($existing) {
                 $existing->update($data);
             } else {
@@ -1050,6 +1053,13 @@ class EmisController extends Controller
         $sessionId = $request->input('import_session_id');
         $ownerKey = $this->importOwnerKey($request);
 
+        $stale = EmisImportSession::query()->where('status', EmisImportSession::STATUS_OPEN)->where('expires_at', '<', now());
+        $staleIds = (clone $stale)->pluck('id');
+        if ($staleIds->isNotEmpty()) {
+            EmisImportSessionPage::whereIn('session_id', $staleIds)->delete();
+            $stale->update(['status' => EmisImportSession::STATUS_EXPIRED]);
+        }
+
         if ($page > $totalPages) {
             return $this->importError('INVALID_PAGE', 'Nomor halaman melebihi total_pages.', 422, $cors);
         }
@@ -1087,7 +1097,6 @@ class EmisController extends Controller
             }
         }
 
-        // Halaman disimpan di buffer sesi (idempoten per halaman); staging aktif belum disentuh.
         EmisImportSessionPage::updateOrCreate(
             ['session_id' => $session->id, 'page' => $page],
             ['items_count' => count($items), 'payload' => $items]
@@ -1143,12 +1152,16 @@ class EmisController extends Controller
             return $this->importError('IMPORT_COUNT_MISMATCH', 'Jumlah data yang diterima tidak sama dengan total_count. Kirim ulang halaman yang kurang.', 422, []);
         }
 
-        $lock = Cache::lock('emis_gtk:import:finalize', 60);
+        $lock = Cache::lock('emis_gtk:import:finalize', 300);
         if (! $lock->block(10)) {
             return $this->importError('IMPORT_IN_PROGRESS', 'Penggantian staging GTK lain sedang berjalan. Kirim ulang halaman terakhir sebentar lagi.', 409, []);
         }
 
         try {
+            if ($session->fresh()->status === EmisImportSession::STATUS_COMPLETED) {
+                return $this->importError('IMPORT_SESSION_CLOSED', 'Sesi import sudah selesai diproses.', 409, []);
+            }
+
             return DB::transaction(function () use ($session, $request) {
                 $saved = 0;
                 EmisImportSessionPage::where('session_id', $session->id)->orderBy('page')->each(function ($row) use ($session, &$saved) {
@@ -1169,7 +1182,7 @@ class EmisController extends Controller
                 return $saved;
             });
         } catch (\Throwable $e) {
-            Log::error('[EMIS GTK] Finalisasi import gagal: '.$e->getMessage());
+            Log::error('[EMIS GTK] Finalisasi import gagal', ['session' => $session->id, 'exception' => $e]);
             $session->update(['failure_reason' => mb_substr($e->getMessage(), 0, 500)]);
 
             return $this->importError('IMPORT_FINALIZE_FAILED', 'Penggantian staging gagal; staging lama tidak berubah. Kirim ulang halaman terakhir.', 500, []);
@@ -1189,7 +1202,7 @@ class EmisController extends Controller
     }
 
     /**
-     * @param  array<string, string>  $headers
+     * @param  array<string, string>  $headers  Header CORS tambahan (kosong bila tidak ada)
      */
     private function importError(string $code, string $message, int $status, array $headers): JsonResponse
     {

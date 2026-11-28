@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\EmisGtkStaging;
 use App\Models\EmisImportSession;
+use App\Models\EmisImportSessionPage;
 use App\Models\EmisStaging;
 use App\Models\EmisUpdateTask;
 use App\Models\User;
@@ -65,6 +66,27 @@ class EmisImportSessionIntegrityTest extends TestCase
         $this->assertSame(2, EmisGtkStaging::where('import_session_id', $sid)->count());
         $this->assertSame('completed', EmisImportSession::find($sid)->status);
         $this->assertDatabaseCount('emis_import_session_pages', 0);
+    }
+
+    public function test_committed_history_is_not_overwritten_or_duplicated_by_import(): void
+    {
+        $h = $this->h('emis_gtk', ['staging:write']);
+        $this->old();
+        $this->imp($h, ['com-1', 'n1'], 1, 1)->assertOk()->assertJsonPath('complete', true);
+
+        $this->assertSame(1, EmisGtkStaging::where('emis_gtk_id', 'com-1')->count());
+        $this->assertDatabaseHas('emis_gtk_stagings', ['emis_gtk_id' => 'com-1', 'status' => 'committed', 'full_name_with_titles' => 'COMMITTED']);
+    }
+
+    public function test_abandoned_sessions_are_pruned_on_next_import(): void
+    {
+        $h = $this->h('emis_gtk', ['staging:write']);
+        $sid = $this->imp($h, ['a'], 1, 3)->json('import_session_id');
+        EmisImportSession::whereKey($sid)->update(['expires_at' => now()->subMinute()]);
+
+        $this->imp($h, ['b'], 1, 1)->assertOk();
+        $this->assertSame('expired', EmisImportSession::find($sid)->status);
+        $this->assertSame(0, EmisImportSessionPage::where('session_id', $sid)->count());
     }
 
     public function test_later_page_without_session_id_is_rejected(): void
