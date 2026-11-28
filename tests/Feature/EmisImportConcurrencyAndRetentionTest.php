@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\CommitEmisGtkStagingJob;
 use App\Models\EmisGtkStaging;
 use App\Models\EmisImportSession;
 use App\Models\EmisImportSessionPage;
@@ -11,6 +12,7 @@ use App\Models\User;
 use App\Services\EmisImportSessionService;
 use App\Services\IntegrationTokenService;
 use Database\Seeders\RolesAndPermissionsSeeder;
+use Illuminate\Contracts\Queue\Job as QueueJobContract;
 use Illuminate\Database\Connection;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
@@ -19,12 +21,22 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Mockery;
 use Symfony\Component\Process\Process;
 use Tests\TestCase;
 
 class EmisImportConcurrencyAndRetentionTest extends TestCase
 {
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        if (config('cache.default') === 'redis') {
+            Cache::flush();
+        }
+    }
 
     /**
      * @param  array<int, string>|null  $abilities
@@ -51,6 +63,11 @@ class EmisImportConcurrencyAndRetentionTest extends TestCase
         ];
     }
 
+    /**
+     * Memastikan SHA-256 payload bersifat independen terhadap urutan key objek namun sensitif
+     * terhadap urutan baris list, sehingga pengiriman ulang identik bersifat idempoten sedangkan
+     * perubahan urutan baris atau isi ditolak dengan 409 IMPORT_PAGE_CONFLICT tanpa mengubah metadata sesi.
+     */
     public function test_payload_hash_is_key_order_independent_for_maps_but_preserves_list_order(): void
     {
         $service = app(EmisImportSessionService::class);
@@ -83,7 +100,6 @@ class EmisImportConcurrencyAndRetentionTest extends TestCase
 
         $sid = $first->json('import_session_id');
 
-        // Pengiriman ulang halaman 1 dengan urutan key JSON berbeda dianggap idempoten
         $replay = $this->postJson('/api/emis-gtk/import', [
             'import_session_id' => $sid,
             'page' => 1,
@@ -97,7 +113,6 @@ class EmisImportConcurrencyAndRetentionTest extends TestCase
         $replay->assertJsonPath('idempotent_replay', true)
             ->assertJsonPath('received_pages', 1);
 
-        // Pengiriman ulang halaman 1 dengan urutan baris berbeda atau nilai berbeda ditolak IMPORT_PAGE_CONFLICT
         $this->postJson('/api/emis-gtk/import', [
             'import_session_id' => $sid,
             'page' => 1,
@@ -128,18 +143,19 @@ class EmisImportConcurrencyAndRetentionTest extends TestCase
         $this->assertCount(2, EmisImportSessionPage::where('session_id', $sid)->where('page', 1)->firstOrFail()->payload);
     }
 
+    /**
+     * Memastikan kontrak konsistensi total_count dan total_pages antarhalaman ditegakkan
+     * (422 IMPORT_SESSION_MISMATCH dan 422 IMPORT_COUNT_MISMATCH) tanpa menyentuh staging lama.
+     */
     public function test_total_count_metadata_mismatch_and_strict_contract(): void
     {
         $headers = $this->tokenHeaders();
-        EmisGtkStaging::create([
+        EmisGtkStaging::factory()->create([
             'emis_gtk_id' => 'old-safe',
             'full_name_with_titles' => 'STAGING LAMA AMAN',
             'status' => 'pending',
-            'source' => 'bookmarklet',
-            'raw_data' => [],
         ]);
 
-        // Sesi tanpa total_count menolak halaman 2 yang tiba-tiba mengirim total_count
         $sidNullCount = $this->postJson('/api/emis-gtk/import', [
             'page' => 1,
             'total_pages' => 2,
@@ -156,7 +172,6 @@ class EmisImportConcurrencyAndRetentionTest extends TestCase
             ->assertStatus(422)
             ->assertJsonPath('error.code', 'IMPORT_SESSION_MISMATCH');
 
-        // Sesi dengan total_count=4 menolak halaman 2 yang mengirim total_count=3
         $sidWithCount = $this->postJson('/api/emis-gtk/import', [
             'page' => 1,
             'total_pages' => 2,
@@ -174,7 +189,6 @@ class EmisImportConcurrencyAndRetentionTest extends TestCase
             ->assertStatus(422)
             ->assertJsonPath('error.code', 'IMPORT_SESSION_MISMATCH');
 
-        // Semua halaman masuk (2/2) namun jumlah item 3 != total_count 4 -> gagal tanpa menyentuh staging lama
         $this->postJson('/api/emis-gtk/import', [
             'import_session_id' => $sidWithCount,
             'page' => 2,
@@ -192,6 +206,11 @@ class EmisImportConcurrencyAndRetentionTest extends TestCase
         $this->assertSame(0, EmisGtkStaging::where('import_session_id', $sidWithCount)->count());
     }
 
+    /**
+     * Memastikan request yang datang saat sesi berstatus finalizing aktif menerima 409 IMPORT_FINALIZING,
+     * sesi dengan lease finalizing kedaluwarsa (> 300 detik) dapat dipulihkan hingga completed tepat satu kali,
+     * dan retry pasca-completed menerima 409 IMPORT_SESSION_CLOSED deterministik beserta saved_rows.
+     */
     public function test_request_during_active_finalizing_and_stale_finalizing_lease_recovery(): void
     {
         $headers = $this->tokenHeaders();
@@ -202,7 +221,6 @@ class EmisImportConcurrencyAndRetentionTest extends TestCase
             'data' => [$this->gtkRow('r-1')],
         ], $headers)->assertOk()->json('import_session_id');
 
-        // Simulasikan sesi sedang dalam proses finalisasi aktif (lease belum kedaluwarsa)
         EmisImportSession::whereKey($sid)->update([
             'status' => EmisImportSession::STATUS_FINALIZING,
             'finalizing_at' => now(),
@@ -219,12 +237,10 @@ class EmisImportConcurrencyAndRetentionTest extends TestCase
             ->assertJsonPath('error.code', 'IMPORT_FINALIZING')
             ->assertJsonPath('status', 'finalizing');
 
-        // Simulasikan worker sebelumnya crash sehingga lease finalizing kedaluwarsa (> 300 detik)
         EmisImportSession::whereKey($sid)->update([
             'finalizing_at' => now()->subMinutes(10),
         ]);
 
-        // Retry klien setelah timeout memulihkan sesi dan menyelesaikan finalisasi tepat satu kali
         $recovered = $this->postJson('/api/emis-gtk/import', [
             'import_session_id' => $sid,
             'page' => 2,
@@ -237,7 +253,6 @@ class EmisImportConcurrencyAndRetentionTest extends TestCase
             ->assertJsonPath('saved', 2)
             ->assertJsonPath('status', 'completed');
 
-        // Retry ulang setelah completed mengembalikan 409 deterministik beserta saved_rows tanpa duplikasi finalisasi
         $this->postJson('/api/emis-gtk/import', [
             'import_session_id' => $sid,
             'page' => 2,
@@ -257,6 +272,12 @@ class EmisImportConcurrencyAndRetentionTest extends TestCase
         );
     }
 
+    /**
+     * Memastikan command terjadwal `emis:import-sessions:cleanup` menerapkan kebijakan retensi bertingkat
+     * (open overdue -> expired + hapus payload, active finalizing tidak pernah disentuh meskipun lewat expires_at,
+     * failed < 24 jam tetap simpan payload, failed > 24 jam hapus payload saja, terminal > 30 hari hapus metadata)
+     * serta bersifat idempoten pada eksekusi berulang.
+     */
     public function test_scheduled_cleanup_enforces_retention_tiers_is_idempotent_and_never_deletes_active_finalizing(): void
     {
         Artisan::call('schedule:list');
@@ -266,7 +287,6 @@ class EmisImportConcurrencyAndRetentionTest extends TestCase
         $samplePayload = [$this->gtkRow('cleanup-sample')];
         $sampleHash = $service->computePayloadHash($samplePayload);
 
-        // 1) Open overdue -> expired + halaman dihapus
         $openOverdue = EmisImportSession::factory()->create([
             'status' => EmisImportSession::STATUS_OPEN,
             'expires_at' => now()->subMinutes(5),
@@ -279,7 +299,6 @@ class EmisImportConcurrencyAndRetentionTest extends TestCase
             'payload' => $samplePayload,
         ]);
 
-        // 2) Open aktif -> tidak disentuh
         $openActive = EmisImportSession::factory()->create([
             'status' => EmisImportSession::STATUS_OPEN,
             'expires_at' => now()->addHour(),
@@ -292,7 +311,6 @@ class EmisImportConcurrencyAndRetentionTest extends TestCase
             'payload' => $samplePayload,
         ]);
 
-        // 3) Finalizing aktif (bahkan ketika expires_at baru saja lewat saat finalisasi sedang jalan!) -> DILARANG disentuh
         $activeFinalizing = EmisImportSession::factory()->create([
             'status' => EmisImportSession::STATUS_FINALIZING,
             'finalizing_at' => now()->subSeconds(20),
@@ -306,7 +324,6 @@ class EmisImportConcurrencyAndRetentionTest extends TestCase
             'payload' => $samplePayload,
         ]);
 
-        // 4) Failed baru (< 24 jam) -> payload halaman TETAP dipertahankan sementara
         $failedRecent = EmisImportSession::factory()->create([
             'status' => EmisImportSession::STATUS_FAILED,
             'failed_at' => now()->subHours(2),
@@ -320,7 +337,6 @@ class EmisImportConcurrencyAndRetentionTest extends TestCase
             'payload' => $samplePayload,
         ]);
 
-        // 5) Failed lama (> 24 jam, < 30 hari) -> payload halaman dihapus, namun metadata sesi dipertahankan
         $failedPayloadExpired = EmisImportSession::factory()->create([
             'status' => EmisImportSession::STATUS_FAILED,
             'failed_at' => now()->subHours(30),
@@ -334,13 +350,11 @@ class EmisImportConcurrencyAndRetentionTest extends TestCase
             'payload' => $samplePayload,
         ]);
 
-        // 6) Completed dalam masa retensi audit (< 30 hari) -> metadata tetap dipertahankan
         $completedWithinRetention = EmisImportSession::factory()->create([
             'status' => EmisImportSession::STATUS_COMPLETED,
             'completed_at' => now()->subDays(10),
         ]);
 
-        // 7) Completed & Expired melewati masa retensi audit (> 30 hari) -> metadata dihapus
         $completedOld = EmisImportSession::factory()->create([
             'status' => EmisImportSession::STATUS_COMPLETED,
             'completed_at' => now()->subDays(35),
@@ -371,29 +385,29 @@ class EmisImportConcurrencyAndRetentionTest extends TestCase
         $this->assertNull($completedOld->fresh());
         $this->assertNull($expiredOld->fresh());
 
-        // Eksekusi ulang langsung bersifat idempoten (0 perubahan)
         $secondStats = $service->cleanupSessions(2);
         $this->assertSame(0, array_sum($secondStats));
     }
 
+    /**
+     * Memastikan kegagalan integritas di tengah finalisasi me-rollback penuh perubahan staging,
+     * menjaga staging pending lama dan histori committed tetap utuh, mempertahankan payload pada sesi failed,
+     * dan menulis log diagnostik terstruktur (file, line, trace) tanpa membocorkan NIK/NIP/NUPTK.
+     */
     public function test_finalization_midway_integrity_failure_rolls_back_staging_and_redacts_pii(): void
     {
         Log::spy();
 
         $headers = $this->tokenHeaders();
-        EmisGtkStaging::create([
+        EmisGtkStaging::factory()->create([
             'emis_gtk_id' => 'old-pending-1',
             'full_name_with_titles' => 'STAGING LAMA UTUH',
             'status' => 'pending',
-            'source' => 'bookmarklet',
-            'raw_data' => [],
         ]);
-        EmisGtkStaging::create([
+        EmisGtkStaging::factory()->create([
             'emis_gtk_id' => 'committed-keep-1',
             'full_name_with_titles' => 'HISTORI COMMITTED UTUH',
             'status' => 'committed',
-            'source' => 'bookmarklet',
-            'raw_data' => [],
         ]);
 
         $sid = $this->postJson('/api/emis-gtk/import', [
@@ -407,7 +421,6 @@ class EmisImportConcurrencyAndRetentionTest extends TestCase
             ]],
         ], $headers)->assertOk()->json('import_session_id');
 
-        // Rusak hash halaman 1 di penyimpanan sementara untuk memicu kegagalan saat verifikasi finalisasi
         EmisImportSessionPage::where('session_id', $sid)
             ->where('page', 1)
             ->update(['payload_hash' => str_repeat('f', 64)]);
@@ -425,7 +438,6 @@ class EmisImportConcurrencyAndRetentionTest extends TestCase
             ->assertStatus(500)
             ->assertJsonPath('error.code', 'IMPORT_FINALIZE_FAILED');
 
-        // Staging lama dan histori committed tetap utuh; data sesi gagal tidak masuk staging
         $this->assertDatabaseHas('emis_gtk_stagings', ['emis_gtk_id' => 'old-pending-1', 'status' => 'pending']);
         $this->assertDatabaseHas('emis_gtk_stagings', ['emis_gtk_id' => 'committed-keep-1', 'status' => 'committed']);
         $this->assertSame(0, EmisGtkStaging::where('import_session_id', $sid)->count());
@@ -437,21 +449,31 @@ class EmisImportConcurrencyAndRetentionTest extends TestCase
         $this->assertStringNotContainsString('198501012010011009', (string) $session->failure_reason);
         $this->assertStringNotContainsString('9876543210123456', (string) $session->failure_reason);
 
-        // Payload halaman tetap dipertahankan sementara pada sesi failed untuk audit/pemulihan
+        Log::shouldHaveReceived('error')
+            ->withArgs(function (string $message, array $context) use ($sid): bool {
+                return $message === '[EMIS GTK] Finalisasi import gagal'
+                    && ($context['import_session_id'] ?? null) === $sid
+                    && isset($context['file'], $context['line'], $context['trace'])
+                    && is_array($context['trace']);
+            })
+            ->once();
+
         $this->assertSame(2, EmisImportSessionPage::where('session_id', $sid)->count());
     }
 
+    /**
+     * Memastikan `POST /api/emis-gtk/pull` dengan `clear_staging=true` menolak penghapusan dengan
+     * 409 IMPORT_IN_PROGRESS ketika lock mutasi staging sedang dipegang proses finalisasi atau commit.
+     */
     public function test_clear_staging_respects_active_staging_mutation_lock(): void
     {
         $headers = $this->tokenHeaders('emis_gtk', ['staging:write', 'sync:trigger']);
         Cache::put('emis:token:gtk', ['c' => 'cookie'], now()->addHour());
 
-        EmisGtkStaging::create([
+        EmisGtkStaging::factory()->create([
             'emis_gtk_id' => 'protected-pending',
             'full_name_with_titles' => 'SEDANG DIPROSES',
             'status' => 'pending',
-            'source' => 'bookmarklet',
-            'raw_data' => [],
         ]);
 
         $lock = Cache::lock(EmisImportSessionService::STAGING_MUTATION_LOCK_KEY, 60);
@@ -468,6 +490,88 @@ class EmisImportConcurrencyAndRetentionTest extends TestCase
         }
     }
 
+    /**
+     * Memastikan halaman legacy in-flight tanpa payload_hash di-backfill secara transparan pada retry identik,
+     * finalisasi multi-batch (> 25 halaman) berhasil secara atomik tanpa memuat semua halaman sekaligus,
+     * dan `CommitEmisGtkStagingJob` menjadwalkan ulang dirinya (`release(30)`) saat lock staging sedang sibuk.
+     */
+    public function test_legacy_in_flight_page_backfill_batched_finalization_and_commit_job_release(): void
+    {
+        $headers = $this->tokenHeaders();
+        $totalPages = 30;
+
+        $firstResp = $this->postJson('/api/emis-gtk/import', [
+            'page' => 1,
+            'total_pages' => $totalPages,
+            'total_count' => $totalPages,
+            'data' => [$this->gtkRow('b-1')],
+        ], $headers)->assertOk();
+
+        $sid = $firstResp->json('import_session_id');
+
+        EmisImportSessionPage::where('session_id', $sid)
+            ->where('page', 1)
+            ->update(['payload_hash' => '']);
+
+        $legacyReplay = $this->postJson('/api/emis-gtk/import', [
+            'import_session_id' => $sid,
+            'page' => 1,
+            'total_pages' => $totalPages,
+            'total_count' => $totalPages,
+            'data' => [$this->gtkRow('b-1')],
+        ], $headers)->assertOk();
+
+        $legacyReplay->assertJsonPath('idempotent_replay', true);
+        $this->assertNotSame(
+            '',
+            EmisImportSessionPage::where('session_id', $sid)->where('page', 1)->firstOrFail()->payload_hash
+        );
+
+        for ($p = 2; $p <= $totalPages; $p++) {
+            $res = $this->postJson('/api/emis-gtk/import', [
+                'import_session_id' => $sid,
+                'page' => $p,
+                'total_pages' => $totalPages,
+                'total_count' => $totalPages,
+                'data' => [$this->gtkRow("b-{$p}")],
+            ], $headers)->assertOk();
+
+            if ($p === $totalPages) {
+                $res->assertJsonPath('complete', true)->assertJsonPath('saved', $totalPages);
+            }
+        }
+
+        $this->assertSame($totalPages, EmisGtkStaging::where('import_session_id', $sid)->count());
+
+        config(['data_ownership.lifecycle_mode' => 'migration']);
+        $lock = Cache::lock(EmisImportSessionService::STAGING_MUTATION_LOCK_KEY, 60);
+        $this->assertTrue($lock->get());
+
+        try {
+            $queueJobMock = Mockery::mock(QueueJobContract::class);
+            $queueJobMock->shouldReceive('attempts')->andReturn(1);
+            $queueJobMock->shouldReceive('release')->once()->with(30);
+
+            $commitJob = new CommitEmisGtkStagingJob;
+            $commitJob->setJob($queueJobMock);
+
+            $startTime = microtime(true);
+            $commitJob->handle();
+            $this->assertGreaterThanOrEqual(0.0, microtime(true) - $startTime);
+
+            $progress = Cache::get('emis_gtk:commit:progress');
+            $this->assertIsArray($progress);
+            $this->assertFalse((bool) ($progress['error'] ?? true));
+        } finally {
+            $lock->release();
+        }
+    }
+
+    /**
+     * Menguji secara paralel multi-proses OS nyata:
+     * 1) Dua halaman terakhir (halaman 2 dan 3) dikirim bersamaan -> hanya satu proses mengeksekusi finalisasi.
+     * 2) Halaman terakhir yang sama dikirim dua kali bersamaan -> satu 200 completed dan satu 409 deterministik.
+     */
     public function test_parallel_two_final_pages_and_duplicate_last_page_execute_finalization_once(): void
     {
         $this->runWithIsolatedParallelEnvironment(function (callable $dispatchParallel): void {
@@ -475,22 +579,17 @@ class EmisImportConcurrencyAndRetentionTest extends TestCase
             $plainToken = app(IntegrationTokenService::class)
                 ->issue($operator, 'emis_gtk', 'parallel-session', null, ['staging:write'])['plain_token'];
 
-            EmisGtkStaging::create([
+            EmisGtkStaging::factory()->create([
                 'emis_gtk_id' => 'old-before-parallel',
                 'full_name_with_titles' => 'STAGING SEBELUMNYA',
                 'status' => 'pending',
-                'source' => 'bookmarklet',
-                'raw_data' => [],
             ]);
-            EmisGtkStaging::create([
+            EmisGtkStaging::factory()->create([
                 'emis_gtk_id' => 'committed-parallel-safe',
                 'full_name_with_titles' => 'COMMITTED TETAP AMAN',
                 'status' => 'committed',
-                'source' => 'bookmarklet',
-                'raw_data' => [],
             ]);
 
-            // Skenario 1: Halaman 1 sudah masuk; Proses A mengirim Halaman 2 & Proses B mengirim Halaman 3 secara paralel
             $initOne = $dispatchParallel([
                 [
                     'token' => $plainToken,
@@ -543,7 +642,6 @@ class EmisImportConcurrencyAndRetentionTest extends TestCase
                     ->count()
             );
 
-            // Skenario 2: Dua proses paralel mengirim halaman terakhir yang SAMA (duplicate last page race)
             $initDup = $dispatchParallel([
                 [
                     'token' => $plainToken,
@@ -595,6 +693,11 @@ class EmisImportConcurrencyAndRetentionTest extends TestCase
         });
     }
 
+    /**
+     * Menguji secara paralel multi-proses OS nyata:
+     * 1) Dua proses mengirim nomor halaman yang sama dengan payload berbeda -> satu 200 dan satu 409 IMPORT_PAGE_CONFLICT.
+     * 2) Dua sesi berbeda menyelesaikan finalisasi bersamaan -> terserialisasi via lock tanpa staging tercampur.
+     */
     public function test_parallel_conflicting_same_page_and_two_sessions_finalizing_simultaneously(): void
     {
         $this->runWithIsolatedParallelEnvironment(function (callable $dispatchParallel): void {
@@ -605,7 +708,6 @@ class EmisImportConcurrencyAndRetentionTest extends TestCase
             $tokenB = app(IntegrationTokenService::class)
                 ->issue($opB, 'emis_gtk', 'parallel-B', null, ['staging:write'])['plain_token'];
 
-            // Skenario 1: Konflik payload bersamaan pada halaman 2 di sesi yang sama
             $initConflict = $dispatchParallel([
                 [
                     'token' => $tokenA,
@@ -642,7 +744,6 @@ class EmisImportConcurrencyAndRetentionTest extends TestCase
             $this->assertSame('IMPORT_PAGE_CONFLICT', $rejected['json']['error']['code'] ?? null);
             $this->assertSame(2, EmisImportSession::findOrFail($sidConflict)->received_pages);
 
-            // Skenario 2: Dua sesi berbeda (Token A dan Token B) menyelesaikan finalisasi pada saat bersamaan
             $sidA = $dispatchParallel([
                 ['token' => $tokenA, 'payload' => ['page' => 1, 'total_pages' => 2, 'data' => [$this->gtkRow('sa-1')]]],
             ])[0]['json']['import_session_id'];
@@ -666,7 +767,6 @@ class EmisImportConcurrencyAndRetentionTest extends TestCase
             $this->assertSame(EmisImportSession::STATUS_COMPLETED, EmisImportSession::findOrFail($sidA)->status);
             $this->assertSame(EmisImportSession::STATUS_COMPLETED, EmisImportSession::findOrFail($sidB)->status);
 
-            // Staging pending akhir harus utuh berasal dari tepat satu sesi pemenang terakhir (2 baris, tidak tercampur)
             $pendingRows = EmisGtkStaging::where('status', 'pending')->get();
             $this->assertCount(2, $pendingRows);
             $this->assertSame(1, $pendingRows->pluck('import_session_id')->unique()->count());

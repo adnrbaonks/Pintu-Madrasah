@@ -8,7 +8,10 @@ use App\Models\EmisImportSessionPage;
 use App\Models\IntegrationLog;
 use Illuminate\Contracts\Cache\Lock;
 use Illuminate\Contracts\Cache\LockTimeoutException;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -19,6 +22,8 @@ use Throwable;
 class EmisImportSessionService
 {
     public const STAGING_MUTATION_LOCK_KEY = 'emis_gtk:staging:mutation';
+
+    private const FINALIZE_PAGE_BATCH_SIZE = 25;
 
     /**
      * Hitung SHA-256 kanonis yang stabil untuk payload halaman import.
@@ -182,7 +187,13 @@ class EmisImportSessionService
 
             $idempotentReplay = false;
             if ($existingPage !== null) {
-                if (! hash_equals((string) $existingPage->payload_hash, $payloadHash)) {
+                $storedHash = (string) $existingPage->payload_hash;
+                if ($storedHash === '' && is_array($existingPage->payload)) {
+                    $storedHash = $this->computePayloadHash($existingPage->payload);
+                    $existingPage->update(['payload_hash' => $storedHash]);
+                }
+
+                if (! hash_equals($storedHash, $payloadHash)) {
                     return $this->errorOutcome(
                         409,
                         'IMPORT_PAGE_CONFLICT',
@@ -376,7 +387,8 @@ class EmisImportSessionService
      */
     private function executeFinalization(string $sessionId, int $page, ?string $authMethod): array
     {
-        $lock = $this->acquireCacheLock(self::STAGING_MUTATION_LOCK_KEY, $this->finalizingLeaseSeconds(), 15);
+        $lockTtlSeconds = $this->finalizeLockSeconds();
+        $lock = $this->acquireCacheLock(self::STAGING_MUTATION_LOCK_KEY, $lockTtlSeconds, 15);
         if ($lock === null) {
             $this->runWriteTransaction(function () use ($sessionId): void {
                 EmisImportSession::query()
@@ -397,8 +409,10 @@ class EmisImportSessionService
             );
         }
 
+        $lockDeadlineUnix = microtime(true) + max(2, $lockTtlSeconds - 5);
+
         try {
-            $result = $this->runWriteTransaction(function () use ($sessionId, $authMethod): array {
+            $result = $this->runWriteTransaction(function () use ($sessionId, $authMethod, $lockDeadlineUnix): array {
                 $session = EmisImportSession::query()
                     ->where('id', $sessionId)
                     ->lockForUpdate()
@@ -420,42 +434,61 @@ class EmisImportSessionService
                     throw new RuntimeException("Status sesi tidak valid untuk finalisasi ({$session->status}).");
                 }
 
-                $pages = EmisImportSessionPage::query()
+                $storedPagesCount = EmisImportSessionPage::query()
                     ->where('session_id', $session->id)
-                    ->orderBy('page')
-                    ->get();
+                    ->count();
 
-                if ($pages->count() !== $session->total_pages) {
+                if ($storedPagesCount !== $session->total_pages) {
                     throw new RuntimeException('Jumlah halaman tersimpan tidak lengkap untuk finalisasi.');
                 }
 
                 $expectedPageNumber = 1;
                 $verifiedRows = 0;
-                foreach ($pages as $pageRow) {
-                    if ($pageRow->page !== $expectedPageNumber) {
-                        throw new RuntimeException("Urutan halaman tidak berkesinambungan pada halaman {$expectedPageNumber}.");
-                    }
-                    if (! is_array($pageRow->payload) || $pageRow->payload === []) {
-                        throw new RuntimeException("Payload halaman {$expectedPageNumber} kosong atau tidak valid.");
-                    }
-                    if (
-                        $pageRow->payload_hash !== ''
-                        && ! hash_equals($pageRow->payload_hash, $this->computePayloadHash($pageRow->payload))
-                    ) {
-                        throw new RuntimeException("Integritas hash payload gagal pada halaman {$expectedPageNumber}.");
+                $saved = 0;
+
+                for ($batchStart = 1; $batchStart <= $session->total_pages; $batchStart += self::FINALIZE_PAGE_BATCH_SIZE) {
+                    $batchEnd = min($session->total_pages, $batchStart + self::FINALIZE_PAGE_BATCH_SIZE - 1);
+                    $pageBatch = EmisImportSessionPage::query()
+                        ->where('session_id', $session->id)
+                        ->whereBetween('page', [$batchStart, $batchEnd])
+                        ->orderBy('page')
+                        ->get();
+
+                    if ($pageBatch->count() !== ($batchEnd - $batchStart + 1)) {
+                        throw new RuntimeException("Urutan halaman tidak berkesinambungan pada rentang {$batchStart}..{$batchEnd}.");
                     }
 
-                    $verifiedRows += count($pageRow->payload);
-                    $expectedPageNumber++;
+                    foreach ($pageBatch as $pageRow) {
+                        if ($pageRow->page !== $expectedPageNumber) {
+                            throw new RuntimeException("Urutan halaman tidak berkesinambungan pada halaman {$expectedPageNumber}.");
+                        }
+                        if (! is_array($pageRow->payload) || $pageRow->payload === []) {
+                            throw new RuntimeException("Payload halaman {$expectedPageNumber} kosong atau tidak valid.");
+                        }
+                        $computedHash = $this->computePayloadHash($pageRow->payload);
+                        if ($pageRow->payload_hash !== '' && ! hash_equals($pageRow->payload_hash, $computedHash)) {
+                            throw new RuntimeException("Integritas hash payload gagal pada halaman {$expectedPageNumber}.");
+                        }
+
+                        $verifiedRows += count($pageRow->payload);
+                        $saved += $this->storeGtkImportItems($pageRow->payload, $session->id);
+                        $expectedPageNumber++;
+                    }
+
+                    if (microtime(true) >= $lockDeadlineUnix) {
+                        throw new RuntimeException('Finalisasi melampaui masa berlaku lock eksklusif staging.');
+                    }
+
+                    $session->update(['finalizing_at' => now()]);
+                    unset($pageBatch);
                 }
 
                 if ($session->total_count !== null && $verifiedRows !== $session->total_count) {
                     throw new RuntimeException('Total baris terverifikasi tidak sesuai dengan total_count sesi.');
                 }
 
-                $saved = 0;
-                foreach ($pages as $pageRow) {
-                    $saved += $this->storeGtkImportItems($pageRow->payload, $session->id);
+                if (microtime(true) >= $lockDeadlineUnix) {
+                    throw new RuntimeException('Finalisasi melampaui masa berlaku lock eksklusif staging sebelum commit.');
                 }
 
                 $removed = EmisGtkStaging::query()
@@ -498,7 +531,7 @@ class EmisImportSessionService
                     'saved' => $saved,
                     'session' => $session->fresh(),
                 ];
-            });
+            }, $sessionId);
 
             if ($result['already_completed']) {
                 return $this->errorOutcome(409, 'IMPORT_SESSION_CLOSED', 'Sesi import sudah selesai diproses.');
@@ -531,11 +564,7 @@ class EmisImportSessionService
         } catch (Throwable $e) {
             $safeReason = $this->sanitizeFailureReason($e);
 
-            Log::error('[EMIS GTK] Finalisasi import gagal', [
-                'import_session_id' => $sessionId,
-                'exception_class' => $e::class,
-                'reason' => $safeReason,
-            ]);
+            Log::error('[EMIS GTK] Finalisasi import gagal', $this->buildSafeFailureLogContext($sessionId, $e, $safeReason));
 
             $this->runWriteTransaction(function () use ($sessionId, $safeReason): void {
                 EmisImportSession::query()
@@ -561,11 +590,27 @@ class EmisImportSessionService
 
     /**
      * Simpan item halaman ke tabel staging GTK dengan mempertahankan riwayat committed.
+     * Melakukan bulk prefetch berdasarkan `emis_gtk_id` untuk menghindari N+1 query per baris.
      *
      * @param  array<int, array<string, mixed>>  $items
      */
     private function storeGtkImportItems(array $items, string $sessionId): int
     {
+        $pageUuids = [];
+        foreach ($items as $item) {
+            if (filled($item['uuid'] ?? null)) {
+                $pageUuids[] = (string) $item['uuid'];
+            }
+        }
+
+        /** @var Collection<string, EmisGtkStaging> $existingByUuid */
+        $existingByUuid = $pageUuids !== []
+            ? EmisGtkStaging::query()
+                ->whereIn('emis_gtk_id', array_values(array_unique($pageUuids)))
+                ->get()
+                ->keyBy('emis_gtk_id')
+            : collect();
+
         $saved = 0;
         foreach ($items as $item) {
             $name = mb_strtoupper(trim((string) ($item['name'] ?? '')));
@@ -573,8 +618,8 @@ class EmisImportSessionService
                 continue;
             }
 
-            $uuid = $item['uuid'] ?? null;
-            $identity = $uuid
+            $uuid = filled($item['uuid'] ?? null) ? (string) $item['uuid'] : null;
+            $identity = $uuid !== null
                 ? ['emis_gtk_id' => $uuid]
                 : $this->gtkIdentity($item, $name);
 
@@ -604,7 +649,10 @@ class EmisImportSessionService
                 $data['is_sertifikasi'] = filter_var($item['is_sertifikasi'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
             }
 
-            $existing = EmisGtkStaging::query()->where($identity)->first();
+            $existing = $uuid !== null
+                ? $existingByUuid->get($uuid)
+                : EmisGtkStaging::query()->where($identity)->first();
+
             if ($existing && $existing->status === 'committed') {
                 continue;
             }
@@ -612,7 +660,10 @@ class EmisImportSessionService
             if ($existing) {
                 $existing->update($data);
             } else {
-                EmisGtkStaging::create($identity + $data);
+                $created = EmisGtkStaging::create($identity + $data);
+                if ($uuid !== null) {
+                    $existingByUuid->put($uuid, $created);
+                }
             }
             $saved++;
         }
@@ -772,10 +823,17 @@ class EmisImportSessionService
                 break;
             }
 
-            $batch = $this->runWriteTransaction(function () use ($candidateIds): array {
+            $batch = $this->runWriteTransaction(function () use ($candidateIds, $cutoff): array {
                 $lockedIds = EmisImportSession::query()
                     ->whereIn('id', $candidateIds)
                     ->where('status', EmisImportSession::STATUS_FAILED)
+                    ->where(function ($q) use ($cutoff) {
+                        $q->where(function ($sub) use ($cutoff) {
+                            $sub->whereNotNull('failed_at')->where('failed_at', '<', $cutoff);
+                        })->orWhere(function ($sub) use ($cutoff) {
+                            $sub->whereNull('failed_at')->where('updated_at', '<', $cutoff);
+                        });
+                    })
                     ->lockForUpdate()
                     ->pluck('id');
 
@@ -808,30 +866,7 @@ class EmisImportSessionService
 
         do {
             $candidateIds = EmisImportSession::query()
-                ->where(function ($q) use ($cutoff) {
-                    $q->where(function ($sub) use ($cutoff) {
-                        $sub->where('status', EmisImportSession::STATUS_COMPLETED)
-                            ->whereNotNull('completed_at')
-                            ->where('completed_at', '<', $cutoff);
-                    })->orWhere(function ($sub) use ($cutoff) {
-                        $sub->where('status', EmisImportSession::STATUS_EXPIRED)
-                            ->where(function ($inner) use ($cutoff) {
-                                $inner->where('expires_at', '<', $cutoff)
-                                    ->orWhere(function ($fallback) use ($cutoff) {
-                                        $fallback->whereNull('expires_at')->where('updated_at', '<', $cutoff);
-                                    });
-                            });
-                    })->orWhere(function ($sub) use ($cutoff) {
-                        $sub->where('status', EmisImportSession::STATUS_FAILED)
-                            ->where(function ($inner) use ($cutoff) {
-                                $inner->where(function ($f) use ($cutoff) {
-                                    $f->whereNotNull('failed_at')->where('failed_at', '<', $cutoff);
-                                })->orWhere(function ($f) use ($cutoff) {
-                                    $f->whereNull('failed_at')->where('updated_at', '<', $cutoff);
-                                });
-                            });
-                    });
-                })
+                ->where(fn ($q) => $this->applyTerminalRetentionCutoff($q, $cutoff))
                 ->limit($limit)
                 ->pluck('id');
 
@@ -839,14 +874,10 @@ class EmisImportSessionService
                 break;
             }
 
-            $batchDeleted = $this->runWriteTransaction(function () use ($candidateIds): int {
+            $batchDeleted = $this->runWriteTransaction(function () use ($candidateIds, $cutoff): int {
                 $lockedIds = EmisImportSession::query()
                     ->whereIn('id', $candidateIds)
-                    ->whereIn('status', [
-                        EmisImportSession::STATUS_COMPLETED,
-                        EmisImportSession::STATUS_EXPIRED,
-                        EmisImportSession::STATUS_FAILED,
-                    ])
+                    ->where(fn ($q) => $this->applyTerminalRetentionCutoff($q, $cutoff))
                     ->lockForUpdate()
                     ->pluck('id');
 
@@ -895,12 +926,79 @@ class EmisImportSessionService
     }
 
     /**
+     * @param  Builder<EmisImportSession>  $q
+     */
+    private function applyTerminalRetentionCutoff($q, Carbon $cutoff): void
+    {
+        $q->where(function ($sub) use ($cutoff) {
+            $sub->where('status', EmisImportSession::STATUS_COMPLETED)
+                ->whereNotNull('completed_at')
+                ->where('completed_at', '<', $cutoff);
+        })->orWhere(function ($sub) use ($cutoff) {
+            $sub->where('status', EmisImportSession::STATUS_EXPIRED)
+                ->where(function ($inner) use ($cutoff) {
+                    $inner->where('expires_at', '<', $cutoff)
+                        ->orWhere(function ($fallback) use ($cutoff) {
+                            $fallback->whereNull('expires_at')->where('updated_at', '<', $cutoff);
+                        });
+                });
+        })->orWhere(function ($sub) use ($cutoff) {
+            $sub->where('status', EmisImportSession::STATUS_FAILED)
+                ->where(function ($inner) use ($cutoff) {
+                    $inner->where(function ($f) use ($cutoff) {
+                        $f->whereNotNull('failed_at')->where('failed_at', '<', $cutoff);
+                    })->orWhere(function ($f) use ($cutoff) {
+                        $f->whereNull('failed_at')->where('updated_at', '<', $cutoff);
+                    });
+                });
+        });
+    }
+
+    /**
+     * Bangun konteks diagnostik kegagalan yang kaya lokasi namun bebas SQL bindings dan PII.
+     *
+     * @return array<string, mixed>
+     */
+    private function buildSafeFailureLogContext(string $sessionId, Throwable $e, string $safeReason): array
+    {
+        $frames = [];
+        foreach (array_slice($e->getTrace(), 0, 5) as $frame) {
+            $target = isset($frame['class'])
+                ? $frame['class'].($frame['type'] ?? '::').($frame['function'] ?? '')
+                : ($frame['function'] ?? 'closure');
+            $location = isset($frame['file'])
+                ? basename((string) $frame['file']).':'.($frame['line'] ?? 0)
+                : 'internal';
+            $frames[] = "{$target}@{$location}";
+        }
+
+        $context = [
+            'import_session_id' => $sessionId,
+            'exception_class' => $e::class,
+            'file' => basename($e->getFile()),
+            'line' => $e->getLine(),
+            'reason' => $safeReason,
+            'trace' => $frames,
+        ];
+
+        if ($e instanceof QueryException) {
+            $context['sql_state'] = $e->errorInfo[0] ?? (is_scalar($e->getCode()) ? (string) $e->getCode() : null);
+            $context['driver_code'] = $e->errorInfo[1] ?? null;
+        } elseif ($e instanceof PDOException) {
+            $context['sql_state'] = $e->errorInfo[0] ?? (is_scalar($e->getCode()) ? (string) $e->getCode() : null);
+            $context['driver_code'] = $e->errorInfo[1] ?? null;
+        }
+
+        return $context;
+    }
+
+    /**
      * Sanitasi pesan error agar tidak pernah menyimpan SQL bindings atau deretan angka identitas PII.
      */
     private function sanitizeFailureReason(Throwable $e): string
     {
         if ($e instanceof QueryException || $e instanceof PDOException) {
-            $sqlState = is_scalar($e->getCode()) ? (string) $e->getCode() : 'UNKNOWN';
+            $sqlState = $e->errorInfo[0] ?? (is_scalar($e->getCode()) ? (string) $e->getCode() : 'UNKNOWN');
 
             return "Kesalahan database [SQLSTATE {$sqlState}] saat finalisasi staging.";
         }
@@ -934,6 +1032,13 @@ class EmisImportSessionService
     private function finalizingLeaseSeconds(): int
     {
         return max(10, (int) config('data_ownership.emis_import.finalizing_lease_seconds', 300));
+    }
+
+    private function finalizeLockSeconds(): int
+    {
+        $configured = (int) config('data_ownership.emis_import.finalize_lock_seconds', 600);
+
+        return max($this->finalizingLeaseSeconds() * 2, $configured);
     }
 
     private function failedPayloadRetentionHours(): int

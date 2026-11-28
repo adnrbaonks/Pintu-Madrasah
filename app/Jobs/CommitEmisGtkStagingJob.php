@@ -76,6 +76,8 @@ class CommitEmisGtkStagingJob implements ShouldQueue
 
     public $timeout = 600;
 
+    public int $tries = 5;
+
     public function __construct(
         public ?string $actorId = null,
         public bool $allowOverwrite = false,
@@ -113,7 +115,23 @@ class CommitEmisGtkStagingJob implements ShouldQueue
         }
 
         if (! $lockAcquired) {
-            Log::warning('[EMIS GTK] Commit ditunda karena mutasi staging GTK lain sedang berlangsung.');
+            if ($this->job !== null && $this->attempts() < $this->tries) {
+                Log::info('[EMIS GTK] Commit dijadwalkan ulang karena mutasi staging GTK lain sedang berlangsung.', [
+                    'attempt' => $this->attempts(),
+                    'max_tries' => $this->tries,
+                ]);
+                Cache::put('emis_gtk:commit:progress', [
+                    'progress' => 0,
+                    'status' => 'Menunggu finalisasi import EMIS GTK selesai sebelum commit dilanjutkan...',
+                    'error' => false,
+                ], now()->addHours(2));
+
+                $this->release(30);
+
+                return;
+            }
+
+            Log::warning('[EMIS GTK] Commit dihentikan karena lock mutasi staging GTK tidak tersedia setelah batas percobaan.');
             Cache::put('emis_gtk:commit:progress', [
                 'progress' => 100,
                 'status' => 'Gagal: Penggantian staging GTK sedang berlangsung. Ulangi sebentar lagi.',
