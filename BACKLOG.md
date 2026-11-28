@@ -1,4 +1,4 @@
-# Backlog Pintu Madrasah — per 27 Nov 2026
+# Backlog Pintu Madrasah — per 28 Nov 2026
 
 ## ✅ Selesai (Sprint 5 + WP0.5–WP17 + WP0.5.10 Data Ownership Enforcement)
 - **WP0.5.10 — Data Ownership Enforcement (`config/data_ownership.php`, `DataOwnershipService`, `EmisController`, `EmisReconciliationService`):** Kunci mutasi EMIS di mode produksi (`PINTU_LIFECYCLE_MODE=production` memblokir `POST /api/emis*/commit`, `CommitEmisStagingJob`, `CommitEmisGtkStagingJob`, & `commitEmisDetail`), prosedur *Break-Glass Migration* ber-permission khusus (`break_glass_emis_import`), penutupan bypass edit langsung GTK pada `PUT /gtk/{staff}` (`change_policy === 'direct' && !approval_required`), isolasi tegas domain `/api/emis/*` (`student`) vs `/api/emis-gtk/*` (`staff`) beserta masking snapshot PII, kewajiban `StudentDocument` berstatus `verified`, serta pelestarian baris staging `committed` dan snapshot rekonsiliasi
@@ -28,8 +28,46 @@
 - [ ] Agregasi SIMPEG otomatis untuk TPG
 - [ ] 1-click copy NISN + sync balik status PPDB→EMIS
 
-## 🆕 Saran baru (dari audit operasional)
-- [ ] Jadwal pelajaran + guru piket mingguan + cetak
+## 🗺️ Roadmap Pengembangan Berikutnya
+
+### WP0.12 — Scheduling Management (Manajemen Jadwal Pelajaran)
+**Status:** Planned / Belum dikembangkan  
+**Posisi roadmap:** Setelah WP0.11 Examination Management dan sebelum WP0.13 Alumni Management.  
+**Menu:** Master Data → Jadwal Pelajaran.
+
+**Tujuan:** Menyediakan pengelolaan jadwal pelajaran terpusat dengan menggunakan data master PINTU MADRASAH sebagai referensi utama.
+
+**Ruang lingkup:**
+- Pengaturan periode jadwal berdasarkan tahun ajaran dan semester.
+- Penyusunan jadwal per rombongan belajar, hari, jam pelajaran, mata pelajaran, guru pengampu, dan ruang kelas.
+- Pengaturan jam pelajaran, waktu istirahat, serta hari efektif.
+- Tampilan jadwal berdasarkan rombel dan guru.
+- Cetak dan ekspor jadwal.
+- Status draft dan dipublikasikan, termasuk kontrol perubahan setelah jadwal diterbitkan.
+- Riwayat perubahan jadwal dan pencatatan pengguna yang melakukan perubahan.
+
+**Validasi wajib:**
+- Guru tidak boleh dijadwalkan mengajar pada lebih dari satu rombel dalam waktu yang sama.
+- Rombel tidak boleh memiliki lebih dari satu mata pelajaran pada waktu yang sama.
+- Ruangan tidak boleh digunakan oleh lebih dari satu rombel pada waktu yang sama.
+- Validasi rentang jam, hari, periode, dan data referensi harus dilakukan di sisi server.
+
+**Integrasi dan kepemilikan data:**
+- Guru pengampu mengambil referensi dari Master GTK.
+- Mata pelajaran mengambil referensi dari Master Mata Pelajaran.
+- Kelas dan rombel mengambil referensi dari modul Kelas dan Rombel.
+- Periode mengambil referensi dari Tahun Ajaran dan semester.
+- E-Learning dapat mengonsumsi jadwal melalui kontrak integrasi/API; PINTU tidak mengambil alih transaksi pembelajaran E-Learning.
+
+**Catatan implementasi untuk agent:**
+1. Sebelum membuat fitur, audit repository untuk memastikan tidak ada modul, tabel, route, atau komponen jadwal yang sudah tersedia.
+2. Reuse relasi dan data master yang sudah ada; jangan membuat duplikasi data GTK, mata pelajaran, kelas, rombel, atau tahun ajaran.
+3. Rancang skema agar jadwal dapat dikelola per periode dan perubahan jadwal yang sudah dipublikasikan tetap memiliki jejak audit.
+4. Terapkan RBAC/permission sesuai peran pengelola jadwal dan audit seluruh perubahan penting.
+5. Tambahkan feature tests untuk validasi bentrok guru, rombel, dan ruang, termasuk kasus jadwal yang saling bersinggungan.
+6. Jangan mengimplementasikan guru piket sebagai bagian WP0.12 tanpa persetujuan dan penetapan ruang lingkup tersendiri.
+
+### Saran operasional lain (belum masuk urutan WP)
 - [ ] Portal wali murid (cek nilai & berkas via NISN, tanpa login)
 - [ ] Inventaris aset sarana (akreditasi)
 - [ ] Presensi internal sementara (sambil menunggu SIPSMAD+RFID)
