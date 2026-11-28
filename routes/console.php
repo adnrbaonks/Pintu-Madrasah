@@ -13,3 +13,6 @@ Schedule::command('backup:run --keep=7')->dailyAt('00:00')->timezone('Asia/Jakar
 
 // Pemrosesan transactional outbox & pemulihan lease berkala setiap menit tanpa tumpang tindih
 Schedule::command('webhooks:process-outbox')->everyMinute()->withoutOverlapping(5);
+
+// Pembersihan berkala sesi import EMIS kedaluwarsa & retensi payload/metadata
+Schedule::command('emis:import-sessions:cleanup')->everyFiveMinutes()->withoutOverlapping(10);

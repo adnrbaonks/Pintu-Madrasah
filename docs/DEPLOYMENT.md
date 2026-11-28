@@ -162,6 +162,7 @@ Tambahkan cron:
 Scheduler saat ini menjalankan:
 - Backup harian pukul 00.00 WIB (`backup:run --keep=7`), dengan penyimpanan lokal dan upload Google Drive best-effort bila dikonfigurasi.
 - Pemrosesan Transactional Outbox setiap menit (`webhooks:process-outbox --limit=100` dengan `withoutOverlapping(5)`) untuk memastikan event tertunda atau *expired lease* dipulihkan secara otomatis.
+- Pembersihan berkala sesi import EMIS setiap 5 menit (`emis:import-sessions:cleanup` dengan `withoutOverlapping(10)`) untuk menandai sesi `open` kedaluwarsa, memulihkan lease `finalizing` macet, menghapus payload sesi `failed` yang melewati retensi sementara (default 24 jam), dan memangkas metadata terminal yang melewati retensi audit (default 30 hari).
 
 ## 7. Zona waktu
 
@@ -177,7 +178,7 @@ Scheduler saat ini menjalankan:
 2. Halaman `/login` tampil dan login admin berhasil.
 3. Dashboard, `/students`, dan `/users` dapat dibuka sesuai role.
 4. Worker memproses satu `QueueHealthCheckJob` di setiap queue.
-5. `php artisan schedule:list` menampilkan backup harian.
+5. `php artisan schedule:list` menampilkan backup harian, `webhooks:process-outbox`, dan `emis:import-sessions:cleanup`.
 6. Backup baru muncul di `storage/app/private/backups/` (atau
    `storage/app/backups/` sesuai konfigurasi disk) dan terupload bila Drive aktif.
 
@@ -302,3 +303,30 @@ Jalankan `php artisan db:seed --class=RolesAndPermissionsSeeder --force` agar pe
 3. Pemulihan: ulangi import dari halaman 1. Staging aktif tidak berubah sampai seluruh halaman valid diterima. Bersihkan sesi lama bila perlu: `DELETE FROM emis_import_sessions WHERE status <> 'open' AND updated_at < NOW() - INTERVAL 30 DAY`.
 4. Lock finalisasi (`emis_gtk:import:finalize`) memerlukan cache driver dengan lock atomik (database/redis).
 5. Matriks ability token tidak berubah dari WP0.5.13 (lihat `docs/api/CHANGELOG.md`); import butuh `staging:write`, `clear_staging` butuh `staging:write`, commit dan PATCH task tetap hanya untuk sesi + permission.
+
+## 16. WP0.5.13.2 — Konkurensi sesi import EMIS & retensi data
+
+1. **Migrasi database:**
+   ```bash
+   php artisan migrate --force
+   ```
+   Menambahkan `payload_hash` pada `emis_import_session_pages` serta `finalizing_at`, `failed_at`, `saved_rows`, dan indeks retensi pada `emis_import_sessions`.
+2. **Laravel Scheduler wajib aktif di production:**
+   Pastikan entri cron berikut aktif pada server aplikasi:
+   ```cron
+   * * * * * cd /var/www/pintu-madrasah && php artisan schedule:run >> /dev/null 2>&1
+   ```
+   Perintah `php artisan emis:import-sessions:cleanup` dijadwalkan setiap 5 menit (`withoutOverlapping(10)`). Untuk eksekusi manual atau verifikasi:
+   ```bash
+   php artisan schedule:list
+   php artisan emis:import-sessions:cleanup --batch=200
+   ```
+3. **Konfigurasi retensi & lease (opsional di `.env`, default aman di `config/data_ownership.php`):**
+   - `PINTU_EMIS_IMPORT_SESSION_TTL_MINUTES=120` — masa berlaku sesi `open` sebelum kedaluwarsa.
+   - `PINTU_EMIS_IMPORT_FINALIZING_LEASE_SECONDS=300` — batas waktu lease status `finalizing` sebelum dianggap macet dan dapat dipulihkan.
+   - `PINTU_EMIS_IMPORT_FAILED_PAYLOAD_RETENTION_HOURS=24` — masa simpan sementara payload halaman untuk sesi `failed` sebelum payload dibersihkan (metadata sesi tetap disimpan).
+   - `PINTU_EMIS_IMPORT_METADATA_RETENTION_DAYS=30` — masa simpan metadata audit sesi berstatus terminal (`completed`, `expired`, `failed`) sebelum dihapus permanen.
+   - `PINTU_EMIS_IMPORT_CLEANUP_BATCH_SIZE=200` — ukuran batch per iterasi cleanup.
+   - `DB_SQLITE_BUSY_TIMEOUT=5000` — waktu tunggu lock SQLite (ms) untuk deployment ringan berbasis SQLite.
+4. **Koordinasi lock mutasi staging:**
+   Lock `emis_gtk:staging:mutation` menyerialisasi finalisasi sesi import GTK, `POST /api/emis-gtk/pull` dengan `clear_staging=true`, dan `CommitEmisGtkStagingJob`. Gunakan `CACHE_STORE=redis` (direkomendasikan di produksi) atau `database`.

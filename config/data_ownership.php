@@ -52,6 +52,20 @@ return [
         'min_reason_length' => 15,
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Sesi Import EMIS Multi-Halaman, Konkurensi, dan Retensi Data
+    |--------------------------------------------------------------------------
+    */
+    'emis_import' => [
+        'session_ttl_minutes' => (int) env('PINTU_EMIS_IMPORT_SESSION_TTL_MINUTES', 120),
+        'finalizing_lease_seconds' => (int) env('PINTU_EMIS_IMPORT_FINALIZING_LEASE_SECONDS', 300),
+        'finalize_lock_seconds' => (int) env('PINTU_EMIS_IMPORT_FINALIZE_LOCK_SECONDS', 600),
+        'failed_payload_retention_hours' => (int) env('PINTU_EMIS_IMPORT_FAILED_PAYLOAD_RETENTION_HOURS', 24),
+        'metadata_retention_days' => (int) env('PINTU_EMIS_IMPORT_METADATA_RETENTION_DAYS', 30),
+        'cleanup_batch_size' => (int) env('PINTU_EMIS_IMPORT_CLEANUP_BATCH_SIZE', 200),
+    ],
+
     'staff' => [
         // ── Identitas Teknis Integrasi Eksternal ──
         'emis_gtk_id' => [

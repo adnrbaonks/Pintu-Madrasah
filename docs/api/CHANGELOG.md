@@ -177,3 +177,89 @@ Respons: `import_session_id`, `status`, `page`, `received_pages`, `total_pages`,
 | 25.000 | 4,74 / 194,5 / 28 / 195 | 13,08 / 194,5 / 28 / 195 |
 
 Komposisi tiap ukuran N: identik 77,2%, berbeda 12,9%, pintu_only 10%, needs_review 0; total item = identik + berbeda + pintu_only (konsisten). Durasi transaksi = durasi total (satu transaksi atomik, sengaja tidak dipecah). Array `matchedStudentIds` tetap in-memory (±36 byte/ID; 25.000 ID jauh di bawah 2 MB dari Δ 28 MB). Di atas ±50 ribu baris diperlukan checkpoint batch eksplisit (belum diimplementasi).
+
+## WP0.5.13.2 — Hardening konkurensi sesi import EMIS & retensi data
+
+### 1. Arsitektur sesi import dua-fase (`EmisImportSessionService`)
+- **Fase 1 (Penerimaan Halaman & Klaim Finalisasi — transaksi pendek ber-lock baris):**
+  - Baris `emis_import_sessions` dikunci secara eksklusif (`SELECT ... FOR UPDATE` pada MySQL 8 InnoDB; transaksi tulis `NONE -> RESERVED` dengan `busy_timeout = 5000ms` pada SQLite) dan diverifikasi kepemilikannya (`owner_key` token/user).
+  - Halaman dicek terhadap `(session_id, page)` beserta `payload_hash` (SHA-256 kanonis).
+  - `received_pages` dan `received_rows` dihitung langsung dari agregat halaman unik di dalam lock sehingga bebas *lost update* saat dua halaman masuk bersamaan.
+  - Saat `received_pages === total_pages` dan `total_count` valid, status sesi beralih secara atomik `open -> finalizing` (`finalizing_at` dicatat) sehingga **tepat satu proses pemenang** yang mengeksekusi penggantian staging.
+- **Fase 2 (Penggantian Staging Atomik — di luar lock baris awal):**
+  - Mengakuisisi lock lintas proses `emis_gtk:staging:mutation` (menyerialisasi terhadap import sesi lain, `POST /api/emis-gtk/pull` dengan `clear_staging=true`, dan `CommitEmisGtkStagingJob`).
+  - Memverifikasi ulang kesinambungan nomor halaman `1..total_pages`, kecocokan `payload_hash` setiap halaman, dan `total_count`, lalu mengganti baris staging `pending` sesi lama secara atomik dalam satu transaksi database. Baris `committed` **tidak pernah** ditimpa atau dihapus.
+  - Kegagalan di tengah proses membatalkan seluruh perubahan staging (*rollback* utuh), menyamarkan PII pada `failure_reason` dan log aplikasi, serta menandai sesi `failed`.
+
+### 2. Kontrak request & response `POST /api/emis-gtk/import`
+- **Aturan parameter:**
+  - `data` (*wajib*, array minimal 1 objek item GTK; setiap item wajib memiliki `name`).
+  - `page` (*opsional*, default `1`, integer `1..total_pages`).
+  - `total_pages` (*opsional*, default `1`, integer `1..1000`): mengikat sesi pada halaman 1 dan **tidak boleh berubah** pada halaman berikutnya (`422 IMPORT_SESSION_MISMATCH`).
+  - `total_count` (*opsional*, integer `>= 0` atau `null`): bila dikirim pada halaman 1, sesi mengikat nilai eksak tersebut; halaman berikutnya yang mengirim `total_count` berbeda ditolak (`422 IMPORT_SESSION_MISMATCH`); saat seluruh halaman terkumpul, jumlah seluruh item unik wajib sama persis dengan `total_count` (`422 IMPORT_COUNT_MISMATCH`).
+  - `import_session_id` (*wajib untuk `page > 1`*, UUID sesi dari respons halaman 1; tanpa ID ditolak `422 IMPORT_SESSION_REQUIRED`).
+
+- **Contoh request halaman pertama:**
+  ```json
+  {
+    "page": 1,
+    "total_pages": 2,
+    "total_count": 3,
+    "data": [
+      { "uuid": "gtk-001", "name": "AHMAD FAUZI", "active": true },
+      { "uuid": "gtk-002", "name": "SITI NURHALIZA", "active": true }
+    ]
+  }
+  ```
+- **Contoh response halaman antara (`200 OK`):**
+  ```json
+  {
+    "success": true,
+    "import_session_id": "019a2f4c-8d12-71a0-9f31-42c8a109e001",
+    "status": "open",
+    "saved": 0,
+    "page": 1,
+    "received_pages": 1,
+    "total_pages": 2,
+    "complete": false,
+    "idempotent_replay": false,
+    "message": "Halaman 1/2 diterima (1 halaman terkumpul)."
+  }
+  ```
+- **Contoh response halaman terakhir / finalisasi berhasil (`200 OK`):**
+  ```json
+  {
+    "success": true,
+    "import_session_id": "019a2f4c-8d12-71a0-9f31-42c8a109e001",
+    "status": "completed",
+    "saved": 3,
+    "page": 2,
+    "received_pages": 2,
+    "total_pages": 2,
+    "complete": true,
+    "message": "Import selesai: 3 data GTK masuk staging."
+  }
+  ```
+- **Kode respons deterministik pada konflik, konkurensi, dan siklus hidup:**
+  | HTTP | `error.code` | Kondisi & Perilaku Data |
+  |---|---|---|
+  | `200` | — (`idempotent_replay: true`) | Pengiriman ulang halaman yang sama dengan isi payload identik (urutan key JSON objek boleh berbeda, urutan elemen array tetap); tidak menambah `received_pages`/`received_rows`. |
+  | `409` | `IMPORT_PAGE_CONFLICT` | Halaman yang sama dikirim ulang dengan isi atau urutan item berbeda; payload lama, hitungan, dan status sesi tidak berubah. |
+  | `409` | `IMPORT_FINALIZING` | Request masuk saat sesi yang sama sedang memfinalisasi staging (`status = finalizing`, lease aktif). |
+  | `409` | `IMPORT_SESSION_CLOSED` | Request masuk setelah sesi `completed` (menyertakan `complete: true` dan `saved: <saved_rows>` tanpa memproses ulang staging). |
+  | `409` | `IMPORT_IN_PROGRESS` | Mutasi staging GTK lain sedang memegang lock `emis_gtk:staging:mutation`. |
+  | `410` | `IMPORT_SESSION_EXPIRED` | Sesi `open`/`failed` melewati `expires_at` (default 120 menit); payload halaman dibersihkan. |
+  | `422` | `IMPORT_COUNT_MISMATCH` | Seluruh `total_pages` diterima namun total baris unik `!= total_count`; sesi ditandai `failed`, staging lama tetap utuh. |
+  | `422` | `IMPORT_SESSION_MISMATCH` | `total_pages` atau `total_count` berbeda dari metadata sesi. |
+  | `500` | `IMPORT_FINALIZE_FAILED` | Kegagalan internal saat finalisasi; seluruh perubahan staging di-*rollback*, `failure_reason` dicatat tanpa PII. |
+
+### 3. Prosedur pemulihan & kebijakan retensi terjadwal
+- **Pemulihan saat gagal:**
+  - Kegagalan transien saat finalisasi (`409 IMPORT_IN_PROGRESS`, `500 IMPORT_FINALIZE_FAILED`, atau timeout klien setelah lease `finalizing` 300 detik kedaluwarsa): selama sesi belum melewati `expires_at`, kirim ulang halaman terakhir yang identik ke `import_session_id` yang sama untuk menyelesaikan finalisasi tanpa mengunggah ulang halaman sebelumnya.
+  - Kegagalan integritas payload/jumlah (`409 IMPORT_PAGE_CONFLICT`, `422 IMPORT_COUNT_MISMATCH`) atau kedaluwarsa (`410 IMPORT_SESSION_EXPIRED`): mulai sesi baru dari `page = 1` tanpa `import_session_id`.
+- **Kebijakan retensi & Scheduled Cleanup (`php artisan emis:import-sessions:cleanup`, setiap 5 menit):**
+  - Sesi `open` melewati `expires_at` (default **120 menit**) → diubah menjadi `expired` dan baris `emis_import_session_pages` dihapus; sesi yang sedang `finalizing` aktif **tidak pernah** disentuh oleh cleanup.
+  - Sesi `finalizing` macet melampaui lease (default **300 detik**) → dipulihkan menjadi `failed` agar dapat di-retry atau mengikuti retensi.
+  - Sesi `completed` → payload halaman dihapus segera saat finalisasi selesai; metadata sesi disimpan selama **30 hari** untuk jejak audit.
+  - Sesi `failed` → payload halaman dipertahankan sementara selama **24 jam** untuk investigasi/retry, lalu payload dihapus sementara metadata sesi dipertahankan hingga **30 hari**.
+  - Sesi terminal (`completed`, `expired`, `failed`) berusia > **30 hari** → metadata dihapus secara ber-batch dan idempoten; log hanya mencatat jumlah agregat tanpa PII.
